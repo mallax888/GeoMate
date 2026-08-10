@@ -162,13 +162,6 @@ h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
   min-width: 15rem;
   text-align: right;
 }
-.field--inline { flex-direction: row-reverse; align-items: center; gap: 0.55rem; }
-.field--inline span {
-  font-size: 0.68rem;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--ink-muted);
-}
 
 /* ---------- Layout ---------- */
 .layout {
@@ -231,6 +224,13 @@ h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
   color: var(--ink-muted);
 }
 .field--compact { min-width: 0; }
+.field--inline { flex-direction: row-reverse; align-items: center; gap: 0.55rem; }
+.field--inline span {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--ink-muted);
+}
 .field__unit {
   display: flex;
   align-items: center;
