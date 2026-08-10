@@ -485,8 +485,16 @@ function addLiftRow(rl = "", faceLength = "", embed = "", insertBeforeNode = nul
 
   row.querySelector(".row-insert").addEventListener("click", () => {
     const currentRL = parseFloat(row.querySelector(".rl-input").value);
-    const newRL = Number.isFinite(currentRL) ? (currentRL + 0.3).toFixed(2) : "";
-    addLiftRow(newRL, "", "", row.nextSibling);
+    const nextRow = row.nextElementSibling;
+    const nextRL = nextRow ? parseFloat(nextRow.querySelector(".rl-input").value) : NaN;
+    let newRL = "";
+    if (Number.isFinite(currentRL) && Number.isFinite(nextRL)) {
+      newRL = ((currentRL + nextRL) / 2).toFixed(2); // true midpoint, whatever the gap actually is
+    } else if (Number.isFinite(currentRL)) {
+      newRL = (currentRL + 0.3).toFixed(2); // last row: no "next" to centre against, default to +300mm
+    }
+    const newRow = addLiftRow(newRL, "", "", row.nextSibling);
+    newRow.querySelector(".rl-input").focus(); // RL is a plain editable field — adjust it if the midpoint isn't where you want it
     computeAndRender();
   });
 
