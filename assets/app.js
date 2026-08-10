@@ -326,6 +326,89 @@ function parseLandXMLSurface(text) {
   return triangles;
 }
 
+/** Any LINE/LWPOLYLINE/legacy-POLYLINE, open or closed — just its length, layer and mean elevation. */
+function parseDXFEntityLengths(text) {
+  const linesRaw = text.split(/\r?\n/);
+  const pairs = [];
+  for (let i = 0; i + 1 < linesRaw.length; i += 2) {
+    const code = parseInt(linesRaw[i].trim(), 10);
+    const value = linesRaw[i + 1] !== undefined ? linesRaw[i + 1].trim() : "";
+    if (Number.isFinite(code)) pairs.push({ code, value });
+  }
+
+  const entities = [];
+  let inEntities = false;
+  let buf = null;
+  let polylineOpen = null;
+
+  function dist3(a, b) { return Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0)); }
+  function finish(entity) {
+    if (!entity || !entity.pts || entity.pts.length < 2) return;
+    let length = 0;
+    for (let i = 1; i < entity.pts.length; i++) length += dist3(entity.pts[i - 1], entity.pts[i]);
+    const meanZ = entity.pts.reduce((s, p) => s + (p.z || 0), 0) / entity.pts.length;
+    entities.push({ type: entity.type, layer: entity.layer || "0", length, meanZ });
+  }
+  function flushLwVertex() {
+    if (buf && buf.type === "LWPOLYLINE" && buf._x !== undefined) {
+      buf.pts.push({ x: buf._x, y: buf._y ?? 0, z: buf.elevation || 0 });
+      buf._x = undefined;
+    }
+  }
+
+  for (let i = 0; i < pairs.length; i++) {
+    const { code, value } = pairs[i];
+    if (code === 0) {
+      if (buf && buf._vertexOf) {
+        buf._vertexOf.pts.push({ x: buf._x || 0, y: buf._y || 0, z: buf._z || 0 });
+      } else if (buf && buf.type === "LWPOLYLINE") {
+        flushLwVertex();
+        finish(buf);
+      } else if (buf && buf.type === "LINE") {
+        buf.pts = [
+          { x: buf._x0 || 0, y: buf._y0 || 0, z: buf._z0 || 0 },
+          { x: buf._x1 || 0, y: buf._y1 || 0, z: buf._z1 || 0 },
+        ];
+        finish(buf);
+      }
+      if (value === "ENDSEC") { inEntities = false; if (polylineOpen) finish(polylineOpen); polylineOpen = null; buf = null; continue; }
+      if (value === "LWPOLYLINE") buf = { type: "LWPOLYLINE", layer: "0", pts: [], elevation: 0 };
+      else if (value === "LINE") buf = { type: "LINE", layer: "0" };
+      else if (value === "POLYLINE") { buf = { type: "POLYLINE", layer: "0", pts: [] }; polylineOpen = buf; }
+      else if (value === "VERTEX" && polylineOpen) buf = { _vertexOf: polylineOpen, _x: 0, _y: 0, _z: 0 };
+      else if (value === "SEQEND") { if (polylineOpen) finish(polylineOpen); polylineOpen = null; buf = null; }
+      else buf = null;
+      continue;
+    }
+    if (code === 2 && value === "ENTITIES") { inEntities = true; continue; }
+    if (!inEntities || !buf) continue;
+
+    if (buf._vertexOf) {
+      if (code === 10) buf._x = parseFloat(value);
+      if (code === 20) buf._y = parseFloat(value);
+      if (code === 30) buf._z = parseFloat(value);
+      continue;
+    }
+    if (buf.type === "LWPOLYLINE") {
+      if (code === 8) buf.layer = value;
+      if (code === 38) buf.elevation = parseFloat(value);
+      if (code === 10) { flushLwVertex(); buf._x = parseFloat(value); }
+      if (code === 20) buf._y = parseFloat(value);
+    } else if (buf.type === "LINE") {
+      if (code === 8) buf.layer = value;
+      if (code === 10) buf._x0 = parseFloat(value);
+      if (code === 20) buf._y0 = parseFloat(value);
+      if (code === 30) buf._z0 = parseFloat(value);
+      if (code === 11) buf._x1 = parseFloat(value);
+      if (code === 21) buf._y1 = parseFloat(value);
+      if (code === 31) buf._z1 = parseFloat(value);
+    } else if (buf.type === "POLYLINE") {
+      if (code === 8) buf.layer = value;
+    }
+  }
+  return entities;
+}
+
 /** Closed polylines only (LWPOLYLINE + legacy POLYLINE/VERTEX) — a lift's plan-view extents boundary. */
 function parseDXFPolygons(text) {
   const linesRaw = text.split(/\r?\n/);
@@ -991,6 +1074,50 @@ document.getElementById("dxfExtentsInput").addEventListener("change", async (e) 
     }.`;
     statusEl.className = "cutplan-status is-ok";
     switchTab("cutplan");
+    computeAndRender();
+  } catch (err) {
+    statusEl.textContent = `Couldn't read that file: ${err.message}`;
+    statusEl.className = "cutplan-status is-error";
+  } finally {
+    e.target.value = "";
+  }
+});
+
+document.getElementById("dxfLengthsInput").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  const statusEl = document.getElementById("dxfLengthsStatus");
+  if (!file) return;
+
+  try {
+    const text = await file.text();
+    const entities = parseDXFEntityLengths(text).filter((en) => en.length > 0);
+    if (!entities.length) {
+      statusEl.textContent = "No LINE/LWPOLYLINE/POLYLINE entities with a measurable length found in that file.";
+      statusEl.className = "cutplan-status is-error";
+      return;
+    }
+
+    const hasZ = entities.some((en) => Math.abs(en.meanZ) > 1e-6);
+    if (hasZ) entities.sort((a, b) => a.meanZ - b.meanZ);
+
+    const rows = Array.from(tbody.querySelectorAll(".lift-row"));
+    const count = Math.min(rows.length, entities.length);
+    for (let i = 0; i < count; i++) {
+      const row = rows[i];
+      if (row.dataset.mode === "extents") releaseExtents(row);
+      if (row.dataset.mode === "coords") {
+        row.dataset.mode = "length";
+        row.querySelector(".mode-toggle").textContent = "L";
+        row.querySelector(".face-input__length").hidden = false;
+        row.querySelector(".face-coords").hidden = true;
+      }
+      row.querySelector(".face-length").value = entities[i].length.toFixed(3);
+    }
+
+    statusEl.textContent = `Matched ${count} of ${entities.length} polylines to ${rows.length} lift${rows.length === 1 ? "" : "s"}${
+      hasZ ? " (sorted by elevation)" : " (file order — verify against RL order)"
+    }.`;
+    statusEl.className = "cutplan-status is-ok";
     computeAndRender();
   } catch (err) {
     statusEl.textContent = `Couldn't read that file: ${err.message}`;

@@ -93,6 +93,16 @@
       <p id="interStatus" class="cutplan-status"></p>
     </div>
 
+    <div class="generator">
+      <h3 class="panel__subheading">Import face lengths from DXF</h3>
+      <p class="generator__hint">If you already have a polyline per lift drawn in CAD, upload them here instead of measuring and typing each length by hand — matched to lifts by elevation (or file order if the polylines carry no Z).</p>
+      <label class="btn btn--primary btn--upload">
+        Upload lengths DXF
+        <input type="file" id="dxfLengthsInput" accept=".dxf" hidden />
+      </label>
+      <p id="dxfLengthsStatus" class="cutplan-status"></p>
+    </div>
+
     <details class="methodology">
       <summary>How the numbers are calculated</summary>
       <dl>
