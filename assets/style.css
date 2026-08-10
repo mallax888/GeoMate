@@ -352,7 +352,7 @@ input[type="number"]::-webkit-outer-spin-button {
 
 /* ---------- Lift table ---------- */
 .table-scroll { overflow-x: auto; }
-.lift-table { width: 100%; border-collapse: collapse; min-width: 760px; }
+.lift-table { width: 100%; border-collapse: collapse; min-width: 690px; }
 .lift-table th {
   text-align: left;
   font-size: 0.66rem;
@@ -364,7 +364,7 @@ input[type="number"]::-webkit-outer-spin-button {
   border-bottom: 1px solid var(--line-strong);
 }
 .lift-table td {
-  padding: 0.35rem 0.5rem;
+  padding: 0.35rem 0.35rem;
   border-bottom: 1px solid var(--line);
   vertical-align: middle;
 }
@@ -374,8 +374,8 @@ input[type="number"]::-webkit-outer-spin-button {
 .col-face { min-width: 9.5rem; }
 .col-embed { width: 6.5rem; }
 .col-strips, .col-overlap, .col-area { width: 5rem; text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-.col-diagram { width: 15rem; }
-.col-remove { width: 3.4rem; white-space: nowrap; }
+.col-diagram { width: 12rem; }
+.col-remove { width: 2rem; }
 .result-cell { color: var(--ink); }
 .result-cell.is-empty { color: var(--ink-muted); }
 
@@ -405,7 +405,7 @@ input[type="number"]::-webkit-outer-spin-button {
   padding: 0.35rem 0.5rem;
   resize: vertical;
 }
-.row-remove, .row-insert {
+.row-remove {
   background: transparent;
   border: none;
   color: var(--ink-muted);
@@ -414,7 +414,6 @@ input[type="number"]::-webkit-outer-spin-button {
   padding: 0.2rem 0.3rem;
 }
 .row-remove:hover { color: var(--critical); }
-.row-insert:hover { color: var(--good); }
 
 .strip-diagram { width: 100%; height: 34px; display: block; }
 
