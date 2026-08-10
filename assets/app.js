@@ -187,6 +187,13 @@ function inwardNormal(tangent) {
 // Below this, a gap or leftover pocket along a strip's ray isn't worth a separate stitch strip.
 const STITCH_MIN = 0.05;
 
+// Reported strip/stitch lengths are rounded up to this step — practical site numbers, never a raw
+// CAD-precision decimal. Always UP: rounding must never leave a strip shorter than the design requires.
+const ROUND_STEP = 0.05;
+function roundUpToStep(value, step) {
+  return Math.ceil(value / step - 1e-9) * step;
+}
+
 /**
  * Full cut plan for one lift's extents polygon: face length, strip count/overlap, and each strip's
  * clipped cut length. Every strip is cut with one straight, square (perpendicular) trim from a single
@@ -217,9 +224,11 @@ function computeCutPlan(rawPoints, w, oMin, swapped) {
     const pt = pointAtStation(face, station);
     const segments = insideSegments(pt, inward, poly);
     const main = segments.find((s) => s.start <= 1e-6);
-    cutLengths.push(main ? main.end : 0);
+    cutLengths.push(main ? roundUpToStep(main.end, ROUND_STEP) : 0);
     stitches.push(
-      segments.filter((s) => s !== main && s.end - s.start > STITCH_MIN).map((s) => ({ offset: s.start, length: s.end - s.start }))
+      segments
+        .filter((s) => s !== main && s.end - s.start > STITCH_MIN)
+        .map((s) => ({ offset: roundUpToStep(s.start, ROUND_STEP), length: roundUpToStep(s.end - s.start, ROUND_STEP) }))
     );
   }
 
@@ -1593,21 +1602,9 @@ function renderCutPlanSvg(svg, cutPlan, w) {
     line.setAttribute("stroke-linecap", "round");
     svg.appendChild(line);
 
-    if (action !== "full") {
-      // A short tick across the strip at the trim point — fold/cut/review colour matches the
-      // strip line, so where and what to do at that exact point is visible without reading the list.
-      const dx = x2 - x1, dy = y2 - y1;
-      const dlen = Math.hypot(dx, dy) || 1;
-      const px = (-dy / dlen) * 5, py = (dx / dlen) * 5;
-      const tick = document.createElementNS(ns, "line");
-      tick.setAttribute("x1", (x2 - px).toFixed(1));
-      tick.setAttribute("y1", (y2 - py).toFixed(1));
-      tick.setAttribute("x2", (x2 + px).toFixed(1));
-      tick.setAttribute("y2", (y2 + py).toFixed(1));
-      tick.setAttribute("stroke", actionColor[action]);
-      tick.setAttribute("stroke-width", "2.5");
-      svg.appendChild(tick);
-    }
+    // Deliberately no end-of-strip tick/cutoff marker here — the diagram's job is to show the grids
+    // covering the extents, not dictate a precise stop line. The rounded length (side list / print
+    // table) is what site works from; how exactly to fold or cut to it is a site decision.
 
     // Stitch patches — a separate small piece further back along the same line, past a gap the
     // main strip's single straight cut can't reach in one piece. Drawn dashed and offset so it
