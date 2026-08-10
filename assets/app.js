@@ -1342,9 +1342,30 @@ document.getElementById("dxfExtentsInput").addEventListener("change", async (e) 
           matched++;
         }
       });
-      statusEl.textContent = `Matched ${matched} of ${polygons.length} extents to lift RLs (by elevation, within ${Math.round(ELEV_TOL * 1000)} mm)${
-        matched < polygons.length ? ` — ${polygons.length - matched} polygon${polygons.length - matched === 1 ? "" : "s"} had no matching RL in the table.` : "."
-      }`;
+
+      // Every polygon carries its own elevation already, so one that didn't match an existing row
+      // (most commonly: there was no row at all yet) gets a brand-new lift row created at that
+      // elevation, inserted in RL order — uploading extents alone is enough to build the table.
+      let created = 0;
+      polygons.forEach((p, idx) => {
+        if (used.has(idx)) return;
+        const currentRows = Array.from(tbody.querySelectorAll(".lift-row"));
+        const insertBefore =
+          currentRows.find((row) => {
+            const rl = parseFloat(row.querySelector(".rl-input").value);
+            return Number.isFinite(rl) && rl > p.meanZ + 1e-9;
+          }) || null;
+        const newRow = addLiftRow(p.meanZ.toFixed(2), "", "", insertBefore);
+        applyExtents(newRow, p.points);
+        created++;
+        matched++;
+      });
+
+      const parts = [];
+      const matchedExisting = matched - created;
+      if (matchedExisting) parts.push(`matched ${matchedExisting} existing lift${matchedExisting === 1 ? "" : "s"} by RL`);
+      if (created) parts.push(`created ${created} new lift row${created === 1 ? "" : "s"} from the DXF's own elevations`);
+      statusEl.textContent = `${polygons.length} extents loaded${parts.length ? " — " + parts.join(", ") + "." : "."}`;
     } else {
       const count = Math.min(rows.length, polygons.length);
       for (let i = 0; i < count; i++) applyExtents(rows[i], polygons[i].points);
