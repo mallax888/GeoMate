@@ -1673,12 +1673,6 @@ function escapeHtml(str) {
 }
 
 /* ============================================================
-   Boot — seed with the 23-lift run already discussed
+   Boot — start empty; use "Generate lift rows" or "Add lift" to begin
    ============================================================ */
-(function boot() {
-  const start = 49.7, spacing = 0.6, count = 23;
-  for (let i = 0; i < count; i++) {
-    addLiftRow((start + i * spacing).toFixed(2), "", "");
-  }
-  computeAndRender();
-})();
+computeAndRender();
