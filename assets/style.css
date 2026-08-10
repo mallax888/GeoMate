@@ -646,6 +646,27 @@ input[type="number"]::-webkit-outer-spin-button {
 .extents-release { background: none; border: none; color: inherit; cursor: pointer; font-size: 0.7rem; padding: 0; }
 .embed-range { display: block; font-size: 0.62rem; color: var(--ink-muted); margin-top: 0.15rem; text-align: right; }
 
+/* ---------- 3D view ---------- */
+.view3d-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.7rem;
+}
+.view3d-hint { font-size: 0.78rem; color: var(--ink-muted); max-width: 60ch; }
+.view3d-canvas {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 900 / 560;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: grab;
+  touch-action: none;
+}
+.view3d-canvas:active { cursor: grabbing; }
+
 @media print {
   .titleblock, .panel--settings, .panel--summary, .panel__headrow, .sequence-controls, .foot, #takeoffView { display: none !important; }
   body { background: #fff; }

@@ -741,6 +741,9 @@ function computeAndRender() {
     areaCell.textContent = fmt.m(area);
     renderDiagram(diagram, L, result, w);
 
+    const footprint =
+      mode === "extents" && cutPlan ? localFootprint(cutPlan) : rectFootprint(L, Math.max(...stripLengths));
+
     liftResults.push({
       rl,
       L,
@@ -754,13 +757,36 @@ function computeAndRender() {
       cutPlan,
       mode,
       row,
+      footprint,
     });
   });
 
   renderSummary(liftResults, rollLength);
   renderSequence(liftResults, w);
   renderCutPlan(liftResults, w);
+  render3D(liftResults);
   window.__geogridResults = liftResults; // exposed for CSV export
+}
+
+/** Rectangle footprint for a uniform-embedment lift, already in the (x = along face, y = depth) local frame. */
+function rectFootprint(L, depth) {
+  return [
+    { x: 0, y: 0 },
+    { x: L, y: 0 },
+    { x: L, y: depth },
+    { x: 0, y: depth },
+  ];
+}
+
+/** Re-express an extents polygon in the same local frame: origin at the face's start, x along the face, y into the fill. */
+function localFootprint(cutPlan) {
+  const origin = cutPlan.face.edges[0].from;
+  const dir = cutPlan.face.dir;
+  const perp = inwardNormal(dir);
+  return cutPlan.poly.map((p) => {
+    const rx = p.x - origin.x, ry = p.y - origin.y;
+    return { x: rx * dir.x + ry * dir.y, y: rx * perp.x + ry * perp.y };
+  });
 }
 
 function renderSummary(results, rollLength) {
@@ -824,9 +850,11 @@ function renderSummary(results, rollLength) {
 const tabTakeoff = document.getElementById("tabTakeoff");
 const tabSequence = document.getElementById("tabSequence");
 const tabCutPlan = document.getElementById("tabCutPlan");
+const tab3D = document.getElementById("tab3D");
 const takeoffView = document.getElementById("takeoffView");
 const sequenceView = document.getElementById("sequenceView");
 const cutPlanView = document.getElementById("cutPlanView");
+const view3DPanel = document.getElementById("view3DPanel");
 const staggerToggle = document.getElementById("staggerToggle");
 const sequenceList = document.getElementById("sequenceList");
 const cutPlanList = document.getElementById("cutPlanList");
@@ -835,6 +863,7 @@ const cutPlanEmpty = document.getElementById("cutPlanEmpty");
 tabTakeoff.addEventListener("click", () => switchTab("takeoff"));
 tabSequence.addEventListener("click", () => switchTab("sequence"));
 tabCutPlan.addEventListener("click", () => switchTab("cutplan"));
+tab3D.addEventListener("click", () => switchTab("view3d"));
 staggerToggle.addEventListener("change", computeAndRender);
 document.getElementById("printSequenceBtn").addEventListener("click", () => window.print());
 
@@ -842,6 +871,7 @@ const TABS = {
   takeoff: { tab: tabTakeoff, view: takeoffView },
   sequence: { tab: tabSequence, view: sequenceView },
   cutplan: { tab: tabCutPlan, view: cutPlanView },
+  view3d: { tab: tab3D, view: view3DPanel },
 };
 
 function switchTab(which) {
@@ -852,6 +882,7 @@ function switchTab(which) {
     tab.setAttribute("aria-selected", String(active));
   });
   document.getElementById("addLiftBtn").hidden = which !== "takeoff";
+  if (which === "view3d" && window.__geogridResults) render3D(window.__geogridResults);
 }
 
 function renderSequence(results, w) {
@@ -1079,6 +1110,140 @@ function renderCutPlanSvg(svg, cutPlan, w) {
     svg.appendChild(line);
   });
 }
+
+/* ============================================================
+   3D view — hand-rolled axonometric projection on canvas,
+   no libraries. Each lift's footprint is drawn as a flat plane
+   at its RL, stacked and rotatable.
+   ============================================================ */
+
+const view3DCanvas = document.getElementById("view3DCanvas");
+const view3DEmpty = document.getElementById("view3DEmpty");
+const view3DState = { yaw: -0.6, pitch: 0.5, zoom: 1, panX: 0, panY: 0 };
+
+function project3D(x, y, z, yaw, pitch) {
+  const cosY = Math.cos(yaw), sinY = Math.sin(yaw);
+  const x1 = x * cosY - y * sinY;
+  const y1 = x * sinY + y * cosY;
+  const cosP = Math.cos(pitch), sinP = Math.sin(pitch);
+  const y2 = y1 * cosP - z * sinP;
+  const z2 = y1 * sinP + z * cosP;
+  return { sx: x1, sy: -z2, depth: y2 };
+}
+
+function render3D(results) {
+  if (!view3DCanvas) return;
+  const ctx = view3DCanvas.getContext("2d");
+  const W = view3DCanvas.width, H = view3DCanvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  const lifts = results
+    .filter((r) => r.footprint && r.footprint.length >= 3 && Number.isFinite(parseFloat(r.rl)))
+    .map((r) => ({ rl: parseFloat(r.rl), rlLabel: r.rl, footprint: r.footprint }))
+    .sort((a, b) => a.rl - b.rl);
+
+  view3DEmpty.hidden = lifts.length > 0;
+  if (!lifts.length) return;
+
+  const baseRL = lifts[0].rl;
+  const { yaw, pitch, zoom, panX, panY } = view3DState;
+
+  let minSX = Infinity, maxSX = -Infinity, minSY = Infinity, maxSY = -Infinity;
+  const projectedLifts = lifts.map((lift) => {
+    const z = lift.rl - baseRL;
+    const pts = lift.footprint.map((p) => project3D(p.x, p.y, z, yaw, pitch));
+    pts.forEach((p) => {
+      minSX = Math.min(minSX, p.sx);
+      maxSX = Math.max(maxSX, p.sx);
+      minSY = Math.min(minSY, p.sy);
+      maxSY = Math.max(maxSY, p.sy);
+    });
+    const depth = pts.reduce((s, p) => s + p.depth, 0) / pts.length;
+    return { ...lift, pts, depth };
+  });
+
+  const boxW = Math.max(maxSX - minSX, 1e-6);
+  const boxH = Math.max(maxSY - minSY, 1e-6);
+  const pad = 90;
+  const fitScale = Math.min((W - pad * 2) / boxW, (H - pad * 2) / boxH);
+  const scale = fitScale * zoom;
+  const cx = W / 2 + panX, cy = H / 2 + panY;
+  const midSX = (minSX + maxSX) / 2, midSY = (minSY + maxSY) / 2;
+  const toScreen = (p) => ({ x: cx + (p.sx - midSX) * scale, y: cy + (p.sy - midSY) * scale });
+
+  projectedLifts.sort((a, b) => a.depth - b.depth);
+
+  const style = getComputedStyle(document.documentElement);
+  const accent = style.getPropertyValue("--accent").trim();
+  const accentTint = style.getPropertyValue("--accent-tint").trim();
+  const ink = style.getPropertyValue("--ink").trim();
+  const inkMuted = style.getPropertyValue("--ink-muted").trim();
+
+  ctx.font = "11px " + (style.getPropertyValue("--font-mono").trim() || "monospace");
+  ctx.textBaseline = "middle";
+
+  projectedLifts.forEach((lift) => {
+    const screenPts = lift.pts.map(toScreen);
+    ctx.beginPath();
+    screenPts.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    ctx.closePath();
+    ctx.fillStyle = accentTint;
+    ctx.globalAlpha = 0.82;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 1.1;
+    ctx.stroke();
+
+    const labelPt = screenPts[0];
+    ctx.fillStyle = ink;
+    ctx.textAlign = labelPt.x < cx ? "right" : "left";
+    ctx.fillText(`RL ${lift.rlLabel}`, labelPt.x + (labelPt.x < cx ? -6 : 6), labelPt.y);
+  });
+
+  ctx.fillStyle = inkMuted;
+  ctx.textAlign = "left";
+  ctx.font = "10px " + (style.getPropertyValue("--font-mono").trim() || "monospace");
+  ctx.fillText(`${lifts.length} lifts · RL ${lifts[0].rlLabel} → ${lifts[lifts.length - 1].rlLabel}`, 12, H - 14);
+}
+
+(function wire3DInteraction() {
+  if (!view3DCanvas) return;
+  let dragging = false, lastX = 0, lastY = 0;
+
+  view3DCanvas.addEventListener("pointerdown", (e) => {
+    dragging = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    view3DCanvas.setPointerCapture(e.pointerId);
+  });
+  view3DCanvas.addEventListener("pointermove", (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - lastX, dy = e.clientY - lastY;
+    lastX = e.clientX;
+    lastY = e.clientY;
+    view3DState.yaw += dx * 0.008;
+    view3DState.pitch = Math.max(0.05, Math.min(1.5, view3DState.pitch + dy * 0.006));
+    render3D(window.__geogridResults || []);
+  });
+  ["pointerup", "pointercancel", "pointerleave"].forEach((evt) =>
+    view3DCanvas.addEventListener(evt, () => (dragging = false))
+  );
+  view3DCanvas.addEventListener(
+    "wheel",
+    (e) => {
+      e.preventDefault();
+      view3DState.zoom = Math.max(0.3, Math.min(4, view3DState.zoom * (1 - e.deltaY * 0.001)));
+      render3D(window.__geogridResults || []);
+    },
+    { passive: false }
+  );
+
+  document.getElementById("view3DReset").addEventListener("click", () => {
+    Object.assign(view3DState, { yaw: -0.6, pitch: 0.5, zoom: 1, panX: 0, panY: 0 });
+    render3D(window.__geogridResults || []);
+  });
+})();
 
 /* ============================================================
    CSV export

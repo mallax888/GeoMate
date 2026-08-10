@@ -110,6 +110,7 @@
         <button type="button" class="tab is-active" id="tabTakeoff" role="tab" aria-selected="true">Takeoff table</button>
         <button type="button" class="tab" id="tabSequence" role="tab" aria-selected="false">Installation sequence</button>
         <button type="button" class="tab" id="tabCutPlan" role="tab" aria-selected="false">Cut plan</button>
+        <button type="button" class="tab" id="tab3D" role="tab" aria-selected="false">3D view</button>
       </div>
       <button id="addLiftBtn" class="btn btn--ghost" type="button">+ Add lift</button>
     </div>
@@ -177,6 +178,15 @@
       </div>
       <p id="cutPlanEmpty" class="empty-state">No extents loaded yet — upload a DXF to see per-strip cut lengths.</p>
       <div id="cutPlanList" class="cutplan-list"></div>
+    </div>
+
+    <div id="view3DPanel" class="view3d-panel" hidden>
+      <div class="view3d-controls">
+        <p class="view3d-hint">Drag to rotate, scroll to zoom. Each lift is normalised to its own face start — this shows relative shape and stacking, not survey coordinates.</p>
+        <button id="view3DReset" class="btn btn--ghost" type="button">Reset view</button>
+      </div>
+      <canvas id="view3DCanvas" class="view3d-canvas" width="900" height="560"></canvas>
+      <p id="view3DEmpty" class="empty-state">No lifts with a face length yet — fill in the takeoff table to see the stack.</p>
     </div>
   </section>
 
