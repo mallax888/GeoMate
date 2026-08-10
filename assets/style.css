@@ -631,6 +631,24 @@ input[type="number"]::-webkit-outer-spin-button {
 .cutplan-card__strips li:last-child { border-bottom: none; }
 .cutplan-card__strips li.is-trim { color: var(--clay); background: var(--clay-tint); }
 
+.cutplan-list-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 0.6rem; }
+.cutplan-list-head .empty-state { margin: 0; padding: 0; }
+.cutplan-print-view { display: none; }
+.cutplan-print-page { margin-bottom: 1.5rem; }
+.cutplan-print-page__head { margin-bottom: 0.6rem; }
+.cutplan-print-page__head h3 { font-family: var(--font-mono); font-size: 1.1rem; margin: 0; }
+.cutplan-print-page__head p { font-size: 0.82rem; color: var(--ink-muted); margin: 0.2rem 0 0; }
+.cutplan-print-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.cutplan-print-table th, .cutplan-print-table td {
+  text-align: left;
+  padding: 0.3rem 0.6rem;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.cutplan-print-table th { text-transform: uppercase; font-size: 0.68rem; letter-spacing: 0.05em; color: var(--ink-muted); }
+.cutplan-print-table tr.is-trim td { color: var(--clay); }
+
 .extents-badge {
   flex: none;
   display: inline-flex;
@@ -675,6 +693,14 @@ input[type="number"]::-webkit-outer-spin-button {
   .layout { grid-template-columns: 1fr; padding: 0; max-width: none; }
   .panel--lifts { border: none; box-shadow: none; padding: 0; }
   .sequence-card { break-inside: avoid; border-color: #999; }
+
+  body.printing-cutplan .sequence-view,
+  body.printing-cutplan .cutplan-intro,
+  body.printing-cutplan .cutplan-list-head,
+  body.printing-cutplan .cutplan-list { display: none !important; }
+  body.printing-cutplan .cutplan-print-view { display: block; }
+  .cutplan-print-page { break-inside: avoid; break-after: page; }
+  .cutplan-print-page:last-child { break-after: auto; }
 }
 
 /* ---------- Footer ---------- */

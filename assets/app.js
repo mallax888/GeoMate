@@ -764,6 +764,10 @@ function renderDiagram(svg, L, result, w, W = 240, H = 34) {
    Compute + render everything
    ============================================================ */
 
+// Below this, a strip is "full length" for display/flagging purposes — sub-cm
+// clipping differences aren't practically meaningful to a crew cutting on site.
+const TRIM_THRESHOLD = 0.02;
+
 const fmt = {
   int: (v) => v.toLocaleString(undefined, { maximumFractionDigits: 0 }),
   m: (v) => v.toLocaleString(undefined, { maximumFractionDigits: 2 }),
@@ -978,6 +982,44 @@ tab3D.addEventListener("click", () => switchTab("view3d"));
 staggerToggle.addEventListener("change", computeAndRender);
 document.getElementById("printSequenceBtn").addEventListener("click", () => window.print());
 
+document.getElementById("printCutPlanBtn").addEventListener("click", () => {
+  const results = window.__geogridCutPlanResults || [];
+  const printView = document.getElementById("cutPlanPrintView");
+  const project = document.getElementById("projectName").value || "Geogrid takeoff";
+
+  printView.innerHTML = results
+    .map((r) => {
+      const maxLen = Math.max(...r.stripLengths);
+      const trimCount = r.stripLengths.filter((len) => len < maxLen - TRIM_THRESHOLD).length;
+      const rows = r.stripLengths
+        .map((len, i) => {
+          const isTrim = len < maxLen - TRIM_THRESHOLD;
+          return `<tr class="${isTrim ? "is-trim" : ""}"><td>${i + 1}</td><td>${fmt.m(len)} m</td><td>${isTrim ? "Trim" : "Full length"}</td></tr>`;
+        })
+        .join("");
+      return `
+        <section class="cutplan-print-page">
+          <div class="cutplan-print-page__head">
+            <h3>${csvEscape(project)} — RL ${r.rl}</h3>
+            <p>${r.n} strips · face ${fmt.m(r.L)} m · ${trimCount} need trimming · roll width ${fmt.m(r.materialWidth / r.n)} m</p>
+          </div>
+          <table class="cutplan-print-table">
+            <thead><tr><th>Strip #</th><th>Cut length</th><th>Note</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </section>
+      `;
+    })
+    .join("");
+
+  document.body.classList.add("printing-cutplan");
+  window.print();
+});
+
+window.addEventListener("afterprint", () => {
+  document.body.classList.remove("printing-cutplan");
+});
+
 const TABS = {
   takeoff: { tab: tabTakeoff, view: takeoffView },
   sequence: { tab: tabSequence, view: sequenceView },
@@ -1189,7 +1231,9 @@ cutPlanList.addEventListener("click", (e) => {
 function renderCutPlan(results, w) {
   const extentsResults = results.filter((r) => r.mode === "extents" && r.cutPlan);
   cutPlanEmpty.hidden = extentsResults.length > 0;
+  document.getElementById("printCutPlanBtn").hidden = extentsResults.length === 0;
   cutPlanList.innerHTML = "";
+  window.__geogridCutPlanResults = extentsResults;
   window.__geogridRowsById = window.__geogridRowsById || new Map();
 
   extentsResults.forEach((r) => {
@@ -1199,7 +1243,8 @@ function renderCutPlan(results, w) {
     const card = document.createElement("div");
     card.className = "cutplan-card";
 
-    const trimCount = r.stripLengths.filter((len) => len < Math.max(...r.stripLengths) - 0.01).length;
+    const maxLen0 = Math.max(...r.stripLengths);
+    const trimCount = r.stripLengths.filter((len) => len < maxLen0 - TRIM_THRESHOLD).length;
 
     card.innerHTML = `
       <div class="cutplan-card__head">
@@ -1218,7 +1263,7 @@ function renderCutPlan(results, w) {
     const maxLen = Math.max(...r.stripLengths);
     r.stripLengths.forEach((len, i) => {
       const li = document.createElement("li");
-      const isTrim = len < maxLen - 0.01;
+      const isTrim = len < maxLen - TRIM_THRESHOLD;
       if (isTrim) li.classList.add("is-trim");
       li.innerHTML = `<span>Strip ${i + 1}</span><span>${isTrim ? `cut to ${fmt.m(len)} m` : `${fmt.m(len)} m`}</span>`;
       stripsList.appendChild(li);
@@ -1248,6 +1293,7 @@ function renderCutPlanSvg(svg, cutPlan, w) {
   svg.appendChild(polyEl);
 
   const pitch = cutLengths.length > 1 ? w - cutPlan.overlap : 0;
+  const labelEvery = cutLengths.length > 24 ? 2 : 1; // thin out numbers on dense diagrams so they stay legible
   cutLengths.forEach((len, i) => {
     const station = Math.max(0, Math.min(face.length, i * pitch + w / 2));
     const pt = pointAtStation(face, station);
@@ -1263,6 +1309,18 @@ function renderCutPlanSvg(svg, cutPlan, w) {
     line.setAttribute("stroke-width", "2");
     line.setAttribute("stroke-linecap", "round");
     svg.appendChild(line);
+
+    if (i % labelEvery === 0) {
+      const label = document.createElementNS(ns, "text");
+      label.setAttribute("x", (x1 + (x1 - x2) * 0.12).toFixed(1));
+      label.setAttribute("y", (y1 + (y1 - y2) * 0.12).toFixed(1));
+      label.setAttribute("font-size", "7");
+      label.setAttribute("font-family", "var(--font-mono)");
+      label.setAttribute("fill", "var(--ink-muted)");
+      label.setAttribute("text-anchor", "middle");
+      label.textContent = String(i + 1);
+      svg.appendChild(label);
+    }
   });
 }
 

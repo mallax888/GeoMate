@@ -189,8 +189,12 @@
         </div>
         <span id="dxfMeshStatus" class="cutplan-status"></span>
       </div>
-      <p id="cutPlanEmpty" class="empty-state">No extents loaded yet — upload a DXF to see per-strip cut lengths.</p>
+      <div class="cutplan-list-head">
+        <p id="cutPlanEmpty" class="empty-state">No extents loaded yet — upload a DXF to see per-strip cut lengths.</p>
+        <button id="printCutPlanBtn" class="btn btn--ghost" type="button" hidden>Print / save PDF (one page per lift)</button>
+      </div>
       <div id="cutPlanList" class="cutplan-list"></div>
+      <div id="cutPlanPrintView" class="cutplan-print-view"></div>
     </div>
 
     <div id="view3DPanel" class="view3d-panel" hidden>
