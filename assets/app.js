@@ -274,25 +274,60 @@ function benchBoundaryAt(triangles, z0, tol) {
     adj.get(kq).push({ to: kp, point: p });
   });
 
+  // Turn-angle between two directions, as a clockwise sweep in [0, 2*PI) from `inDir` to `outDir`.
+  const turnSweep = (inDir, outDir) => {
+    const cross = inDir.x * outDir.y - inDir.y * outDir.x;
+    const dot = inDir.x * outDir.x + inDir.y * outDir.y;
+    let sweep = -Math.atan2(cross, dot);
+    if (sweep < 0) sweep += 2 * Math.PI;
+    return sweep;
+  };
+
   const visited = new Set();
   const loops = [];
   boundary.forEach(({ p, q }) => {
     const startKey = keyOf(p);
-    if (visited.has(edgeKey(startKey, keyOf(q)))) return;
+    const startEk = edgeKey(startKey, keyOf(q));
+    if (visited.has(startEk)) return;
+
     const loop = [p];
-    let currentKey = startKey;
+    visited.add(startEk);
+    let currentKey = keyOf(q);
+    let currentPoint = q;
+    let prevPoint = p;
     let guard = 0;
+
     while (guard++ < 100000) {
-      let next = null;
-      for (const o of adj.get(currentKey) || []) {
-        const ek = edgeKey(currentKey, o.to);
-        if (!visited.has(ek)) { next = o; break; }
-      }
-      if (!next) break;
-      visited.add(edgeKey(currentKey, next.to));
-      currentKey = next.to;
+      loop.push(currentPoint);
       if (currentKey === startKey) break;
-      loop.push(next.point);
+
+      // A vertex can be shared by more than one flat region at the same elevation (they touch
+      // at a single point without being the same bench). At such a branch point, always take the
+      // sharpest available left turn — that keeps the walk on the boundary of the one region it
+      // started tracing, instead of cutting the corner straight into the neighbouring region and
+      // merging two benches into one self-intersecting loop.
+      const inDir = { x: currentPoint.x - prevPoint.x, y: currentPoint.y - prevPoint.y };
+      const inLen = Math.hypot(inDir.x, inDir.y) || 1;
+      inDir.x /= inLen;
+      inDir.y /= inLen;
+
+      const candidates = (adj.get(currentKey) || []).filter((o) => !visited.has(edgeKey(currentKey, keyOf(o.point))));
+      if (!candidates.length) break;
+
+      let best = null, bestSweep = -Infinity;
+      candidates.forEach((o) => {
+        const outDir = { x: o.point.x - currentPoint.x, y: o.point.y - currentPoint.y };
+        const outLen = Math.hypot(outDir.x, outDir.y) || 1;
+        outDir.x /= outLen;
+        outDir.y /= outLen;
+        const sweep = turnSweep(inDir, outDir);
+        if (sweep > bestSweep) { bestSweep = sweep; best = o; }
+      });
+
+      visited.add(edgeKey(currentKey, keyOf(best.point)));
+      prevPoint = currentPoint;
+      currentPoint = best.point;
+      currentKey = keyOf(best.point);
     }
     if (loop.length >= 3) loops.push(loop);
   });
