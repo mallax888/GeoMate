@@ -674,11 +674,22 @@ document.getElementById("addLiftBtn").addEventListener("click", () => {
 });
 
 document.getElementById("genBtn").addEventListener("click", () => {
-  const start = parseFloat(document.getElementById("genStartRL").value) || 0;
+  const statusEl = document.getElementById("genStatus");
+  const startRaw = document.getElementById("genStartRL").value;
+  const countRaw = document.getElementById("genCount").value;
+  const start = parseFloat(startRaw);
   const spacingMm = parseFloat(document.getElementById("genSpacing").value) || 0;
-  const count = Math.max(1, Math.round(parseFloat(document.getElementById("genCount").value) || 0));
-  const spacing = spacingMm / 1000;
+  const count = Math.round(parseFloat(countRaw));
 
+  if (!Number.isFinite(start) || startRaw.trim() === "" || !Number.isFinite(count) || count < 1) {
+    statusEl.textContent = "Enter a Start RL and Count first.";
+    statusEl.className = "cutplan-status is-error";
+    return;
+  }
+  statusEl.textContent = "";
+  statusEl.className = "cutplan-status";
+
+  const spacing = spacingMm / 1000;
   tbody.innerHTML = "";
   for (let i = 0; i < count; i++) {
     const rl = (start + i * spacing).toFixed(2);
