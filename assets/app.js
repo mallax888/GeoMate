@@ -1017,8 +1017,19 @@ tab3D.addEventListener("click", () => switchTab("view3d"));
 staggerToggle.addEventListener("change", computeAndRender);
 document.getElementById("printSequenceBtn").addEventListener("click", () => window.print());
 
+/** Renders the same small plan diagram as the on-screen Cut Plan card, as a standalone SVG string. */
+function buildCutPlanSvgMarkup(cutPlan, w) {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 400 260");
+  svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+  svg.setAttribute("class", "cutplan-print-page__plan");
+  renderCutPlanSvg(svg, cutPlan, w);
+  return svg.outerHTML;
+}
+
 /** One <section class="cutplan-print-page"> per extents lift — shared by the Cut Plan print button and the full export. */
-function buildCutPlanPrintPages(results, project) {
+function buildCutPlanPrintPages(results, project, w) {
   return results
     .map((r) => {
       const maxLen = Math.max(...r.stripLengths);
@@ -1035,10 +1046,13 @@ function buildCutPlanPrintPages(results, project) {
             <h3>${escapeHtml(project)} — RL ${escapeHtml(r.rl)}</h3>
             <p>${r.n} strips · face ${fmt.m(r.L)} m · ${trimCount} need trimming · roll width ${fmt.m(r.materialWidth / r.n)} m</p>
           </div>
-          <table class="cutplan-print-table">
-            <thead><tr><th>Strip #</th><th>Cut length</th><th>Note</th></tr></thead>
-            <tbody>${rows}</tbody>
-          </table>
+          <div class="cutplan-print-page__body">
+            ${buildCutPlanSvgMarkup(r.cutPlan, w)}
+            <table class="cutplan-print-table">
+              <thead><tr><th>Strip #</th><th>Cut length</th><th>Note</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
         </section>
       `;
     })
@@ -1048,7 +1062,8 @@ function buildCutPlanPrintPages(results, project) {
 document.getElementById("printCutPlanBtn").addEventListener("click", () => {
   const results = window.__geogridCutPlanResults || [];
   const project = document.getElementById("projectName").value || "Geogrid takeoff";
-  document.getElementById("cutPlanPrintView").innerHTML = buildCutPlanPrintPages(results, project);
+  const { w } = readSettings();
+  document.getElementById("cutPlanPrintView").innerHTML = buildCutPlanPrintPages(results, project, w);
   document.body.classList.add("printing-cutplan");
   window.print();
 });
@@ -1061,7 +1076,7 @@ window.addEventListener("afterprint", () => {
 document.getElementById("exportFullPdfBtn").addEventListener("click", () => {
   const results = window.__geogridResults || [];
   const project = document.getElementById("projectName").value || "Geogrid takeoff";
-  const { rollLength } = readSettings();
+  const { w, rollLength } = readSettings();
 
   const coverSheet = `
     <section class="export-sheet">
@@ -1121,7 +1136,7 @@ document.getElementById("exportFullPdfBtn").addEventListener("click", () => {
   `;
 
   const extentsResults = results.filter((r) => r.mode === "extents" && r.cutPlan);
-  const cutPlanSheets = extentsResults.length ? buildCutPlanPrintPages(extentsResults, project) : "";
+  const cutPlanSheets = extentsResults.length ? buildCutPlanPrintPages(extentsResults, project, w) : "";
 
   const canvasDataUrl = view3DCanvas ? view3DCanvas.toDataURL("image/png") : null;
   const view3dSheet = canvasDataUrl

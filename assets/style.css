@@ -638,6 +638,8 @@ input[type="number"]::-webkit-outer-spin-button {
 .cutplan-print-page__head { margin-bottom: 0.6rem; }
 .cutplan-print-page__head h3 { font-family: var(--font-mono); font-size: 1.1rem; margin: 0; }
 .cutplan-print-page__head p { font-size: 0.82rem; color: var(--ink-muted); margin: 0.2rem 0 0; }
+.cutplan-print-page__body { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
+.cutplan-print-page__plan { width: 100%; height: auto; max-height: 70mm; border: 1px solid var(--line); border-radius: 4px; }
 .cutplan-print-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .cutplan-print-table th, .cutplan-print-table td {
   text-align: left;
