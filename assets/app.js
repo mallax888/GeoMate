@@ -562,22 +562,65 @@ document.getElementById("interBtn").addEventListener("click", () => {
   }
 
   const rows = Array.from(tbody.querySelectorAll(".lift-row"));
-  let inserted = 0;
+  let inserted = 0, skippedAlready = 0;
   for (let i = 0; i < rows.length - 1; i++) {
-    const rlA = parseFloat(rows[i].querySelector(".rl-input").value);
-    const rlB = parseFloat(rows[i + 1].querySelector(".rl-input").value);
+    const rowA = rows[i], rowB = rows[i + 1];
+    const rlA = parseFloat(rowA.querySelector(".rl-input").value);
+    const rlB = parseFloat(rowB.querySelector(".rl-input").value);
     if (!Number.isFinite(rlA) || !Number.isFinite(rlB)) continue;
-    if (rlA >= from && rlB <= to) {
-      const mid = ((rlA + rlB) / 2).toFixed(2);
-      addLiftRow(mid, "", "", rows[i].nextSibling, true);
-      inserted++;
+    if (rlA < from || rlB > to) continue;
+
+    // Never re-subdivide a pair where either side is already an inserted intermediate —
+    // otherwise clicking this button twice roughly doubles the count each time.
+    const aIsMid = !rowA.querySelector(".intermediate-badge").hidden;
+    const bIsMid = !rowB.querySelector(".intermediate-badge").hidden;
+    if (aIsMid || bIsMid) {
+      skippedAlready++;
+      continue;
     }
+
+    const mid = ((rlA + rlB) / 2).toFixed(2);
+    addLiftRow(mid, "", "", rowA.nextSibling, true);
+    inserted++;
   }
 
   statusEl.textContent = inserted
-    ? `Added ${inserted} intermediate grid${inserted === 1 ? "" : "s"} between RL ${from} and RL ${to}.`
+    ? `Added ${inserted} intermediate grid${inserted === 1 ? "" : "s"} between RL ${from} and RL ${to}.${
+        skippedAlready ? ` (${skippedAlready} pair${skippedAlready === 1 ? "" : "s"} already had one — skipped, so this button is safe to click again.)` : ""
+      }`
+    : skippedAlready
+    ? `Everything in RL ${from}–${to} already has an intermediate grid — nothing more to add.`
     : `No consecutive lift pairs found fully within RL ${from}–${to}.`;
   statusEl.className = inserted ? "cutplan-status is-ok" : "cutplan-status is-error";
+  computeAndRender();
+});
+
+document.getElementById("interRemoveBtn").addEventListener("click", () => {
+  const from = parseFloat(document.getElementById("interFromRL").value);
+  const to = parseFloat(document.getElementById("interToRL").value);
+  const statusEl = document.getElementById("interStatus");
+
+  if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to) {
+    statusEl.textContent = "Enter a valid From/To RL range (From must be less than To).";
+    statusEl.className = "cutplan-status is-error";
+    return;
+  }
+
+  const rows = Array.from(tbody.querySelectorAll(".lift-row"));
+  let removed = 0;
+  rows.forEach((row) => {
+    const isMid = !row.querySelector(".intermediate-badge").hidden;
+    const rl = parseFloat(row.querySelector(".rl-input").value);
+    if (isMid && Number.isFinite(rl) && rl >= from && rl <= to) {
+      row.remove();
+      removed++;
+    }
+  });
+
+  statusEl.textContent = removed
+    ? `Removed ${removed} intermediate grid${removed === 1 ? "" : "s"} between RL ${from} and RL ${to}.`
+    : `No intermediate grids found in RL ${from}–${to}.`;
+  statusEl.className = removed ? "cutplan-status is-ok" : "cutplan-status is-error";
   computeAndRender();
 });
 

@@ -292,6 +292,9 @@ input[type="number"]::-webkit-outer-spin-button {
 .generator__row--pair { grid-template-columns: 1fr 1fr; }
 .generator__row .field__unit input { min-width: 0; }
 .generator__hint { font-size: 0.76rem; color: var(--ink-muted); margin: 0 0 0.7rem; }
+.generator__btnrow { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.btn--danger { color: var(--critical); border-color: var(--critical); }
+.btn--danger:hover { background: var(--critical-tint); }
 
 .intermediate-badge {
   display: block;
