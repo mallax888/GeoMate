@@ -423,7 +423,7 @@ function readSettings() {
   };
 }
 
-function addLiftRow(rl = "", faceLength = "", embed = "") {
+function addLiftRow(rl = "", faceLength = "", embed = "", insertBeforeNode = null) {
   const frag = rowTemplate.content.cloneNode(true);
   const row = frag.querySelector(".lift-row");
   row.querySelector(".rl-input").value = rl;
@@ -456,12 +456,19 @@ function addLiftRow(rl = "", faceLength = "", embed = "") {
     computeAndRender();
   });
 
+  row.querySelector(".row-insert").addEventListener("click", () => {
+    const currentRL = parseFloat(row.querySelector(".rl-input").value);
+    const newRL = Number.isFinite(currentRL) ? (currentRL + 0.3).toFixed(2) : "";
+    addLiftRow(newRL, "", "", row.nextSibling);
+    computeAndRender();
+  });
+
   row.querySelector(".extents-release").addEventListener("click", () => {
     releaseExtents(row);
     computeAndRender();
   });
 
-  tbody.appendChild(frag);
+  tbody.insertBefore(frag, insertBeforeNode);
   return row;
 }
 

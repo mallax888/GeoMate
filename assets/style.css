@@ -288,7 +288,8 @@ input[type="number"]::-webkit-outer-spin-button {
   padding: 0.5rem 0.6rem;
 }
 .generator { margin-top: 1.1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
-.generator__row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem; margin-bottom: 0.7rem; }
+.generator__row { display: grid; grid-template-columns: 0.9fr 1.3fr 0.8fr; gap: 0.5rem; margin-bottom: 0.7rem; }
+.generator__row .field__unit input { min-width: 0; }
 
 /* ---------- Buttons ---------- */
 .btn {
@@ -357,7 +358,7 @@ input[type="number"]::-webkit-outer-spin-button {
 .col-embed { width: 6.5rem; }
 .col-strips, .col-overlap, .col-area { width: 5rem; text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .col-diagram { width: 15rem; }
-.col-remove { width: 2rem; }
+.col-remove { width: 3.4rem; white-space: nowrap; }
 .result-cell { color: var(--ink); }
 .result-cell.is-empty { color: var(--ink-muted); }
 
@@ -387,15 +388,16 @@ input[type="number"]::-webkit-outer-spin-button {
   padding: 0.35rem 0.5rem;
   resize: vertical;
 }
-.row-remove {
+.row-remove, .row-insert {
   background: transparent;
   border: none;
   color: var(--ink-muted);
   cursor: pointer;
   font-size: 0.85rem;
-  padding: 0.2rem;
+  padding: 0.2rem 0.3rem;
 }
 .row-remove:hover { color: var(--critical); }
+.row-insert:hover { color: var(--good); }
 
 .strip-diagram { width: 100%; height: 34px; display: block; }
 

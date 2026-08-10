@@ -109,7 +109,7 @@
               <th scope="col" class="col-overlap">Overlap</th>
               <th scope="col" class="col-area">Area</th>
               <th scope="col" class="col-diagram">Layout</th>
-              <th scope="col" class="col-remove"><span class="sr-only">Remove</span></th>
+              <th scope="col" class="col-remove"><span class="sr-only">Insert / remove</span></th>
             </tr>
           </thead>
           <tbody id="liftTableBody"></tbody>
@@ -236,7 +236,10 @@
     <td class="col-overlap result-cell overlap-value">—</td>
     <td class="col-area result-cell area-value">—</td>
     <td class="col-diagram"><svg class="strip-diagram" viewBox="0 0 240 34" preserveAspectRatio="none"></svg></td>
-    <td class="col-remove"><button type="button" class="row-remove" aria-label="Remove lift">✕</button></td>
+    <td class="col-remove">
+      <button type="button" class="row-insert" title="Insert an intermediate lift 300mm above this one" aria-label="Insert lift after">+</button>
+      <button type="button" class="row-remove" aria-label="Remove lift">✕</button>
+    </td>
   </tr>
 </template>
 
