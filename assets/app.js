@@ -190,7 +190,13 @@ const STITCH_MIN = 0.05;
 // Reported strip/stitch lengths are rounded up to this step — practical site numbers, never a raw
 // CAD-precision decimal. Always UP: rounding must never leave a strip shorter than the design requires.
 const ROUND_STEP = 0.05;
+// A raw length within this of the step below is DXF/survey noise (vertex-picking, triangulation),
+// not a real few-mm-longer requirement — snap down to the clean number instead of bumping a full
+// step up for it. Same noise floor as TRIM_THRESHOLD elsewhere in the app.
+const ROUND_SNAP_TOL = 0.02;
 function roundUpToStep(value, step) {
+  const lower = Math.floor(value / step + 1e-9) * step;
+  if (value - lower <= ROUND_SNAP_TOL) return lower;
   return Math.ceil(value / step - 1e-9) * step;
 }
 
@@ -1564,15 +1570,22 @@ function renderCutPlan(results, w) {
 
 function renderCutPlanSvg(svg, cutPlan, w) {
   const ns = "http://www.w3.org/2000/svg";
-  const { poly, face, cutLengths } = cutPlan;
-  const xs = poly.map((p) => p.x), ys = poly.map((p) => p.y);
-  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const { face, cutLengths } = cutPlan;
+
+  // Face-aligned local frame: x = distance along the face (left to right, strip order), y = depth
+  // into the fill. Same rotation the 3D view already uses (localFootprint) — the face is drawn as a
+  // straight horizontal baseline with every strip a clean vertical bar, regardless of which way the
+  // wall actually runs in the DXF's survey coordinates.
+  const localPoly = localFootprint(cutPlan);
+  const xs = localPoly.map((p) => p.x), ys = localPoly.map((p) => p.y);
+  const minX = Math.min(0, ...xs), maxX = Math.max(face.length, ...xs);
+  const minY = Math.min(0, ...ys), maxY = Math.max(...cutLengths, ...ys);
   const W = 400, H = 260, pad = 16;
   const scale = Math.min((W - pad * 2) / Math.max(maxX - minX, 1e-6), (H - pad * 2) / Math.max(maxY - minY, 1e-6));
   const tx = (x) => pad + (x - minX) * scale;
-  const ty = (y) => H - pad - (y - minY) * scale; // flip Y so "up" on screen matches larger Y
+  const ty = (y) => H - pad - (y - minY) * scale; // flip Y so deeper into the fill reads as "up"
 
-  const poly2d = poly.map((p) => `${tx(p.x).toFixed(1)},${ty(p.y).toFixed(1)}`).join(" ");
+  const poly2d = localPoly.map((p) => `${tx(p.x).toFixed(1)},${ty(p.y).toFixed(1)}`).join(" ");
   const polyEl = document.createElementNS(ns, "polygon");
   polyEl.setAttribute("points", poly2d);
   polyEl.setAttribute("fill", "var(--accent-tint)");
@@ -1587,10 +1600,8 @@ function renderCutPlanSvg(svg, cutPlan, w) {
   const actionColor = { full: "var(--accent-strong)", cut: "var(--clay)", fold: "var(--good)", review: "var(--warn)" };
   cutLengths.forEach((len, i) => {
     const station = Math.max(0, Math.min(face.length, i * pitch + w / 2));
-    const pt = pointAtStation(face, station);
-    const n = inwardNormal(pt.tangent);
-    const x1 = tx(pt.x), y1 = ty(pt.y);
-    const x2 = tx(pt.x + n.x * len), y2 = ty(pt.y + n.y * len);
+    const x1 = tx(station), y1 = ty(0);
+    const x2 = tx(station), y2 = ty(len);
     const { action } = classifyStrip(len, maxLen);
     const line = document.createElementNS(ns, "line");
     line.setAttribute("x1", x1.toFixed(1));
@@ -1607,15 +1618,14 @@ function renderCutPlanSvg(svg, cutPlan, w) {
     // table) is what site works from; how exactly to fold or cut to it is a site decision.
 
     // Stitch patches — a separate small piece further back along the same line, past a gap the
-    // main strip's single straight cut can't reach in one piece. Drawn dashed and offset so it
-    // reads as its own patch, not a continuation of the main strip.
+    // main strip's single straight cut can't reach in one piece. Drawn dashed so it reads as its
+    // own patch, not a continuation of the main strip.
     (cutPlan.stitches[i] || []).forEach((s) => {
-      const sx1 = tx(pt.x + n.x * s.offset), sy1 = ty(pt.y + n.y * s.offset);
-      const sx2 = tx(pt.x + n.x * (s.offset + s.length)), sy2 = ty(pt.y + n.y * (s.offset + s.length));
+      const sy1 = ty(s.offset), sy2 = ty(s.offset + s.length);
       const stitchLine = document.createElementNS(ns, "line");
-      stitchLine.setAttribute("x1", sx1.toFixed(1));
+      stitchLine.setAttribute("x1", x1.toFixed(1));
       stitchLine.setAttribute("y1", sy1.toFixed(1));
-      stitchLine.setAttribute("x2", sx2.toFixed(1));
+      stitchLine.setAttribute("x2", x1.toFixed(1));
       stitchLine.setAttribute("y2", sy2.toFixed(1));
       stitchLine.setAttribute("stroke", "var(--accent)");
       stitchLine.setAttribute("stroke-width", "2");
@@ -1627,11 +1637,9 @@ function renderCutPlanSvg(svg, cutPlan, w) {
     if (i % labelEvery === 0) {
       const margin = 6;
       const label = document.createElementNS(ns, "text");
-      // Extrapolate a little past the strip's face-side start, but clamp so it can never land
-      // outside the viewBox — a strip that already spans nearly the full height/width otherwise
-      // pushes its label straight off the edge (invisible, even though it's still in the DOM).
-      const lx = Math.max(margin, Math.min(W - margin, x1 + (x1 - x2) * 0.12));
-      const ly = Math.max(margin, Math.min(H - margin, y1 + (y1 - y2) * 0.12));
+      // Just above the strip's tip, clamped so it can never land outside the viewBox.
+      const lx = Math.max(margin, Math.min(W - margin, x1));
+      const ly = Math.max(margin, Math.min(H - margin, y2 - 8));
       label.setAttribute("x", lx.toFixed(1));
       label.setAttribute("y", ly.toFixed(1));
       label.setAttribute("font-size", "7");
