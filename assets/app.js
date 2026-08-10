@@ -1730,7 +1730,8 @@ function render3D(results) {
   ctx.textBaseline = "middle";
   ctx.textAlign = "right";
 
-  projectedLifts.forEach((lift) => {
+  // Shapes first, in paint order, so every fill/stroke happens before any label is drawn over them.
+  const anchors = projectedLifts.map((lift) => {
     const alt = lift.colorIndex % 2 === 1;
     const screenPts = lift.pts.map(toScreen);
     ctx.beginPath();
@@ -1743,19 +1744,30 @@ function render3D(results) {
     ctx.strokeStyle = alt ? clay : accent;
     ctx.lineWidth = 1.1;
     ctx.stroke();
+    return { lift, anchorX: screenPts[0].x, anchorY: screenPts[0].y };
+  });
 
-    const anchorY = screenPts[0].y;
+  // Labels sit in a fixed, evenly-spaced column in RL order (highest at top) rather than at each
+  // lift's raw projected position — once lifts have very different face lengths/shapes (normal for
+  // a real site), their true positions scatter unpredictably and sorting by that scrambles the RL
+  // sequence into something unreadable. A leader line still points each label at its true anchor.
+  const topMargin = 20;
+  const maxGap = 13;
+  const gap = anchors.length > 1 ? Math.min(maxGap, (H - topMargin * 2) / (anchors.length - 1)) : 0;
+  const labelY = anchors.map((_, i) => topMargin + (anchors.length - 1 - i) * gap);
+
+  anchors.forEach(({ lift, anchorX, anchorY }, i) => {
     ctx.strokeStyle = inkMuted;
     ctx.globalAlpha = 0.35;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(labelX + 4, anchorY);
-    ctx.lineTo(screenPts[0].x, anchorY);
+    ctx.moveTo(labelX + 4, labelY[i]);
+    ctx.lineTo(anchorX, anchorY);
     ctx.stroke();
     ctx.globalAlpha = 1;
 
     ctx.fillStyle = ink;
-    ctx.fillText(`RL ${lift.rlLabel}`, labelX, anchorY);
+    ctx.fillText(`RL ${lift.rlLabel}`, labelX, labelY[i]);
   });
 
   ctx.fillStyle = inkMuted;
