@@ -1000,7 +1000,7 @@ document.getElementById("printCutPlanBtn").addEventListener("click", () => {
       return `
         <section class="cutplan-print-page">
           <div class="cutplan-print-page__head">
-            <h3>${csvEscape(project)} — RL ${r.rl}</h3>
+            <h3>${escapeHtml(project)} — RL ${escapeHtml(r.rl)}</h3>
             <p>${r.n} strips · face ${fmt.m(r.L)} m · ${trimCount} need trimming · roll width ${fmt.m(r.materialWidth / r.n)} m</p>
           </div>
           <table class="cutplan-print-table">
@@ -1059,7 +1059,7 @@ function renderSequence(results, w) {
     }
 
     const next = results[i + 1];
-    const fillTarget = next ? `RL ${next.rl || "the next lift"}` : "final design surface";
+    const fillTarget = next ? `RL ${escapeHtml(next.rl) || "the next lift"}` : "final design surface";
     const embedText =
       r.mode === "extents"
         ? `cut individually per the Cut Plan tab (${fmt.m(Math.min(...r.stripLengths))}–${fmt.m(Math.max(...r.stripLengths))} m)`
@@ -1068,7 +1068,7 @@ function renderSequence(results, w) {
     li.innerHTML = `
       <div class="sequence-card__head">
         <span class="sequence-card__order">${i + 1}</span>
-        <span class="sequence-card__rl">RL ${r.rl || "—"}</span>
+        <span class="sequence-card__rl">RL ${escapeHtml(r.rl) || "—"}</span>
       </div>
       <ol class="sequence-card__steps">
         <li>Roll out ${r.n} strip${r.n === 1 ? "" : "s"} across the ${fmt.m(r.L)} m face${
@@ -1248,7 +1248,7 @@ function renderCutPlan(results, w) {
 
     card.innerHTML = `
       <div class="cutplan-card__head">
-        <span class="cutplan-card__rl">RL ${r.rl || "—"}</span>
+        <span class="cutplan-card__rl">RL ${escapeHtml(r.rl) || "—"}</span>
         <span class="cutplan-card__meta">${r.n} strips · face ${fmt.m(r.L)} m · ${trimCount} need trimming</span>
         <button type="button" class="btn btn--ghost cutplan-card__swap" data-row-id="${id}">Swap face/back</button>
       </div>
@@ -1362,7 +1362,7 @@ function render3D(results) {
   const { yaw, pitch, zoom, panX, panY } = view3DState;
 
   let minSX = Infinity, maxSX = -Infinity, minSY = Infinity, maxSY = -Infinity;
-  const projectedLifts = lifts.map((lift) => {
+  const projectedLifts = lifts.map((lift, colorIndex) => {
     const z = lift.rl - baseRL;
     const pts = lift.footprint.map((p) => project3D(p.x, p.y, z, yaw, pitch));
     pts.forEach((p) => {
@@ -1372,7 +1372,7 @@ function render3D(results) {
       maxSY = Math.max(maxSY, p.sy);
     });
     const depth = pts.reduce((s, p) => s + p.depth, 0) / pts.length;
-    return { ...lift, pts, depth };
+    return { ...lift, pts, depth, colorIndex }; // colorIndex fixed in RL order, independent of paint-order sort below
   });
 
   const boxW = Math.max(maxSX - minSX, 1e-6);
@@ -1383,35 +1383,48 @@ function render3D(results) {
   const cx = W / 2 + panX, cy = H / 2 + panY;
   const midSX = (minSX + maxSX) / 2, midSY = (minSY + maxSY) / 2;
   const toScreen = (p) => ({ x: cx + (p.sx - midSX) * scale, y: cy + (p.sy - midSY) * scale });
+  const labelX = cx + (minSX - midSX) * scale - 10; // one aligned column, left of the whole stack
 
-  projectedLifts.sort((a, b) => a.depth - b.depth);
+  projectedLifts.sort((a, b) => a.depth - b.depth); // paint order only — colorIndex above stays fixed to RL order
 
   const style = getComputedStyle(document.documentElement);
   const accent = style.getPropertyValue("--accent").trim();
   const accentTint = style.getPropertyValue("--accent-tint").trim();
+  const clay = style.getPropertyValue("--clay").trim();
+  const clayTint = style.getPropertyValue("--clay-tint").trim();
   const ink = style.getPropertyValue("--ink").trim();
   const inkMuted = style.getPropertyValue("--ink-muted").trim();
 
   ctx.font = "11px " + (style.getPropertyValue("--font-mono").trim() || "monospace");
   ctx.textBaseline = "middle";
+  ctx.textAlign = "right";
 
   projectedLifts.forEach((lift) => {
+    const alt = lift.colorIndex % 2 === 1;
     const screenPts = lift.pts.map(toScreen);
     ctx.beginPath();
     screenPts.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
     ctx.closePath();
-    ctx.fillStyle = accentTint;
+    ctx.fillStyle = alt ? clayTint : accentTint;
     ctx.globalAlpha = 0.82;
     ctx.fill();
     ctx.globalAlpha = 1;
-    ctx.strokeStyle = accent;
+    ctx.strokeStyle = alt ? clay : accent;
     ctx.lineWidth = 1.1;
     ctx.stroke();
 
-    const labelPt = screenPts[0];
+    const anchorY = screenPts[0].y;
+    ctx.strokeStyle = inkMuted;
+    ctx.globalAlpha = 0.35;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(labelX + 4, anchorY);
+    ctx.lineTo(screenPts[0].x, anchorY);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
     ctx.fillStyle = ink;
-    ctx.textAlign = labelPt.x < cx ? "right" : "left";
-    ctx.fillText(`RL ${lift.rlLabel}`, labelPt.x + (labelPt.x < cx ? -6 : 6), labelPt.y);
+    ctx.fillText(`RL ${lift.rlLabel}`, labelX, anchorY);
   });
 
   ctx.fillStyle = inkMuted;
@@ -1515,6 +1528,11 @@ document.getElementById("exportBtn").addEventListener("click", () => {
 function csvEscape(str) {
   const s = String(str);
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/** RL and the project name are free-text user input rendered via innerHTML in several places — escape before inserting. */
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
 /* ============================================================
