@@ -982,12 +982,9 @@ tab3D.addEventListener("click", () => switchTab("view3d"));
 staggerToggle.addEventListener("change", computeAndRender);
 document.getElementById("printSequenceBtn").addEventListener("click", () => window.print());
 
-document.getElementById("printCutPlanBtn").addEventListener("click", () => {
-  const results = window.__geogridCutPlanResults || [];
-  const printView = document.getElementById("cutPlanPrintView");
-  const project = document.getElementById("projectName").value || "Geogrid takeoff";
-
-  printView.innerHTML = results
+/** One <section class="cutplan-print-page"> per extents lift — shared by the Cut Plan print button and the full export. */
+function buildCutPlanPrintPages(results, project) {
+  return results
     .map((r) => {
       const maxLen = Math.max(...r.stripLengths);
       const trimCount = r.stripLengths.filter((len) => len < maxLen - TRIM_THRESHOLD).length;
@@ -1011,13 +1008,94 @@ document.getElementById("printCutPlanBtn").addEventListener("click", () => {
       `;
     })
     .join("");
+}
 
+document.getElementById("printCutPlanBtn").addEventListener("click", () => {
+  const results = window.__geogridCutPlanResults || [];
+  const project = document.getElementById("projectName").value || "Geogrid takeoff";
+  document.getElementById("cutPlanPrintView").innerHTML = buildCutPlanPrintPages(results, project);
   document.body.classList.add("printing-cutplan");
   window.print();
 });
 
 window.addEventListener("afterprint", () => {
   document.body.classList.remove("printing-cutplan");
+  document.body.classList.remove("printing-full");
+});
+
+document.getElementById("exportFullPdfBtn").addEventListener("click", () => {
+  const results = window.__geogridResults || [];
+  const project = document.getElementById("projectName").value || "Geogrid takeoff";
+  const { rollLength } = readSettings();
+
+  const coverSheet = `
+    <section class="export-sheet">
+      <h2>${escapeHtml(project)} — material schedule</h2>
+      <dl class="export-sheet__stats">
+        <div><dt>Lifts</dt><dd>${fmt.int(document.querySelectorAll("#liftTableBody .lift-row").length)}</dd></div>
+        <div><dt>Total strips</dt><dd>${document.getElementById("statStrips").textContent}</dd></div>
+        <div><dt>Grid area</dt><dd>${document.getElementById("statArea").textContent}</dd></div>
+        <div><dt>Rolls to order</dt><dd>${document.getElementById("statRolls").textContent}</dd></div>
+        <div><dt>Overlap waste</dt><dd>${document.getElementById("wasteOverlap").textContent}</dd></div>
+        <div><dt>Roll off-cut waste</dt><dd>${document.getElementById("wasteOffcut").textContent}</dd></div>
+      </dl>
+    </section>
+  `;
+
+  const takeoffRows = results
+    .map(
+      (r) => `<tr>
+        <td>${escapeHtml(r.rl)}</td>
+        <td>${fmt.m(r.L)}</td>
+        <td>${r.mode === "extents" ? "variable" : fmt.m(r.embed)}</td>
+        <td>${r.n}</td>
+        <td>${r.n > 1 ? fmt.mm(r.overlap) + " mm" : "—"}</td>
+        <td>${fmt.m(r.area)}</td>
+      </tr>`
+    )
+    .join("");
+  const takeoffSheet = `
+    <section class="export-sheet">
+      <h2>Takeoff table</h2>
+      <table class="export-table">
+        <thead><tr><th>RL</th><th>Face length (m)</th><th>Embedment (m)</th><th>Strips</th><th>Overlap</th><th>Area (m²)</th></tr></thead>
+        <tbody>${takeoffRows}</tbody>
+      </table>
+    </section>
+  `;
+
+  const seqRows = results
+    .map((r, i) => {
+      const next = results[i + 1];
+      const fillTarget = next ? `RL ${escapeHtml(next.rl) || "next lift"}` : "final design surface";
+      const embedText = r.mode === "extents" ? `${fmt.m(Math.min(...r.stripLengths))}–${fmt.m(Math.max(...r.stripLengths))} m (cut plan)` : `${fmt.m(r.embed)} m`;
+      return `<tr>
+        <td>${i + 1}</td><td>${escapeHtml(r.rl)}</td><td>${r.n}</td>
+        <td>${r.n > 1 ? fmt.mm(r.overlap) + " mm" : "—"}</td><td>${embedText}</td><td>Fill to ${fillTarget}</td>
+      </tr>`;
+    })
+    .join("");
+  const sequenceSheet = `
+    <section class="export-sheet">
+      <h2>Installation sequence</h2>
+      <table class="export-table">
+        <thead><tr><th>Order</th><th>RL</th><th>Strips</th><th>Overlap</th><th>Embedment</th><th>Then</th></tr></thead>
+        <tbody>${seqRows}</tbody>
+      </table>
+    </section>
+  `;
+
+  const extentsResults = results.filter((r) => r.mode === "extents" && r.cutPlan);
+  const cutPlanSheets = extentsResults.length ? buildCutPlanPrintPages(extentsResults, project) : "";
+
+  const canvasDataUrl = view3DCanvas ? view3DCanvas.toDataURL("image/png") : null;
+  const view3dSheet = canvasDataUrl
+    ? `<section class="export-sheet export-sheet__3d"><h2>3D view</h2><img src="${canvasDataUrl}" alt="3D stacked view of all lifts" /></section>`
+    : "";
+
+  document.getElementById("fullExportPrintView").innerHTML = coverSheet + takeoffSheet + sequenceSheet + cutPlanSheets + view3dSheet;
+  document.body.classList.add("printing-full");
+  window.print();
 });
 
 const TABS = {

@@ -701,7 +701,29 @@ input[type="number"]::-webkit-outer-spin-button {
   body.printing-cutplan .cutplan-print-view { display: block; }
   .cutplan-print-page { break-inside: avoid; break-after: page; }
   .cutplan-print-page:last-child { break-after: auto; }
+
+  body.printing-full .layout { display: none !important; }
+  body.printing-full .full-export-print { display: block !important; }
 }
+
+.full-export-print { display: none; }
+.export-sheet { break-after: page; padding: 0 0 1rem; }
+.export-sheet:last-child { break-after: auto; }
+.export-sheet h2 {
+  font-family: var(--font-mono); font-size: 1rem; text-transform: uppercase; letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--line); padding-bottom: 0.5rem; margin: 0 0 1rem;
+}
+.export-sheet__stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.8rem; margin-bottom: 1.5rem; }
+.export-sheet__stats div { border: 1px solid var(--line); border-radius: 4px; padding: 0.6rem 0.8rem; }
+.export-sheet__stats dt { font-size: 0.68rem; text-transform: uppercase; color: var(--ink-muted); letter-spacing: 0.04em; }
+.export-sheet__stats dd { font-family: var(--font-mono); font-size: 1.1rem; margin: 0.2rem 0 0; }
+.export-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.export-table th, .export-table td {
+  text-align: left; padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--line);
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+}
+.export-table th { text-transform: uppercase; font-size: 0.64rem; color: var(--ink-muted); }
+.export-sheet__3d img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 4px; }
 
 /* ---------- Footer ---------- */
 .foot {
