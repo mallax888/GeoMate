@@ -289,7 +289,21 @@ input[type="number"]::-webkit-outer-spin-button {
 }
 .generator { margin-top: 1.1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
 .generator__row { display: grid; grid-template-columns: 0.9fr 1.3fr 0.8fr; gap: 0.5rem; margin-bottom: 0.7rem; }
+.generator__row--pair { grid-template-columns: 1fr 1fr; }
 .generator__row .field__unit input { min-width: 0; }
+.generator__hint { font-size: 0.76rem; color: var(--ink-muted); margin: 0 0 0.7rem; }
+
+.intermediate-badge {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-muted);
+  text-align: right;
+  margin-top: 0.15rem;
+}
+.intermediate-badge[hidden] { display: none; }
 
 /* ---------- Buttons ---------- */
 .btn {

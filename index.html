@@ -73,6 +73,23 @@
       <button id="genBtn" class="btn btn--primary" type="button">Generate lift rows</button>
     </div>
 
+    <div class="generator">
+      <h3 class="panel__subheading">Add intermediate grids</h3>
+      <p class="generator__hint">Inserts one grid midway between every consecutive pair of lifts whose RLs fall inside this range.</p>
+      <div class="generator__row generator__row--pair">
+        <label class="field field--compact">
+          <span>From RL</span>
+          <input type="number" id="interFromRL" step="0.01" placeholder="49.70" />
+        </label>
+        <label class="field field--compact">
+          <span>To RL</span>
+          <input type="number" id="interToRL" step="0.01" placeholder="62.90" />
+        </label>
+      </div>
+      <button id="interBtn" class="btn btn--ghost" type="button">Add intermediate grids</button>
+      <p id="interStatus" class="cutplan-status"></p>
+    </div>
+
     <details class="methodology">
       <summary>How the numbers are calculated</summary>
       <dl>
@@ -220,6 +237,7 @@
   <tr class="lift-row">
     <td class="col-rl">
       <input type="text" class="rl-input" inputmode="decimal" />
+      <span class="intermediate-badge" hidden title="Intermediate grid, inserted between two main lifts">mid</span>
     </td>
     <td class="col-face">
       <div class="face-input">
