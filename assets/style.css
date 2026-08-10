@@ -632,6 +632,7 @@ input[type="number"]::-webkit-outer-spin-button {
 .cutplan-card__strips li.is-cut { color: var(--clay); background: var(--clay-tint); }
 .cutplan-card__strips li.is-fold { color: var(--good); background: var(--good-tint); }
 .cutplan-card__strips li.is-review { color: var(--warn); background: var(--warn-tint); }
+.cutplan-card__strips li.is-stitch { color: var(--accent-strong); background: var(--accent-tint); font-style: italic; }
 
 .cutplan-list-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 0.6rem; }
 .cutplan-list-head .empty-state { margin: 0; padding: 0; }
@@ -654,6 +655,7 @@ input[type="number"]::-webkit-outer-spin-button {
 .cutplan-print-table tr.is-cut td { color: var(--clay); }
 .cutplan-print-table tr.is-fold td { color: var(--good); }
 .cutplan-print-table tr.is-review td { color: var(--warn); }
+.cutplan-print-table tr.is-stitch td { color: var(--accent-strong); font-style: italic; }
 
 .extents-badge {
   flex: none;

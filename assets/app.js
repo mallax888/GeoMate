@@ -148,28 +148,53 @@ function pointAtStation(chain, station) {
   return { x: last.to.x, y: last.to.y, tangent: { x: last.x, y: last.y } };
 }
 
-function castRay(origin, dir, poly, excludeEdges) {
-  let best = Infinity;
+/**
+ * All "inside the polygon" intervals along a ray from `origin` in direction `dir`, found via the
+ * even-odd rule (count boundary crossings; odd = inside). This is deliberately global — every edge
+ * of the polygon is tested, not just a designated "back" chain — and even-odd is well-defined even
+ * for a self-intersecting or reentrant boundary, so it can't latch onto the wrong nearby edge the way
+ * a "nearest single hit" ray cast can. Segments are returned in order along the ray.
+ */
+function insideSegments(origin, dir, poly) {
   const n = poly.length;
+  const hits = [];
   for (let i = 0; i < n; i++) {
     const p = poly[i], q = poly[(i + 1) % n];
-    if (excludeEdges.some((e) => e.from === p && e.to === q)) continue;
     const sx = q.x - p.x, sy = q.y - p.y;
     const denom = dir.x * sy - dir.y * sx;
     if (Math.abs(denom) < 1e-9) continue;
     const dx = p.x - origin.x, dy = p.y - origin.y;
     const t = (dx * sy - dy * sx) / denom;
     const u = (dx * dir.y - dy * dir.x) / denom;
-    if (t > 1e-6 && u >= -1e-6 && u <= 1 + 1e-6 && t < best) best = t;
+    if (t > 1e-6 && u >= -1e-6 && u <= 1 + 1e-6) hits.push(t);
   }
-  return best;
+  hits.sort((a, b) => a - b);
+  let inside = hits.length % 2 === 1; // even-odd rule for the origin itself, using this same ray
+  const segments = [];
+  let prev = 0;
+  hits.forEach((t) => {
+    if (inside) segments.push({ start: prev, end: t });
+    inside = !inside;
+    prev = t;
+  });
+  return segments;
 }
 
 function inwardNormal(tangent) {
   return { x: -tangent.y, y: tangent.x };
 }
 
-/** Full cut plan for one lift's extents polygon: face length, strip count/overlap, and each strip's clipped cut length. */
+// Below this, a gap or leftover pocket along a strip's ray isn't worth a separate stitch strip.
+const STITCH_MIN = 0.05;
+
+/**
+ * Full cut plan for one lift's extents polygon: face length, strip count/overlap, and each strip's
+ * clipped cut length. Every strip is cut with one straight, square (perpendicular) trim from a single
+ * fixed direction for the whole lift — never a locally-varying angle that tries to hug every kink in
+ * the boundary — because grids only ever get a square cut. Where the boundary has a separate pocket of
+ * area beyond a gap that a strip's single straight cut can't reach in one piece, that pocket is
+ * reported as a "stitch" — a small supplementary patch strip — rather than distorting the main strip.
+ */
 function computeCutPlan(rawPoints, w, oMin, swapped) {
   const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
   const chains = chainEdges(poly);
@@ -181,13 +206,21 @@ function computeCutPlan(rawPoints, w, oMin, swapped) {
   if (!result) return null;
   const pitch = result.n > 1 ? w - result.overlap : 0;
 
+  // Fixed for the whole lift, not recomputed per strip from a locally-varying tangent — every strip
+  // is parallel, which is what "grids can only ever be square" means in practice.
+  const inward = inwardNormal(face.dir);
+
   const cutLengths = [];
+  const stitches = [];
   for (let i = 0; i < result.n; i++) {
     const station = Math.max(0, Math.min(face.length, i * pitch + w / 2));
     const pt = pointAtStation(face, station);
-    const normal = inwardNormal(pt.tangent);
-    const dist = castRay(pt, normal, poly, face.edges);
-    cutLengths.push(Number.isFinite(dist) ? dist : 0);
+    const segments = insideSegments(pt, inward, poly);
+    const main = segments.find((s) => s.start <= 1e-6);
+    cutLengths.push(main ? main.end : 0);
+    stitches.push(
+      segments.filter((s) => s !== main && s.end - s.start > STITCH_MIN).map((s) => ({ offset: s.start, length: s.end - s.start }))
+    );
   }
 
   return {
@@ -199,6 +232,7 @@ function computeCutPlan(rawPoints, w, oMin, swapped) {
     overlap: result.overlap,
     materialWidth: result.materialWidth,
     cutLengths,
+    stitches,
     polygonArea: Math.abs(signedArea(poly)),
   };
 }
@@ -903,7 +937,10 @@ function computeAndRender() {
 
     strips.textContent = result.n;
     overlapCell.textContent = result.n > 1 ? `${fmt.mm(result.overlap)} mm` : "—";
-    const area = stripLengths.reduce((s, len) => s + w * len, 0);
+    // Stitch patches (extra material for a boundary pocket a strip's single straight cut can't reach)
+    // consume grid too, so they count toward area, roll purchasing, and waste stats same as any strip.
+    const stitchLengths = cutPlan ? cutPlan.stitches.flat().map((s) => s.length) : [];
+    const area = stripLengths.reduce((s, len) => s + w * len, 0) + stitchLengths.reduce((s, len) => s + w * len, 0);
     areaCell.textContent = fmt.m(area);
     renderDiagram(diagram, L, result, w);
 
@@ -917,6 +954,7 @@ function computeAndRender() {
       overlap: result.overlap,
       materialWidth: result.materialWidth,
       stripLengths,
+      stitchLengths,
       area,
       theoreticalArea,
       embed: mode === "extents" ? null : parseFloat(embedInput.value) || 0,
@@ -975,8 +1013,9 @@ function renderSummary(results, rollLength) {
     wasteOverlapEl.className = "waste-row__pct";
   }
 
-  // Every individual strip length across the whole project, flattened for bin-packing and for the breakdown table.
-  const allLengths = results.flatMap((r) => r.stripLengths);
+  // Every individual strip length across the whole project (plus any stitch patches), flattened for
+  // bin-packing and for the breakdown table.
+  const allLengths = results.flatMap((r) => [...r.stripLengths, ...(r.stitchLengths || [])]);
 
   // Bucket into 100mm bands purely for the readable breakdown table.
   const buckets = new Map();
@@ -1053,18 +1092,27 @@ function buildCutPlanPrintPages(results, project, w) {
       const cutCount = classified.filter((c) => c.action === "cut").length;
       const foldCount = classified.filter((c) => c.action === "fold").length;
       const reviewCount = classified.filter((c) => c.action === "review").length;
+      const stitchCount = r.cutPlan.stitches.reduce((s, arr) => s + arr.length, 0);
       const noteByAction = { full: "Full length", fold: "Fold", cut: "Cut", review: "Cut — review" };
       const rows = r.stripLengths
         .map((len, i) => {
           const { action, excess } = classifyStrip(len, maxLen);
           const detail = action === "fold" || action === "review" ? ` (${fmt.mm(excess)} mm)` : "";
-          return `<tr class="${action !== "full" ? `is-${action}` : ""}"><td>${i + 1}</td><td>${fmt.m(len)} m</td><td>${noteByAction[action]}${detail}</td></tr>`;
+          const mainRow = `<tr class="${action !== "full" ? `is-${action}` : ""}"><td>${i + 1}</td><td>${fmt.m(len)} m</td><td>${noteByAction[action]}${detail}</td></tr>`;
+          const stitchRows = (r.cutPlan.stitches[i] || [])
+            .map(
+              (s, si) =>
+                `<tr class="is-stitch"><td>${i + 1}${r.cutPlan.stitches[i].length > 1 ? `.${si + 1}` : ""}</td><td>${fmt.m(s.length)} m</td><td>Stitch, starts ${fmt.m(s.offset)} m back</td></tr>`
+            )
+            .join("");
+          return mainRow + stitchRows;
         })
         .join("");
       const metaParts = [`${r.n} strips`, `face ${fmt.m(r.L)} m`];
       if (cutCount) metaParts.push(`${cutCount} to cut`);
       if (foldCount) metaParts.push(`${foldCount} to fold`);
       if (reviewCount) metaParts.push(`${reviewCount} need review`);
+      if (stitchCount) metaParts.push(`${stitchCount} stitch patch${stitchCount === 1 ? "" : "es"}`);
       metaParts.push(`roll width ${fmt.m(r.materialWidth / r.n)} m`);
       return `
         <section class="cutplan-print-page">
@@ -1259,16 +1307,40 @@ document.getElementById("dxfExtentsInput").addEventListener("change", async (e) 
     }
 
     const hasZ = polygons.some((p) => Math.abs(p.meanZ) > 1e-6);
-    if (hasZ) polygons.sort((a, b) => a.meanZ - b.meanZ);
-
     const rows = Array.from(tbody.querySelectorAll(".lift-row"));
-    const count = Math.min(rows.length, polygons.length);
-    for (let i = 0; i < count; i++) applyExtents(rows[i], polygons[i].points);
+    let matched = 0;
 
-    statusEl.textContent = `Matched ${count} of ${polygons.length} extents to ${rows.length} lift${rows.length === 1 ? "" : "s"}${
-      hasZ ? " (sorted by elevation)" : " (file order — verify against RL order)"
-    }.`;
-    statusEl.className = "cutplan-status is-ok";
+    if (hasZ) {
+      // Match each row to the polygon whose elevation is closest to that row's own RL — not by
+      // sorted position — so a table that doesn't have exactly one row per polygon (extra/missing
+      // lifts, intermediate grids) can't silently shift every later match onto the wrong RL.
+      const ELEV_TOL = 0.03; // metres
+      const used = new Set();
+      rows.forEach((row) => {
+        const rl = parseFloat(row.querySelector(".rl-input").value);
+        if (!Number.isFinite(rl)) return;
+        let best = -1, bestDiff = Infinity;
+        polygons.forEach((p, idx) => {
+          if (used.has(idx)) return;
+          const diff = Math.abs(p.meanZ - rl);
+          if (diff < bestDiff) { bestDiff = diff; best = idx; }
+        });
+        if (best !== -1 && bestDiff <= ELEV_TOL) {
+          applyExtents(row, polygons[best].points);
+          used.add(best);
+          matched++;
+        }
+      });
+      statusEl.textContent = `Matched ${matched} of ${polygons.length} extents to lift RLs (by elevation, within ${Math.round(ELEV_TOL * 1000)} mm)${
+        matched < polygons.length ? ` — ${polygons.length - matched} polygon${polygons.length - matched === 1 ? "" : "s"} had no matching RL in the table.` : "."
+      }`;
+    } else {
+      const count = Math.min(rows.length, polygons.length);
+      for (let i = 0; i < count; i++) applyExtents(rows[i], polygons[i].points);
+      matched = count;
+      statusEl.textContent = `Matched ${count} of ${polygons.length} extents to ${rows.length} lift${rows.length === 1 ? "" : "s"} (file order — verify against RL order).`;
+    }
+    statusEl.className = matched ? "cutplan-status is-ok" : "cutplan-status is-error";
     switchTab("cutplan");
     computeAndRender();
   } catch (err) {
@@ -1402,10 +1474,12 @@ function renderCutPlan(results, w) {
     const cutCount = classified0.filter((c) => c.action === "cut").length;
     const foldCount = classified0.filter((c) => c.action === "fold").length;
     const reviewCount = classified0.filter((c) => c.action === "review").length;
+    const stitchCount = r.cutPlan.stitches.reduce((s, arr) => s + arr.length, 0);
     const metaParts = [`${r.n} strips`, `face ${fmt.m(r.L)} m`];
     if (cutCount) metaParts.push(`${cutCount} to cut`);
     if (foldCount) metaParts.push(`${foldCount} to fold`);
     if (reviewCount) metaParts.push(`${reviewCount} need review`);
+    if (stitchCount) metaParts.push(`${stitchCount} stitch patch${stitchCount === 1 ? "" : "es"}`);
 
     card.innerHTML = `
       <div class="cutplan-card__head">
@@ -1434,6 +1508,13 @@ function renderCutPlan(results, w) {
       if (action !== "full") li.classList.add(`is-${action}`);
       li.innerHTML = `<span>Strip ${i + 1}</span><span>${noteByAction[action]}</span>`;
       stripsList.appendChild(li);
+
+      (r.cutPlan.stitches[i] || []).forEach((s, si) => {
+        const stitchLi = document.createElement("li");
+        stitchLi.classList.add("is-stitch");
+        stitchLi.innerHTML = `<span>Strip ${i + 1} — stitch${(r.cutPlan.stitches[i].length > 1 ? " " + (si + 1) : "")}</span><span>${fmt.m(s.length)} m, starts ${fmt.m(s.offset)} m back from face</span>`;
+        stripsList.appendChild(stitchLi);
+      });
     });
 
     renderCutPlanSvg(card.querySelector(".cutplan-card__plan"), r.cutPlan, w);
@@ -1495,6 +1576,24 @@ function renderCutPlanSvg(svg, cutPlan, w) {
       tick.setAttribute("stroke-width", "2.5");
       svg.appendChild(tick);
     }
+
+    // Stitch patches — a separate small piece further back along the same line, past a gap the
+    // main strip's single straight cut can't reach in one piece. Drawn dashed and offset so it
+    // reads as its own patch, not a continuation of the main strip.
+    (cutPlan.stitches[i] || []).forEach((s) => {
+      const sx1 = tx(pt.x + n.x * s.offset), sy1 = ty(pt.y + n.y * s.offset);
+      const sx2 = tx(pt.x + n.x * (s.offset + s.length)), sy2 = ty(pt.y + n.y * (s.offset + s.length));
+      const stitchLine = document.createElementNS(ns, "line");
+      stitchLine.setAttribute("x1", sx1.toFixed(1));
+      stitchLine.setAttribute("y1", sy1.toFixed(1));
+      stitchLine.setAttribute("x2", sx2.toFixed(1));
+      stitchLine.setAttribute("y2", sy2.toFixed(1));
+      stitchLine.setAttribute("stroke", "var(--accent)");
+      stitchLine.setAttribute("stroke-width", "2");
+      stitchLine.setAttribute("stroke-linecap", "round");
+      stitchLine.setAttribute("stroke-dasharray", "3,2");
+      svg.appendChild(stitchLine);
+    });
 
     if (i % labelEvery === 0) {
       const margin = 6;
@@ -1707,6 +1806,10 @@ document.getElementById("exportBtn").addEventListener("click", () => {
       r.stripLengths.forEach((len, i) => {
         const { action, excess } = classifyStrip(len, maxLen);
         lines.push([csvEscape(r.rl), i + 1, len.toFixed(3), action, action === "full" ? "" : Math.round(excess * 1000)].join(","));
+        (r.cutPlan.stitches[i] || []).forEach((s, si) => {
+          const label = r.cutPlan.stitches[i].length > 1 ? `${i + 1}.${si + 1}` : `${i + 1}`;
+          lines.push([csvEscape(r.rl), label, s.length.toFixed(3), "stitch", Math.round(s.offset * 1000)].join(","));
+        });
       });
     });
   }
