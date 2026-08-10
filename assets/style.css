@@ -629,7 +629,9 @@ input[type="number"]::-webkit-outer-spin-button {
   border-bottom: 1px solid var(--line);
 }
 .cutplan-card__strips li:last-child { border-bottom: none; }
-.cutplan-card__strips li.is-trim { color: var(--clay); background: var(--clay-tint); }
+.cutplan-card__strips li.is-cut { color: var(--clay); background: var(--clay-tint); }
+.cutplan-card__strips li.is-fold { color: var(--good); background: var(--good-tint); }
+.cutplan-card__strips li.is-review { color: var(--warn); background: var(--warn-tint); }
 
 .cutplan-list-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 0.6rem; }
 .cutplan-list-head .empty-state { margin: 0; padding: 0; }
@@ -649,7 +651,9 @@ input[type="number"]::-webkit-outer-spin-button {
   font-variant-numeric: tabular-nums;
 }
 .cutplan-print-table th { text-transform: uppercase; font-size: 0.68rem; letter-spacing: 0.05em; color: var(--ink-muted); }
-.cutplan-print-table tr.is-trim td { color: var(--clay); }
+.cutplan-print-table tr.is-cut td { color: var(--clay); }
+.cutplan-print-table tr.is-fold td { color: var(--good); }
+.cutplan-print-table tr.is-review td { color: var(--warn); }
 
 .extents-badge {
   flex: none;

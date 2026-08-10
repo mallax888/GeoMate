@@ -803,6 +803,22 @@ function renderDiagram(svg, L, result, w, W = 240, H = 34) {
 // clipping differences aren't practically meaningful to a crew cutting on site.
 const TRIM_THRESHOLD = 0.02;
 
+// A trimmed strip's leftover (design length minus cut length) is either folded back on
+// itself or cut off, per site instruction: under 500mm it can be folded without fouling
+// the grid layer above; at 600mm or more it must be cut. 500-600mm is a judgement call,
+// so it's flagged for review rather than silently assigned either way.
+const FOLD_MAX = 0.5;
+const CUT_MIN = 0.6;
+
+/** Classifies a trimmed strip's leftover material as fold / cut / review, or "full" if untrimmed. */
+function classifyStrip(len, maxLen) {
+  const excess = maxLen - len;
+  if (excess <= TRIM_THRESHOLD) return { action: "full", excess };
+  if (excess < FOLD_MAX) return { action: "fold", excess };
+  if (excess >= CUT_MIN) return { action: "cut", excess };
+  return { action: "review", excess };
+}
+
 const fmt = {
   int: (v) => v.toLocaleString(undefined, { maximumFractionDigits: 0 }),
   m: (v) => v.toLocaleString(undefined, { maximumFractionDigits: 2 }),
@@ -1033,18 +1049,28 @@ function buildCutPlanPrintPages(results, project, w) {
   return results
     .map((r) => {
       const maxLen = Math.max(...r.stripLengths);
-      const trimCount = r.stripLengths.filter((len) => len < maxLen - TRIM_THRESHOLD).length;
+      const classified = r.stripLengths.map((len) => classifyStrip(len, maxLen));
+      const cutCount = classified.filter((c) => c.action === "cut").length;
+      const foldCount = classified.filter((c) => c.action === "fold").length;
+      const reviewCount = classified.filter((c) => c.action === "review").length;
+      const noteByAction = { full: "Full length", fold: "Fold", cut: "Cut", review: "Cut — review" };
       const rows = r.stripLengths
         .map((len, i) => {
-          const isTrim = len < maxLen - TRIM_THRESHOLD;
-          return `<tr class="${isTrim ? "is-trim" : ""}"><td>${i + 1}</td><td>${fmt.m(len)} m</td><td>${isTrim ? "Trim" : "Full length"}</td></tr>`;
+          const { action, excess } = classifyStrip(len, maxLen);
+          const detail = action === "fold" || action === "review" ? ` (${fmt.mm(excess)} mm)` : "";
+          return `<tr class="${action !== "full" ? `is-${action}` : ""}"><td>${i + 1}</td><td>${fmt.m(len)} m</td><td>${noteByAction[action]}${detail}</td></tr>`;
         })
         .join("");
+      const metaParts = [`${r.n} strips`, `face ${fmt.m(r.L)} m`];
+      if (cutCount) metaParts.push(`${cutCount} to cut`);
+      if (foldCount) metaParts.push(`${foldCount} to fold`);
+      if (reviewCount) metaParts.push(`${reviewCount} need review`);
+      metaParts.push(`roll width ${fmt.m(r.materialWidth / r.n)} m`);
       return `
         <section class="cutplan-print-page">
           <div class="cutplan-print-page__head">
             <h3>${escapeHtml(project)} — RL ${escapeHtml(r.rl)}</h3>
-            <p>${r.n} strips · face ${fmt.m(r.L)} m · ${trimCount} need trimming · roll width ${fmt.m(r.materialWidth / r.n)} m</p>
+            <p>${metaParts.join(" · ")}</p>
           </div>
           <div class="cutplan-print-page__body">
             ${buildCutPlanSvgMarkup(r.cutPlan, w)}
@@ -1372,12 +1398,19 @@ function renderCutPlan(results, w) {
     card.className = "cutplan-card";
 
     const maxLen0 = Math.max(...r.stripLengths);
-    const trimCount = r.stripLengths.filter((len) => len < maxLen0 - TRIM_THRESHOLD).length;
+    const classified0 = r.stripLengths.map((len) => classifyStrip(len, maxLen0));
+    const cutCount = classified0.filter((c) => c.action === "cut").length;
+    const foldCount = classified0.filter((c) => c.action === "fold").length;
+    const reviewCount = classified0.filter((c) => c.action === "review").length;
+    const metaParts = [`${r.n} strips`, `face ${fmt.m(r.L)} m`];
+    if (cutCount) metaParts.push(`${cutCount} to cut`);
+    if (foldCount) metaParts.push(`${foldCount} to fold`);
+    if (reviewCount) metaParts.push(`${reviewCount} need review`);
 
     card.innerHTML = `
       <div class="cutplan-card__head">
         <span class="cutplan-card__rl">RL ${escapeHtml(r.rl) || "—"}</span>
-        <span class="cutplan-card__meta">${r.n} strips · face ${fmt.m(r.L)} m · ${trimCount} need trimming</span>
+        <span class="cutplan-card__meta">${metaParts.join(" · ")}</span>
         <button type="button" class="btn btn--ghost cutplan-card__swap" data-row-id="${id}">Swap face/back</button>
       </div>
       <div class="cutplan-card__body">
@@ -1391,9 +1424,15 @@ function renderCutPlan(results, w) {
     const maxLen = Math.max(...r.stripLengths);
     r.stripLengths.forEach((len, i) => {
       const li = document.createElement("li");
-      const isTrim = len < maxLen - TRIM_THRESHOLD;
-      if (isTrim) li.classList.add("is-trim");
-      li.innerHTML = `<span>Strip ${i + 1}</span><span>${isTrim ? `cut to ${fmt.m(len)} m` : `${fmt.m(len)} m`}</span>`;
+      const { action, excess } = classifyStrip(len, maxLen);
+      const noteByAction = {
+        full: `${fmt.m(len)} m`,
+        fold: `fold back ${fmt.mm(excess)} mm`,
+        cut: `cut to ${fmt.m(len)} m`,
+        review: `cut to ${fmt.m(len)} m — review (${fmt.mm(excess)} mm)`,
+      };
+      if (action !== "full") li.classList.add(`is-${action}`);
+      li.innerHTML = `<span>Strip ${i + 1}</span><span>${noteByAction[action]}</span>`;
       stripsList.appendChild(li);
     });
 
@@ -1422,21 +1461,40 @@ function renderCutPlanSvg(svg, cutPlan, w) {
 
   const pitch = cutLengths.length > 1 ? w - cutPlan.overlap : 0;
   const labelEvery = cutLengths.length > 24 ? 2 : 1; // thin out numbers on dense diagrams so they stay legible
+  const maxLen = Math.max(...cutLengths);
+  const actionColor = { full: "var(--accent-strong)", cut: "var(--clay)", fold: "var(--good)", review: "var(--warn)" };
   cutLengths.forEach((len, i) => {
     const station = Math.max(0, Math.min(face.length, i * pitch + w / 2));
     const pt = pointAtStation(face, station);
     const n = inwardNormal(pt.tangent);
     const x1 = tx(pt.x), y1 = ty(pt.y);
     const x2 = tx(pt.x + n.x * len), y2 = ty(pt.y + n.y * len);
+    const { action } = classifyStrip(len, maxLen);
     const line = document.createElementNS(ns, "line");
     line.setAttribute("x1", x1.toFixed(1));
     line.setAttribute("y1", y1.toFixed(1));
     line.setAttribute("x2", x2.toFixed(1));
     line.setAttribute("y2", y2.toFixed(1));
-    line.setAttribute("stroke", "var(--accent-strong)");
+    line.setAttribute("stroke", actionColor[action]);
     line.setAttribute("stroke-width", "2");
     line.setAttribute("stroke-linecap", "round");
     svg.appendChild(line);
+
+    if (action !== "full") {
+      // A short tick across the strip at the trim point — fold/cut/review colour matches the
+      // strip line, so where and what to do at that exact point is visible without reading the list.
+      const dx = x2 - x1, dy = y2 - y1;
+      const dlen = Math.hypot(dx, dy) || 1;
+      const px = (-dy / dlen) * 5, py = (dx / dlen) * 5;
+      const tick = document.createElementNS(ns, "line");
+      tick.setAttribute("x1", (x2 - px).toFixed(1));
+      tick.setAttribute("y1", (y2 - py).toFixed(1));
+      tick.setAttribute("x2", (x2 + px).toFixed(1));
+      tick.setAttribute("y2", (y2 + py).toFixed(1));
+      tick.setAttribute("stroke", actionColor[action]);
+      tick.setAttribute("stroke-width", "2.5");
+      svg.appendChild(tick);
+    }
 
     if (i % labelEvery === 0) {
       const margin = 6;
@@ -1643,10 +1701,12 @@ document.getElementById("exportBtn").addEventListener("click", () => {
 
   const extentsResults = results.filter((r) => r.mode === "extents");
   if (extentsResults.length) {
-    lines.push("", "Cut schedule (DXF extents lifts)", "RL,Strip #,Cut length (m)");
+    lines.push("", "Cut schedule (DXF extents lifts)", "RL,Strip #,Cut length (m),Action,Leftover (mm)");
     extentsResults.forEach((r) => {
+      const maxLen = Math.max(...r.stripLengths);
       r.stripLengths.forEach((len, i) => {
-        lines.push([csvEscape(r.rl), i + 1, len.toFixed(3)].join(","));
+        const { action, excess } = classifyStrip(len, maxLen);
+        lines.push([csvEscape(r.rl), i + 1, len.toFixed(3), action, action === "full" ? "" : Math.round(excess * 1000)].join(","));
       });
     });
   }
