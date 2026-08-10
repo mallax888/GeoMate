@@ -299,6 +299,33 @@ function benchBoundaryAt(triangles, z0, tol) {
   return loops.sort((a, b) => Math.abs(signedArea(b)) - Math.abs(signedArea(a)));
 }
 
+/** A LandXML TIN surface (<Surfaces><Surface><Definition><Pnts>/<Faces>) — same triangle shape as parseDXF3DFaces. */
+function parseLandXMLSurface(text) {
+  const doc = new DOMParser().parseFromString(text, "application/xml");
+  if (doc.querySelector("parsererror")) return [];
+
+  // Namespace-agnostic: LandXML declares a default xmlns, which breaks plain tag-name CSS selectors.
+  const byLocalName = (name) => Array.from(doc.getElementsByTagName("*")).filter((el) => el.localName === name);
+
+  const pts = new Map();
+  byLocalName("P").forEach((p) => {
+    const id = p.getAttribute("id");
+    const parts = p.textContent.trim().split(/\s+/).map(Number);
+    if (id && parts.length >= 3 && parts.every(Number.isFinite)) {
+      // LandXML point order is northing, easting, elevation by default.
+      pts.set(id, { x: parts[1], y: parts[0], z: parts[2] });
+    }
+  });
+
+  const triangles = [];
+  byLocalName("F").forEach((f) => {
+    const ids = f.textContent.trim().split(/\s+/).slice(0, 3);
+    const tri = ids.map((id) => pts.get(id));
+    if (tri.length === 3 && tri.every(Boolean)) triangles.push(tri);
+  });
+  return triangles;
+}
+
 /** Closed polylines only (LWPOLYLINE + legacy POLYLINE/VERTEX) — a lift's plan-view extents boundary. */
 function parseDXFPolygons(text) {
   const linesRaw = text.split(/\r?\n/);
@@ -874,49 +901,55 @@ document.getElementById("dxfExtentsInput").addEventListener("change", async (e) 
   }
 });
 
-document.getElementById("dxfMeshInput").addEventListener("change", async (e) => {
-  const file = e.target.files[0];
-  const statusEl = document.getElementById("dxfMeshStatus");
-  if (!file) return;
+/** Shared by every "raw surface mesh" upload (DXF 3DFACE, LandXML, …) — parseFn(text) must return an array of triangles. */
+function wireMeshUpload(inputId, parseFn, noTrianglesMessage) {
+  document.getElementById(inputId).addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    const statusEl = document.getElementById("dxfMeshStatus");
+    if (!file) return;
 
-  try {
-    const text = await file.text();
-    const triangles = parseDXF3DFaces(text);
-    if (!triangles.length) {
-      statusEl.textContent = "No 3DFACE triangles found in that file.";
+    try {
+      const text = await file.text();
+      const triangles = parseFn(text);
+      if (!triangles.length) {
+        statusEl.textContent = noTrianglesMessage;
+        statusEl.className = "cutplan-status is-error";
+        return;
+      }
+
+      const tol = (parseFloat(document.getElementById("meshTolerance").value) || 0) / 1000;
+      const rows = Array.from(tbody.querySelectorAll(".lift-row"));
+      let matched = 0, ambiguous = 0;
+
+      rows.forEach((row) => {
+        const rl = parseFloat(row.querySelector(".rl-input").value);
+        if (!Number.isFinite(rl)) return;
+        const loops = benchBoundaryAt(triangles, rl, tol);
+        if (!loops.length) return;
+        applyExtents(row, loops[0]);
+        matched++;
+        if (loops.length > 1) ambiguous++;
+      });
+
+      statusEl.textContent = matched
+        ? `Found a bench for ${matched} of ${rows.length} lifts from ${triangles.length} triangles${
+            ambiguous ? ` (${ambiguous} had more than one candidate — used the largest)` : ""
+          }.`
+        : `No flat bench found within ${Math.round(tol * 1000)} mm of any lift's RL — try a looser tolerance.`;
+      statusEl.className = matched ? "cutplan-status is-ok" : "cutplan-status is-error";
+      switchTab("cutplan");
+      computeAndRender();
+    } catch (err) {
+      statusEl.textContent = `Couldn't read that file: ${err.message}`;
       statusEl.className = "cutplan-status is-error";
-      return;
+    } finally {
+      e.target.value = "";
     }
+  });
+}
 
-    const tol = (parseFloat(document.getElementById("meshTolerance").value) || 0) / 1000;
-    const rows = Array.from(tbody.querySelectorAll(".lift-row"));
-    let matched = 0, ambiguous = 0;
-
-    rows.forEach((row) => {
-      const rl = parseFloat(row.querySelector(".rl-input").value);
-      if (!Number.isFinite(rl)) return;
-      const loops = benchBoundaryAt(triangles, rl, tol);
-      if (!loops.length) return;
-      applyExtents(row, loops[0]);
-      matched++;
-      if (loops.length > 1) ambiguous++;
-    });
-
-    statusEl.textContent = matched
-      ? `Found a bench for ${matched} of ${rows.length} lifts from ${triangles.length} triangles${
-          ambiguous ? ` (${ambiguous} had more than one candidate — used the largest)` : ""
-        }.`
-      : `No flat bench found within ${Math.round(tol * 1000)} mm of any lift's RL — try a looser tolerance.`;
-    statusEl.className = matched ? "cutplan-status is-ok" : "cutplan-status is-error";
-    switchTab("cutplan");
-    computeAndRender();
-  } catch (err) {
-    statusEl.textContent = `Couldn't read that file: ${err.message}`;
-    statusEl.className = "cutplan-status is-error";
-  } finally {
-    e.target.value = "";
-  }
-});
+wireMeshUpload("dxfMeshInput", parseDXF3DFaces, "No 3DFACE triangles found in that file.");
+wireMeshUpload("landxmlMeshInput", parseLandXMLSurface, "No TIN surface (Pnts/Faces) found in that LandXML file.");
 
 cutPlanList.addEventListener("click", (e) => {
   const btn = e.target.closest(".cutplan-card__swap");
