@@ -92,6 +92,7 @@
       <div class="tabs" role="tablist" aria-label="Lift view">
         <button type="button" class="tab is-active" id="tabTakeoff" role="tab" aria-selected="true">Takeoff table</button>
         <button type="button" class="tab" id="tabSequence" role="tab" aria-selected="false">Installation sequence</button>
+        <button type="button" class="tab" id="tabCutPlan" role="tab" aria-selected="false">Cut plan</button>
       </div>
       <button id="addLiftBtn" class="btn btn--ghost" type="button">+ Add lift</button>
     </div>
@@ -128,6 +129,21 @@
       <p class="sequence-intro">Bottom to top, in build order: roll out and lap the strips for a lift, then place and compact fill to the next RL before starting the next lift.</p>
       <ol id="sequenceList" class="sequence-list"></ol>
     </div>
+
+    <div id="cutPlanView" class="cutplan-view" hidden>
+      <div class="cutplan-intro">
+        <p>Upload one DXF containing a <strong>closed</strong> polyline per lift — the outer plan-view extents each strip has to fit inside. The tool finds the longest edge as the face and clips every strip against the boundary, so strips near a taper come back shorter with an exact cut length.</p>
+        <div class="cutplan-upload">
+          <label class="btn btn--primary btn--upload">
+            Upload extents DXF
+            <input type="file" id="dxfExtentsInput" accept=".dxf" hidden />
+          </label>
+          <span id="dxfExtentsStatus" class="cutplan-status"></span>
+        </div>
+      </div>
+      <p id="cutPlanEmpty" class="empty-state">No extents loaded yet — upload a DXF to see per-strip cut lengths.</p>
+      <div id="cutPlanList" class="cutplan-list"></div>
+    </div>
   </section>
 
   <aside class="panel panel--summary" aria-labelledby="summaryHeading">
@@ -163,15 +179,16 @@
       </div>
     </div>
 
-    <h3 class="panel__subheading">Rolls by embedment length</h3>
+    <h3 class="panel__subheading">Strips by cut length</h3>
     <div class="table-scroll">
       <table class="roll-table" id="rollTable">
         <thead>
-          <tr><th scope="col">Embedment</th><th scope="col">Strips</th><th scope="col">Rolls</th><th scope="col">Off-cut</th></tr>
+          <tr><th scope="col">Length</th><th scope="col">Strips</th></tr>
         </thead>
         <tbody id="rollTableBody"></tbody>
       </table>
     </div>
+    <p class="roll-table-note">Rolls to order are packed across all strip lengths together (cut multiple lengths from one 50 m roll where they fit), not one-for-one per length above.</p>
 
     <button id="exportBtn" class="btn btn--primary btn--block" type="button">Export CSV</button>
   </aside>
@@ -192,10 +209,15 @@
         <button type="button" class="mode-toggle" title="Switch between straight length and pasted coordinates">L</button>
         <div class="field__unit face-input__length"><input type="number" class="face-length" min="0" step="0.01" /><em>m</em></div>
         <textarea class="face-coords" placeholder="x,y per line" hidden></textarea>
+        <span class="extents-badge" hidden>
+          <span class="extents-badge__text">DXF</span>
+          <button type="button" class="extents-release" title="Detach DXF extents and go back to manual entry">✕</button>
+        </span>
       </div>
     </td>
     <td class="col-embed">
       <div class="field__unit"><input type="number" class="embed-length" min="0" step="0.01" /><em>m</em></div>
+      <span class="embed-range"></span>
     </td>
     <td class="col-strips result-cell strip-count">—</td>
     <td class="col-overlap result-cell overlap-value">—</td>

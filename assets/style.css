@@ -469,6 +469,7 @@ input[type="number"]::-webkit-outer-spin-button {
   border-bottom: 1px solid var(--line-strong);
 }
 .roll-table th:first-child, .roll-table td:first-child { text-align: left; }
+.roll-table-note { font-size: 0.68rem; color: var(--ink-muted); margin: 0.5rem 0 0; }
 .roll-table td {
   text-align: right;
   font-family: var(--font-mono);
@@ -556,6 +557,76 @@ input[type="number"]::-webkit-outer-spin-button {
   margin-top: 0.1rem;
 }
 .sequence-card__diagram { width: 100%; height: 40px; display: block; margin-top: 0.6rem; }
+
+/* ---------- Cut plan ---------- */
+.cutplan-intro p {
+  font-size: 0.82rem;
+  color: var(--ink-muted);
+  max-width: 68ch;
+  margin: 0 0 0.8rem;
+}
+.cutplan-upload { display: flex; align-items: center; gap: 0.8rem; margin-bottom: 1rem; }
+.btn--upload { cursor: pointer; }
+.cutplan-status { font-size: 0.78rem; color: var(--ink-muted); }
+.cutplan-status.is-error { color: var(--critical); }
+.cutplan-status.is-ok { color: var(--good); }
+
+.cutplan-list { display: flex; flex-direction: column; gap: 0.8rem; }
+.cutplan-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.85rem 1rem;
+  background: var(--surface-2);
+}
+.cutplan-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+  margin-bottom: 0.5rem;
+}
+.cutplan-card__rl { font-family: var(--font-mono); font-weight: 700; font-size: 0.92rem; }
+.cutplan-card__meta { font-size: 0.76rem; color: var(--ink-muted); }
+.cutplan-card__body { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
+@media (max-width: 900px) { .cutplan-card__body { grid-template-columns: 1fr; } }
+.cutplan-card__plan { width: 100%; height: auto; border-radius: 4px; background: var(--surface); }
+.cutplan-card__strips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+  max-height: 160px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.cutplan-card__strips li {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid var(--line);
+}
+.cutplan-card__strips li:last-child { border-bottom: none; }
+.cutplan-card__strips li.is-trim { color: var(--clay); background: var(--clay-tint); }
+
+.extents-badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: var(--good-tint);
+  color: var(--good);
+  border-radius: 3px;
+  padding: 0.1rem 0.4rem;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 700;
+}
+.extents-badge[hidden] { display: none; }
+.extents-release { background: none; border: none; color: inherit; cursor: pointer; font-size: 0.7rem; padding: 0; }
+.embed-range { display: block; font-size: 0.62rem; color: var(--ink-muted); margin-top: 0.15rem; text-align: right; }
 
 @media print {
   .titleblock, .panel--settings, .panel--summary, .panel__headrow, .sequence-controls, .foot, #takeoffView { display: none !important; }
