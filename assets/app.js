@@ -1385,7 +1385,10 @@ function render3D(results) {
   const toScreen = (p) => ({ x: cx + (p.sx - midSX) * scale, y: cy + (p.sy - midSY) * scale });
   const labelX = cx + (minSX - midSX) * scale - 10; // one aligned column, left of the whole stack
 
-  projectedLifts.sort((a, b) => a.depth - b.depth); // paint order only — colorIndex above stays fixed to RL order
+  // Paint strictly in RL order (lowest first) so each higher lift is drawn over the ones below it —
+  // matches build order and reads correctly regardless of camera angle. The computed camera "depth"
+  // isn't used here: for flat stacked planes, RL order *is* the correct occlusion order.
+  projectedLifts.sort((a, b) => a.rl - b.rl);
 
   const style = getComputedStyle(document.documentElement);
   const accent = style.getPropertyValue("--accent").trim();
