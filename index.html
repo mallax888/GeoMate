@@ -89,27 +89,45 @@
   <section class="panel panel--lifts" aria-labelledby="liftsHeading">
     <div class="panel__headrow">
       <h2 id="liftsHeading" class="panel__heading">Lifts</h2>
+      <div class="tabs" role="tablist" aria-label="Lift view">
+        <button type="button" class="tab is-active" id="tabTakeoff" role="tab" aria-selected="true">Takeoff table</button>
+        <button type="button" class="tab" id="tabSequence" role="tab" aria-selected="false">Installation sequence</button>
+      </div>
       <button id="addLiftBtn" class="btn btn--ghost" type="button">+ Add lift</button>
     </div>
 
-    <div class="table-scroll">
-      <table id="liftTable" class="lift-table">
-        <thead>
-          <tr>
-            <th scope="col" class="col-rl">RL</th>
-            <th scope="col" class="col-face">Face length</th>
-            <th scope="col" class="col-embed">Embedment</th>
-            <th scope="col" class="col-strips">Strips</th>
-            <th scope="col" class="col-overlap">Overlap</th>
-            <th scope="col" class="col-area">Area</th>
-            <th scope="col" class="col-diagram">Layout</th>
-            <th scope="col" class="col-remove"><span class="sr-only">Remove</span></th>
-          </tr>
-        </thead>
-        <tbody id="liftTableBody"></tbody>
-      </table>
+    <div id="takeoffView">
+      <div class="table-scroll">
+        <table id="liftTable" class="lift-table">
+          <thead>
+            <tr>
+              <th scope="col" class="col-rl">RL</th>
+              <th scope="col" class="col-face">Face length</th>
+              <th scope="col" class="col-embed">Embedment</th>
+              <th scope="col" class="col-strips">Strips</th>
+              <th scope="col" class="col-overlap">Overlap</th>
+              <th scope="col" class="col-area">Area</th>
+              <th scope="col" class="col-diagram">Layout</th>
+              <th scope="col" class="col-remove"><span class="sr-only">Remove</span></th>
+            </tr>
+          </thead>
+          <tbody id="liftTableBody"></tbody>
+        </table>
+      </div>
+      <p id="emptyState" class="empty-state">No lifts yet — generate a run above or add one manually.</p>
     </div>
-    <p id="emptyState" class="empty-state">No lifts yet — generate a run above or add one manually.</p>
+
+    <div id="sequenceView" class="sequence-view" hidden>
+      <div class="sequence-controls">
+        <label class="checkbox">
+          <input type="checkbox" id="staggerToggle" checked />
+          <span>Stagger lap joints between successive lifts</span>
+        </label>
+        <button id="printSequenceBtn" class="btn btn--ghost" type="button">Print</button>
+      </div>
+      <p class="sequence-intro">Bottom to top, in build order: roll out and lap the strips for a lift, then place and compact fill to the next RL before starting the next lift.</p>
+      <ol id="sequenceList" class="sequence-list"></ol>
+    </div>
   </section>
 
   <aside class="panel panel--summary" aria-labelledby="summaryHeading">

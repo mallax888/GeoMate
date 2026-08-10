@@ -149,11 +149,12 @@ Object.values(settingsInputs).forEach((el) => el.addEventListener("input", compu
    Strip-layout diagram
    ============================================================ */
 
-function renderDiagram(svg, L, result, w) {
+function renderDiagram(svg, L, result, w, W = 240, H = 34) {
   svg.innerHTML = "";
   if (!result) return;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   const { n, overlap } = result;
-  const W = 240, H = 34, pad = 2;
+  const pad = 2;
   const usableW = W - pad * 2;
   const scale = usableW / Math.max(L, result.materialWidth);
   const stripPx = w * scale;
@@ -292,6 +293,7 @@ function computeAndRender() {
   });
 
   renderSummary(liftResults, rollLength);
+  renderSequence(liftResults, w);
   window.__geogridResults = liftResults; // exposed for CSV export
 }
 
@@ -371,6 +373,77 @@ function renderSummary(results, rollLength) {
     wasteOffcutEl.textContent = "—";
     wasteOffcutEl.className = "waste-row__pct";
   }
+}
+
+/* ============================================================
+   Installation sequence view
+   ============================================================ */
+
+const tabTakeoff = document.getElementById("tabTakeoff");
+const tabSequence = document.getElementById("tabSequence");
+const takeoffView = document.getElementById("takeoffView");
+const sequenceView = document.getElementById("sequenceView");
+const staggerToggle = document.getElementById("staggerToggle");
+const sequenceList = document.getElementById("sequenceList");
+
+tabTakeoff.addEventListener("click", () => switchTab("takeoff"));
+tabSequence.addEventListener("click", () => switchTab("sequence"));
+staggerToggle.addEventListener("change", computeAndRender);
+document.getElementById("printSequenceBtn").addEventListener("click", () => window.print());
+
+function switchTab(which) {
+  const onSequence = which === "sequence";
+  takeoffView.hidden = onSequence;
+  sequenceView.hidden = !onSequence;
+  tabTakeoff.classList.toggle("is-active", !onSequence);
+  tabTakeoff.setAttribute("aria-selected", String(!onSequence));
+  tabSequence.classList.toggle("is-active", onSequence);
+  tabSequence.setAttribute("aria-selected", String(onSequence));
+  document.getElementById("addLiftBtn").hidden = onSequence;
+}
+
+function renderSequence(results, w) {
+  sequenceList.innerHTML = "";
+  const stagger = staggerToggle.checked;
+
+  results.forEach((r, i) => {
+    const li = document.createElement("li");
+    li.className = "sequence-card";
+
+    let staggerNote = "";
+    if (stagger && r.n > 1) {
+      const pitch = w - r.overlap;
+      const offsetMm = Math.round((pitch / 2) * 1000);
+      staggerNote =
+        i % 2 === 1
+          ? `<div class="sequence-card__stagger">Offset the first strip ${offsetMm.toLocaleString()} mm in from the left edge (not flush) to stagger lap joints from the lift below.</div>`
+          : i > 0
+          ? `<div class="sequence-card__stagger">Start the first strip flush with the left edge.</div>`
+          : "";
+    }
+
+    const next = results[i + 1];
+    const fillTarget = next ? `RL ${next.rl || "the next lift"}` : "final design surface";
+
+    li.innerHTML = `
+      <div class="sequence-card__head">
+        <span class="sequence-card__order">${i + 1}</span>
+        <span class="sequence-card__rl">RL ${r.rl || "—"}</span>
+      </div>
+      <ol class="sequence-card__steps">
+        <li>Roll out ${r.n} strip${r.n === 1 ? "" : "s"} across the ${fmt.m(r.L)} m face${
+      r.n > 1 ? `, lapping each by ${fmt.mm(r.overlap)} mm` : ""
+    }, embedded ${fmt.m(r.embed)} m back into the fill.</li>
+        <li>Pin/stake the grid as required, then place and compact fill up to ${fillTarget}.</li>
+      </ol>
+      ${staggerNote}
+      <svg class="sequence-card__diagram" viewBox="0 0 480 40" preserveAspectRatio="none"></svg>
+    `;
+
+    sequenceList.appendChild(li);
+    const svg = li.querySelector(".sequence-card__diagram");
+    renderDiagram(svg, r.L, { n: r.n, overlap: r.overlap, materialWidth: r.materialWidth }, w, 480, 40);
+  });
 }
 
 /* ============================================================
