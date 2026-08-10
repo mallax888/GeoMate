@@ -1311,9 +1311,15 @@ function renderCutPlanSvg(svg, cutPlan, w) {
     svg.appendChild(line);
 
     if (i % labelEvery === 0) {
+      const margin = 6;
       const label = document.createElementNS(ns, "text");
-      label.setAttribute("x", (x1 + (x1 - x2) * 0.12).toFixed(1));
-      label.setAttribute("y", (y1 + (y1 - y2) * 0.12).toFixed(1));
+      // Extrapolate a little past the strip's face-side start, but clamp so it can never land
+      // outside the viewBox — a strip that already spans nearly the full height/width otherwise
+      // pushes its label straight off the edge (invisible, even though it's still in the DOM).
+      const lx = Math.max(margin, Math.min(W - margin, x1 + (x1 - x2) * 0.12));
+      const ly = Math.max(margin, Math.min(H - margin, y1 + (y1 - y2) * 0.12));
+      label.setAttribute("x", lx.toFixed(1));
+      label.setAttribute("y", ly.toFixed(1));
       label.setAttribute("font-size", "7");
       label.setAttribute("font-family", "var(--font-mono)");
       label.setAttribute("fill", "var(--ink-muted)");
