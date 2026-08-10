@@ -203,6 +203,102 @@ function computeCutPlan(rawPoints, w, oMin, swapped) {
   };
 }
 
+/** 3DFACE entities (triangles, or quads split into two triangles) — a raw triangulated cut surface. */
+function parseDXF3DFaces(text) {
+  const linesRaw = text.split(/\r?\n/);
+  const pairs = [];
+  for (let i = 0; i + 1 < linesRaw.length; i += 2) {
+    const code = parseInt(linesRaw[i].trim(), 10);
+    const value = linesRaw[i + 1] !== undefined ? linesRaw[i + 1].trim() : "";
+    if (Number.isFinite(code)) pairs.push({ code, value });
+  }
+  const triangles = [];
+  let inEntities = false;
+  let buf = null;
+
+  function finish(b) {
+    const p = b.pts;
+    if (p.x1 === undefined || p.x2 === undefined || p.x3 === undefined) return;
+    const p1 = { x: p.x1, y: p.y1, z: p.z1 || 0 };
+    const p2 = { x: p.x2, y: p.y2, z: p.z2 || 0 };
+    const p3 = { x: p.x3, y: p.y3, z: p.z3 || 0 };
+    triangles.push([p1, p2, p3]);
+    if (p.x4 !== undefined && (Math.abs(p.x4 - p.x3) > 1e-9 || Math.abs(p.y4 - p.y3) > 1e-9 || Math.abs((p.z4 || 0) - p.z3) > 1e-9)) {
+      const p4 = { x: p.x4, y: p.y4, z: p.z4 || 0 };
+      triangles.push([p1, p3, p4]);
+    }
+  }
+
+  const codeMap = { 10: "x1", 20: "y1", 30: "z1", 11: "x2", 21: "y2", 31: "z2", 12: "x3", 22: "y3", 32: "z3", 13: "x4", 23: "y4", 33: "z4" };
+  for (let i = 0; i < pairs.length; i++) {
+    const { code, value } = pairs[i];
+    if (code === 0) {
+      if (buf && buf.type === "3DFACE") finish(buf);
+      if (value === "ENDSEC") { inEntities = false; buf = null; continue; }
+      buf = value === "3DFACE" ? { type: "3DFACE", pts: {} } : null;
+      continue;
+    }
+    if (code === 2 && value === "ENTITIES") { inEntities = true; continue; }
+    if (!inEntities || !buf) continue;
+    if (buf.type === "3DFACE" && codeMap[code]) buf.pts[codeMap[code]] = parseFloat(value);
+  }
+  return triangles;
+}
+
+/** Outer boundary loop(s) of the triangles whose vertices are all within `tol` of elevation z0 — i.e. a flat bench. */
+function benchBoundaryAt(triangles, z0, tol) {
+  const flat = triangles.filter((tri) => tri.every((p) => Math.abs(p.z - z0) <= tol));
+  if (!flat.length) return [];
+
+  const keyOf = (p) => `${p.x.toFixed(4)},${p.y.toFixed(4)}`;
+  const edgeKey = (k1, k2) => (k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`);
+
+  const edgeMap = new Map();
+  flat.forEach((tri) => {
+    for (let i = 0; i < 3; i++) {
+      const p = tri[i], q = tri[(i + 1) % 3];
+      const ek = edgeKey(keyOf(p), keyOf(q));
+      if (!edgeMap.has(ek)) edgeMap.set(ek, { p, q, count: 0 });
+      edgeMap.get(ek).count++;
+    }
+  });
+  const boundary = Array.from(edgeMap.values()).filter((e) => e.count === 1);
+  if (!boundary.length) return [];
+
+  const adj = new Map();
+  boundary.forEach(({ p, q }) => {
+    const kp = keyOf(p), kq = keyOf(q);
+    if (!adj.has(kp)) adj.set(kp, []);
+    if (!adj.has(kq)) adj.set(kq, []);
+    adj.get(kp).push({ to: kq, point: q });
+    adj.get(kq).push({ to: kp, point: p });
+  });
+
+  const visited = new Set();
+  const loops = [];
+  boundary.forEach(({ p, q }) => {
+    const startKey = keyOf(p);
+    if (visited.has(edgeKey(startKey, keyOf(q)))) return;
+    const loop = [p];
+    let currentKey = startKey;
+    let guard = 0;
+    while (guard++ < 100000) {
+      let next = null;
+      for (const o of adj.get(currentKey) || []) {
+        const ek = edgeKey(currentKey, o.to);
+        if (!visited.has(ek)) { next = o; break; }
+      }
+      if (!next) break;
+      visited.add(edgeKey(currentKey, next.to));
+      currentKey = next.to;
+      if (currentKey === startKey) break;
+      loop.push(next.point);
+    }
+    if (loop.length >= 3) loops.push(loop);
+  });
+  return loops.sort((a, b) => Math.abs(signedArea(b)) - Math.abs(signedArea(a)));
+}
+
 /** Closed polylines only (LWPOLYLINE + legacy POLYLINE/VERTEX) — a lift's plan-view extents boundary. */
 function parseDXFPolygons(text) {
   const linesRaw = text.split(/\r?\n/);
@@ -761,6 +857,50 @@ document.getElementById("dxfExtentsInput").addEventListener("change", async (e) 
       hasZ ? " (sorted by elevation)" : " (file order — verify against RL order)"
     }.`;
     statusEl.className = "cutplan-status is-ok";
+    switchTab("cutplan");
+    computeAndRender();
+  } catch (err) {
+    statusEl.textContent = `Couldn't read that file: ${err.message}`;
+    statusEl.className = "cutplan-status is-error";
+  } finally {
+    e.target.value = "";
+  }
+});
+
+document.getElementById("dxfMeshInput").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  const statusEl = document.getElementById("dxfMeshStatus");
+  if (!file) return;
+
+  try {
+    const text = await file.text();
+    const triangles = parseDXF3DFaces(text);
+    if (!triangles.length) {
+      statusEl.textContent = "No 3DFACE triangles found in that file.";
+      statusEl.className = "cutplan-status is-error";
+      return;
+    }
+
+    const tol = (parseFloat(document.getElementById("meshTolerance").value) || 0) / 1000;
+    const rows = Array.from(tbody.querySelectorAll(".lift-row"));
+    let matched = 0, ambiguous = 0;
+
+    rows.forEach((row) => {
+      const rl = parseFloat(row.querySelector(".rl-input").value);
+      if (!Number.isFinite(rl)) return;
+      const loops = benchBoundaryAt(triangles, rl, tol);
+      if (!loops.length) return;
+      applyExtents(row, loops[0]);
+      matched++;
+      if (loops.length > 1) ambiguous++;
+    });
+
+    statusEl.textContent = matched
+      ? `Found a bench for ${matched} of ${rows.length} lifts from ${triangles.length} triangles${
+          ambiguous ? ` (${ambiguous} had more than one candidate — used the largest)` : ""
+        }.`
+      : `No flat bench found within ${Math.round(tol * 1000)} mm of any lift's RL — try a looser tolerance.`;
+    statusEl.className = matched ? "cutplan-status is-ok" : "cutplan-status is-error";
     switchTab("cutplan");
     computeAndRender();
   } catch (err) {

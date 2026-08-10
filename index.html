@@ -140,6 +140,19 @@
           </label>
           <span id="dxfExtentsStatus" class="cutplan-status"></span>
         </div>
+
+        <p>Or upload the raw cut surface as a triangulated mesh (3DFACE entities) and the tool will find the flat bench at each lift's RL itself — no pre-built extents needed.</p>
+        <div class="cutplan-upload">
+          <label class="btn btn--primary btn--upload">
+            Upload cut surface DXF (mesh)
+            <input type="file" id="dxfMeshInput" accept=".dxf" hidden />
+          </label>
+          <label class="field field--compact cutplan-tolerance">
+            <span>Flatness tolerance</span>
+            <div class="field__unit"><input type="number" id="meshTolerance" value="5" min="0" step="1" /><em>mm</em></div>
+          </label>
+          <span id="dxfMeshStatus" class="cutplan-status"></span>
+        </div>
       </div>
       <p id="cutPlanEmpty" class="empty-state">No extents loaded yet — upload a DXF to see per-strip cut lengths.</p>
       <div id="cutPlanList" class="cutplan-list"></div>
