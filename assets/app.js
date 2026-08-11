@@ -1835,62 +1835,6 @@ function renderCutPlanSvg(svg, cutPlan, w) {
       svg.appendChild(label);
     }
   });
-
-  // Group consecutive strips that share the same cut length and label the run once — "12.5m x 6" —
-  // the same shorthand the manual takeoffs use instead of repeating the same number on every strip.
-  // All group labels share one dimension-string baseline above the whole profile (clear of both the
-  // boundary line and the per-strip roll numbers); a group only moves up into an extra row if its
-  // label would otherwise overlap the one immediately before it — dense runs of short groups (e.g.
-  // near a review section) stagger into a couple of rows instead of piling on top of each other.
-  const overallMaxFar = Math.max(...cutLengths.map((len, i) => (cutPlan.extentsReach || [])[i] ?? len));
-  const groupFontSize = 8;
-  const rowHeight = 9;
-  const baseY = Math.max(groupFontSize + 2, ty(overallMaxFar) - 20);
-  const margin = 6;
-  const rowRightEdge = []; // rightmost x used so far, per row
-  let groupStart = 0;
-  for (let i = 1; i <= cutLengths.length; i++) {
-    if (i < cutLengths.length && Math.abs(cutLengths[i] - cutLengths[groupStart]) < 1e-6) continue;
-    const groupEnd = i - 1;
-    const count = groupEnd - groupStart + 1;
-    const groupLen = cutLengths[groupStart];
-    const text = count > 1 ? `${fmt.m(groupLen)}m x ${count}` : `${fmt.m(groupLen)}m`;
-    const halfWidth = (text.length * groupFontSize * 0.62) / 2;
-    const xMid = Math.max(margin, Math.min(W - margin, (tx(stationOf(groupStart) - w / 2) + tx(stationOf(groupEnd) + w / 2)) / 2));
-
-    let row = 0;
-    while (row < rowRightEdge.length && xMid - halfWidth < rowRightEdge[row] + 2) row++;
-    rowRightEdge[row] = xMid + halfWidth;
-    const y = Math.max(margin + 8, baseY - row * rowHeight);
-
-    // Leader line down to the top of this group's own strips — with labels staggered into several
-    // rows to avoid collisions, position on the page alone no longer makes it obvious which label
-    // belongs to which strips (a label bumped up a row can end up hovering over its neighbour's
-    // strips instead of its own). The line removes the ambiguity regardless of row.
-    let groupMaxFar = -Infinity;
-    for (let k = groupStart; k <= groupEnd; k++) groupMaxFar = Math.max(groupMaxFar, (cutPlan.extentsReach || [])[k] ?? cutLengths[k]);
-    const leader = document.createElementNS(ns, "line");
-    leader.setAttribute("x1", xMid.toFixed(1));
-    leader.setAttribute("y1", (y + 2).toFixed(1));
-    leader.setAttribute("x2", xMid.toFixed(1));
-    leader.setAttribute("y2", ty(groupMaxFar).toFixed(1));
-    leader.setAttribute("stroke", "var(--ink-muted)");
-    leader.setAttribute("stroke-width", "0.75");
-    leader.setAttribute("stroke-dasharray", "1.5,1.5");
-    svg.appendChild(leader);
-
-    const groupLabel = document.createElementNS(ns, "text");
-    groupLabel.setAttribute("x", xMid.toFixed(1));
-    groupLabel.setAttribute("y", y.toFixed(1));
-    groupLabel.setAttribute("font-size", String(groupFontSize));
-    groupLabel.setAttribute("font-family", "var(--font-mono)");
-    groupLabel.setAttribute("font-weight", "600");
-    groupLabel.setAttribute("fill", "var(--ink)");
-    groupLabel.setAttribute("text-anchor", "middle");
-    groupLabel.textContent = text;
-    svg.appendChild(groupLabel);
-    groupStart = i;
-  }
 }
 
 /* ============================================================
