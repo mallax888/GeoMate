@@ -225,12 +225,33 @@ function computeCutPlan(rawPoints, w, oMin, swapped) {
 
   const cutLengths = [];
   const stitches = [];
+  const extentsReach = [];
   for (let i = 0; i < result.n; i++) {
     const station = Math.max(0, Math.min(face.length, i * pitch + w / 2));
     const pt = pointAtStation(face, station);
     const segments = insideSegments(pt, inward, poly);
     const main = segments.find((s) => s.start <= 1e-6);
-    cutLengths.push(main ? roundUpToStep(main.end, ROUND_STEP) : 0);
+
+    // The true boundary reach for this strip, sampled across its full width (not just its centreline)
+    // — a back edge that isn't parallel to the face can sit further out at one edge of the strip than
+    // at its middle, so a single centreline ray can under-reach the extents even though the strip's
+    // width would actually touch it. This — not the centreline-only ray — is what "ties up to the
+    // extents" with no gap behind it.
+    const edgeStations = [Math.max(0, station - w / 2), station, Math.min(face.length, station + w / 2)];
+    const reach = edgeStations.reduce((best, s) => {
+      const p = pointAtStation(face, s);
+      const segs = insideSegments(p, inward, poly);
+      const m = segs.find((seg) => seg.start <= 1e-6);
+      return m ? Math.max(best, m.end) : best;
+    }, 0);
+    extentsReach.push(reach);
+
+    // Reported/cut length: the true reach rounded up to a practical site number. Rounding only ever
+    // goes up, so this can end up slightly longer than the true extents reach — that overshoot is
+    // exactly the bit that needs trimming back on site to avoid burying wasted material past the
+    // design boundary, shown separately in the diagram rather than folded silently into this number.
+    cutLengths.push(roundUpToStep(reach, ROUND_STEP));
+
     stitches.push(
       segments
         .filter((s) => s !== main && s.end - s.start > STITCH_MIN)
@@ -248,6 +269,7 @@ function computeCutPlan(rawPoints, w, oMin, swapped) {
     materialWidth: result.materialWidth,
     cutLengths,
     stitches,
+    extentsReach,
     polygonArea: Math.abs(signedArea(poly)),
   };
 }
@@ -1178,7 +1200,10 @@ function buildCutPlanPrintPages(results, project, w) {
         .map((len, i) => {
           const { action, excess } = classifyStrip(len, maxLen);
           const detail = action === "fold" || action === "review" ? ` (${fmt.mm(excess)} mm)` : "";
-          const mainRow = `<tr class="${action !== "full" ? `is-${action}` : ""}"><td>${i + 1}</td><td>${fmt.m(len)} m</td><td>${noteByAction[action]}${detail}</td></tr>`;
+          const reach = (r.cutPlan.extentsReach || [])[i];
+          const trim = reach !== undefined ? len - reach : 0;
+          const trimDetail = trim > 0.02 ? `, trim ${fmt.mm(trim)}mm to extents` : "";
+          const mainRow = `<tr class="${action !== "full" ? `is-${action}` : ""}"><td>${i + 1}</td><td>${fmt.m(len)} m</td><td>${noteByAction[action]}${detail}${trimDetail}</td></tr>`;
           const stitchRows = (r.cutPlan.stitches[i] || [])
             .map(
               (s, si) =>
@@ -1615,7 +1640,10 @@ function renderCutPlan(results, w) {
         review: `cut to ${fmt.m(len)} m — review (${fmt.mm(excess)} mm)`,
       };
       if (action !== "full") li.classList.add(`is-${action}`);
-      li.innerHTML = `<span>Strip ${i + 1}</span><span>${noteByAction[action]}</span>`;
+      const reach = (r.cutPlan.extentsReach || [])[i];
+      const trim = reach !== undefined ? len - reach : 0;
+      const trimNote = trim > 0.02 ? `, trim ${fmt.mm(trim)}mm to extents` : "";
+      li.innerHTML = `<span>Strip ${i + 1}</span><span>${noteByAction[action]}${trimNote}</span>`;
       stripsList.appendChild(li);
 
       (r.cutPlan.stitches[i] || []).forEach((s, si) => {
@@ -1641,7 +1669,7 @@ function renderCutPlanSvg(svg, cutPlan, w) {
   const localPoly = localFootprint(cutPlan);
   const xs = localPoly.map((p) => p.x), ys = localPoly.map((p) => p.y);
   const minX = Math.min(0, ...xs), maxX = Math.max(face.length, ...xs);
-  const minY = Math.min(0, ...ys), maxY = Math.max(...cutLengths, ...ys);
+  const minY = Math.min(0, ...ys), maxY = Math.max(...cutLengths, ...(cutPlan.extentsReach || []), ...ys);
   const W = 400, H = 260, pad = 16;
   const scale = Math.min((W - pad * 2) / Math.max(maxX - minX, 1e-6), (H - pad * 2) / Math.max(maxY - minY, 1e-6));
   const tx = (x) => pad + (x - minX) * scale;
@@ -1658,26 +1686,61 @@ function renderCutPlanSvg(svg, cutPlan, w) {
 
   const pitch = cutLengths.length > 1 ? w - cutPlan.overlap : 0;
   const labelEvery = cutLengths.length > 24 ? 2 : 1; // thin out numbers on dense diagrams so they stay legible
+  // Trim labels ("trim 374mm") are much wider than the plain strip-number labels, so on a dense
+  // diagram they need far more room per label — cap it to roughly 6 labels across the whole width.
+  const trimLabelEvery = Math.max(2, Math.ceil(cutLengths.length / 6));
   const maxLen = Math.max(...cutLengths);
   const actionColor = { full: "var(--accent-strong)", cut: "var(--clay)", fold: "var(--good)", review: "var(--warn)" };
   cutLengths.forEach((len, i) => {
     const station = Math.max(0, Math.min(face.length, i * pitch + w / 2));
+    const reach = (cutPlan.extentsReach || [])[i] ?? len;
     const x1 = tx(station), y1 = ty(0);
-    const x2 = tx(station), y2 = ty(len);
+    const yReach = ty(reach);
     const { action } = classifyStrip(len, maxLen);
+
+    // Solid line always ties up to the true extents boundary — it never stops short, so the diagram
+    // reads as "the grids cover the extents" rather than leaving a gap behind the tip.
     const line = document.createElementNS(ns, "line");
     line.setAttribute("x1", x1.toFixed(1));
     line.setAttribute("y1", y1.toFixed(1));
-    line.setAttribute("x2", x2.toFixed(1));
-    line.setAttribute("y2", y2.toFixed(1));
+    line.setAttribute("x2", x1.toFixed(1));
+    line.setAttribute("y2", yReach.toFixed(1));
     line.setAttribute("stroke", actionColor[action]);
     line.setAttribute("stroke-width", "2");
     line.setAttribute("stroke-linecap", "round");
     svg.appendChild(line);
 
-    // Deliberately no end-of-strip tick/cutoff marker here — the diagram's job is to show the grids
-    // covering the extents, not dictate a precise stop line. The rounded length (side list / print
-    // table) is what site works from; how exactly to fold or cut to it is a site decision.
+    // Trim to avoid wastage — the reported cut length is the true reach rounded up to a practical
+    // site number, so it can end up a little past the extents boundary. That overshoot is drawn as a
+    // dashed continuation past the solid line and labelled, rather than silently buried past the
+    // design edge: trim it off on site to not waste material beyond where the strip needs to go.
+    const trim = len - reach;
+    const y2 = ty(len);
+    if (trim > 0.02) {
+      const trimLine = document.createElementNS(ns, "line");
+      trimLine.setAttribute("x1", x1.toFixed(1));
+      trimLine.setAttribute("y1", yReach.toFixed(1));
+      trimLine.setAttribute("x2", x1.toFixed(1));
+      trimLine.setAttribute("y2", y2.toFixed(1));
+      trimLine.setAttribute("stroke", "var(--ink-muted)");
+      trimLine.setAttribute("stroke-width", "1.6");
+      trimLine.setAttribute("stroke-linecap", "round");
+      trimLine.setAttribute("stroke-dasharray", "2,2");
+      svg.appendChild(trimLine);
+
+      if (i % trimLabelEvery === 0) {
+        const margin = 6;
+        const trimLabel = document.createElementNS(ns, "text");
+        trimLabel.setAttribute("x", Math.max(margin, Math.min(W - margin, x1 + 4)).toFixed(1));
+        trimLabel.setAttribute("y", Math.max(margin, Math.min(H - margin, y2)).toFixed(1));
+        trimLabel.setAttribute("font-size", "6.5");
+        trimLabel.setAttribute("font-family", "var(--font-mono)");
+        trimLabel.setAttribute("fill", "var(--ink-muted)");
+        trimLabel.setAttribute("text-anchor", "start");
+        trimLabel.textContent = `trim ${fmt.mm(trim)}mm`;
+        svg.appendChild(trimLabel);
+      }
+    }
 
     // Stitch patches — a separate small piece further back along the same line, past a gap the
     // main strip's single straight cut can't reach in one piece. Drawn dashed so it reads as its
@@ -1699,9 +1762,10 @@ function renderCutPlanSvg(svg, cutPlan, w) {
     if (i % labelEvery === 0) {
       const margin = 6;
       const label = document.createElementNS(ns, "text");
-      // Just above the strip's tip, clamped so it can never land outside the viewBox.
+      // Just above the strip's topmost drawn point (reach, or further if there's a trim segment).
+      const topY = Math.min(yReach, y2);
       const lx = Math.max(margin, Math.min(W - margin, x1));
-      const ly = Math.max(margin, Math.min(H - margin, y2 - 8));
+      const ly = Math.max(margin, Math.min(H - margin, topY - 8));
       label.setAttribute("x", lx.toFixed(1));
       label.setAttribute("y", ly.toFixed(1));
       label.setAttribute("font-size", "7");
