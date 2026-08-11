@@ -1116,36 +1116,6 @@ function localFootprint(cutPlan, ref) {
   });
 }
 
-/**
- * Sutherland-Hodgman clip of a polygon against an axis-aligned rectangle. Used to cut a strip's
- * drawn shape down to what the true extents boundary actually gives it within a fixed x-lane —
- * the strip stays put longitudinally (fixed x band) but its back/front edge follows the real
- * boundary contour instead of being flattened to a square cut.
- */
-function clipPolyToRect(poly, xMin, xMax, yMin, yMax) {
-  const clipEdge = (points, inside, intersect) => {
-    const out = [];
-    for (let i = 0; i < points.length; i++) {
-      const cur = points[i], prev = points[(i + points.length - 1) % points.length];
-      const curIn = inside(cur), prevIn = inside(prev);
-      if (curIn) {
-        if (!prevIn) out.push(intersect(prev, cur));
-        out.push(cur);
-      } else if (prevIn) {
-        out.push(intersect(prev, cur));
-      }
-    }
-    return out;
-  };
-  const lerp = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
-  let pts = poly;
-  pts = clipEdge(pts, (p) => p.x >= xMin, (a, b) => lerp(a, b, (xMin - a.x) / (b.x - a.x)));
-  pts = clipEdge(pts, (p) => p.x <= xMax, (a, b) => lerp(a, b, (xMax - a.x) / (b.x - a.x)));
-  pts = clipEdge(pts, (p) => p.y >= yMin, (a, b) => lerp(a, b, (yMin - a.y) / (b.y - a.y)));
-  pts = clipEdge(pts, (p) => p.y <= yMax, (a, b) => lerp(a, b, (yMax - a.y) / (b.y - a.y)));
-  return pts;
-}
-
 function renderSummary(results, rollLength) {
   const totalStrips = results.reduce((s, r) => s + r.n, 0);
   const totalArea = results.reduce((s, r) => s + r.area, 0);
@@ -1236,20 +1206,25 @@ staggerToggle.addEventListener("change", computeAndRender);
 document.getElementById("printSequenceBtn").addEventListener("click", () => window.print());
 
 /** Renders the same small plan diagram as the on-screen Cut Plan card, as a standalone SVG string. */
-function buildCutPlanSvgMarkup(cutPlan, w) {
+function buildCutPlanSvgMarkup(cutPlan, w, stripRollNumbers) {
   const ns = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(ns, "svg");
   svg.setAttribute("viewBox", "0 0 400 260");
   svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
   svg.setAttribute("class", "cutplan-print-page__plan");
-  renderCutPlanSvg(svg, cutPlan, w);
+  renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers);
   return svg.outerHTML;
 }
 
 /** One <section class="cutplan-print-page"> per extents lift — shared by the Cut Plan print button and the full export. */
 function buildCutPlanPrintPages(results, project, w) {
+  const rollLookup = buildRollLookup(window.__geogridRolls || []);
   return results
     .map((r) => {
+      const stripRollNumbers = r.stripLengths.map((_, i) => {
+        const rolls = rollLookup.get(`RL ${r.rl} · Strip ${i + 1}`);
+        return rolls ? Array.from(rolls).sort((a, b) => a - b).join(",") : "";
+      });
       const maxLen = Math.max(...r.stripLengths);
       const classified = r.stripLengths.map((len) => classifyStrip(len, maxLen));
       const cutCount = classified.filter((c) => c.action === "cut").length;
@@ -1284,7 +1259,7 @@ function buildCutPlanPrintPages(results, project, w) {
             <p>${metaParts.join(" · ")}</p>
           </div>
           <div class="cutplan-print-page__body">
-            ${buildCutPlanSvgMarkup(r.cutPlan, w)}
+            ${buildCutPlanSvgMarkup(r.cutPlan, w, stripRollNumbers)}
             <table class="cutplan-print-table">
               <thead><tr><th>Strip #</th><th>Cut length</th><th>Note</th></tr></thead>
               <tbody>${rows}</tbody>
@@ -1646,6 +1621,23 @@ cutPlanList.addEventListener("click", (e) => {
   computeAndRender();
 });
 
+/**
+ * Reverse-map each roll's pieces back to "which roll did this strip come from", keyed by the same
+ * label buildRollPieces uses ("RL <rl> · Strip <n>"). A piece longer than one roll is split across
+ * several ("... (1/2)", "... (2/2)") — those collapse back onto one strip with multiple roll numbers.
+ */
+function buildRollLookup(rolls) {
+  const map = new Map();
+  rolls.forEach((roll, idx) => {
+    roll.pieces.forEach((piece) => {
+      const baseLabel = piece.label.replace(/\s*\(\d+\/\d+\)$/, "");
+      if (!map.has(baseLabel)) map.set(baseLabel, new Set());
+      map.get(baseLabel).add(idx + 1);
+    });
+  });
+  return map;
+}
+
 function renderCutPlan(results, w) {
   const extentsResults = results.filter((r) => r.mode === "extents" && r.cutPlan);
   cutPlanEmpty.hidden = extentsResults.length > 0;
@@ -1653,6 +1645,7 @@ function renderCutPlan(results, w) {
   cutPlanList.innerHTML = "";
   window.__geogridCutPlanResults = extentsResults;
   window.__geogridRowsById = window.__geogridRowsById || new Map();
+  const rollLookup = buildRollLookup(window.__geogridRolls || []);
 
   extentsResults.forEach((r) => {
     const id = `row-${Math.random().toString(36).slice(2)}`;
@@ -1709,11 +1702,15 @@ function renderCutPlan(results, w) {
       });
     });
 
-    renderCutPlanSvg(card.querySelector(".cutplan-card__plan"), r.cutPlan, w);
+    const stripRollNumbers = r.stripLengths.map((_, i) => {
+      const rolls = rollLookup.get(`RL ${r.rl} · Strip ${i + 1}`);
+      return rolls ? Array.from(rolls).sort((a, b) => a - b).join(",") : "";
+    });
+    renderCutPlanSvg(card.querySelector(".cutplan-card__plan"), r.cutPlan, w, stripRollNumbers);
   });
 }
 
-function renderCutPlanSvg(svg, cutPlan, w) {
+function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
   const ns = "http://www.w3.org/2000/svg";
   const { face, cutLengths } = cutPlan;
 
@@ -1740,31 +1737,32 @@ function renderCutPlanSvg(svg, cutPlan, w) {
   svg.appendChild(polyEl);
 
   const pitch = cutLengths.length > 1 ? w - cutPlan.overlap : 0;
+  const stationOf = (i) => Math.max(0, Math.min(face.length, i * pitch + w / 2));
   const labelEvery = cutLengths.length > 24 ? 2 : 1; // thin out numbers on dense diagrams so they stay legible
-  cutLengths.forEach((len, i) => {
-    const station = Math.max(0, Math.min(face.length, i * pitch + w / 2));
-    // Each strip stays in a fixed lane along the face (station ± w/2) — that's what "lines up
-    // longitudinally" means — but its drawn shape is the TRUE extents polygon clipped to that lane,
-    // so the near/far edge follows the real boundary contour (steps, diagonals and all) instead of
-    // being flattened to a square cut. On site the crew trims to fit; this just shows them the true
-    // material footprint they're working with rather than an idealised rectangle.
-    const farReach = (cutPlan.extentsReach || [])[i] ?? len;
-    const laneXMin = station - w / 2, laneXMax = station + w / 2;
-    const clipped = clipPolyToRect(localPoly, laneXMin, laneXMax, minY - 1, maxY + 1);
 
-    if (clipped.length >= 3) {
-      const points = clipped.map((p) => `${tx(p.x).toFixed(1)},${ty(p.y).toFixed(1)}`).join(" ");
-      const stripPoly = document.createElementNS(ns, "polygon");
-      stripPoly.setAttribute("points", points);
-      // Alternating shade of the same colour, purely so adjacent strips are visually distinguishable —
-      // not a second colour or a status code, just legibility for a wall of same-width lanes.
-      stripPoly.setAttribute("fill", "var(--accent)");
-      stripPoly.setAttribute("fill-opacity", i % 2 === 0 ? "0.65" : "0.35");
-      stripPoly.setAttribute("stroke", "var(--accent-strong)");
-      stripPoly.setAttribute("stroke-width", "1");
-      svg.appendChild(stripPoly);
-    }
-    const yFar = ty(farReach);
+  cutLengths.forEach((len, i) => {
+    const station = stationOf(i);
+    // Strips are drawn as real rectangles — square cut, same convention as the manual takeoffs —
+    // spanning the strip's full width and running from the true front boundary out to the true far
+    // boundary (sampled across the strip's own width in computeCutPlan), so there's never a gap
+    // between the grid and the extents on either side.
+    const farReach = (cutPlan.extentsReach || [])[i] ?? len;
+    const nearReach = (cutPlan.frontReach || [])[i] ?? 0;
+    const xLeft = tx(station - w / 2), xRight = tx(station + w / 2);
+    const yFar = ty(farReach), yNear = ty(nearReach);
+
+    const rect = document.createElementNS(ns, "rect");
+    rect.setAttribute("x", Math.min(xLeft, xRight).toFixed(1));
+    rect.setAttribute("y", yFar.toFixed(1));
+    rect.setAttribute("width", Math.abs(xRight - xLeft).toFixed(1));
+    rect.setAttribute("height", Math.max(0, yNear - yFar).toFixed(1));
+    // Alternating shade of the same colour, purely so adjacent strips are visually distinguishable —
+    // not a second colour or a status code, just legibility for a wall of same-width rectangles.
+    rect.setAttribute("fill", "var(--accent)");
+    rect.setAttribute("fill-opacity", i % 2 === 0 ? "0.65" : "0.35");
+    rect.setAttribute("stroke", "var(--accent-strong)");
+    rect.setAttribute("stroke-width", "1");
+    svg.appendChild(rect);
 
     // Stitch patches — a separate small piece further back along the same line, past a gap the
     // main strip's single straight cut can't reach in one piece. Drawn dashed so it reads as its
@@ -1783,7 +1781,11 @@ function renderCutPlanSvg(svg, cutPlan, w) {
       svg.appendChild(stitchLine);
     });
 
-    if (i % labelEvery === 0) {
+    // Small per-strip label — the roll(s) it's cut from (see Roll schedule tab), not the strip's
+    // sequence number, so a crew can match a strip on this drawing to the physical roll to cut it
+    // from. Same convention as the manual Civil3D takeoffs this is modelled on.
+    const rollLabel = (stripRollNumbers && stripRollNumbers[i]) || "";
+    if (rollLabel && i % labelEvery === 0) {
       const margin = 6;
       const label = document.createElementNS(ns, "text");
       const lx = Math.max(margin, Math.min(W - margin, tx(station)));
@@ -1794,10 +1796,50 @@ function renderCutPlanSvg(svg, cutPlan, w) {
       label.setAttribute("font-family", "var(--font-mono)");
       label.setAttribute("fill", "var(--ink-muted)");
       label.setAttribute("text-anchor", "middle");
-      label.textContent = String(i + 1);
+      label.textContent = rollLabel;
       svg.appendChild(label);
     }
   });
+
+  // Group consecutive strips that share the same cut length and label the run once — "12.5m x 6" —
+  // the same shorthand the manual takeoffs use instead of repeating the same number on every strip.
+  // All group labels share one dimension-string baseline above the whole profile (clear of both the
+  // boundary line and the per-strip roll numbers); a group only moves up into an extra row if its
+  // label would otherwise overlap the one immediately before it — dense runs of short groups (e.g.
+  // near a review section) stagger into a couple of rows instead of piling on top of each other.
+  const overallMaxFar = Math.max(...cutLengths.map((len, i) => (cutPlan.extentsReach || [])[i] ?? len));
+  const groupFontSize = 8;
+  const rowHeight = 9;
+  const baseY = Math.max(groupFontSize + 2, ty(overallMaxFar) - 20);
+  const margin = 6;
+  const rowRightEdge = []; // rightmost x used so far, per row
+  let groupStart = 0;
+  for (let i = 1; i <= cutLengths.length; i++) {
+    if (i < cutLengths.length && Math.abs(cutLengths[i] - cutLengths[groupStart]) < 1e-6) continue;
+    const groupEnd = i - 1;
+    const count = groupEnd - groupStart + 1;
+    const groupLen = cutLengths[groupStart];
+    const text = count > 1 ? `${fmt.m(groupLen)}m x ${count}` : `${fmt.m(groupLen)}m`;
+    const halfWidth = (text.length * groupFontSize * 0.62) / 2;
+    const xMid = Math.max(margin, Math.min(W - margin, (tx(stationOf(groupStart) - w / 2) + tx(stationOf(groupEnd) + w / 2)) / 2));
+
+    let row = 0;
+    while (row < rowRightEdge.length && xMid - halfWidth < rowRightEdge[row] + 2) row++;
+    rowRightEdge[row] = xMid + halfWidth;
+    const y = Math.max(margin + 8, baseY - row * rowHeight);
+
+    const groupLabel = document.createElementNS(ns, "text");
+    groupLabel.setAttribute("x", xMid.toFixed(1));
+    groupLabel.setAttribute("y", y.toFixed(1));
+    groupLabel.setAttribute("font-size", String(groupFontSize));
+    groupLabel.setAttribute("font-family", "var(--font-mono)");
+    groupLabel.setAttribute("font-weight", "600");
+    groupLabel.setAttribute("fill", "var(--ink)");
+    groupLabel.setAttribute("text-anchor", "middle");
+    groupLabel.textContent = text;
+    svg.appendChild(groupLabel);
+    groupStart = i;
+  }
 }
 
 /* ============================================================
