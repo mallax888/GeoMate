@@ -1764,17 +1764,24 @@ function renderCutPlanSvg(svg, cutPlan, w) {
 
   const pitch = cutLengths.length > 1 ? w - cutPlan.overlap : 0;
   const stationOf = (i) => Math.max(0, Math.min(face.length, i * pitch + w / 2));
-  const labelEvery = cutLengths.length > 24 ? 2 : 1; // thin out numbers on dense diagrams so they stay legible
+  // Strip count doesn't shrink the font below this, so numbers stay every-strip and legible without
+  // ever skipping one — dense diagrams get a smaller font instead of thinned labels.
+  const labelFontSize = Math.max(4.5, Math.min(7, 165 / Math.max(cutLengths.length, 1)));
 
   cutLengths.forEach((len, i) => {
     const station = stationOf(i);
+    // Drawn edge-to-edge (this strip's seam is the midpoint to its neighbour), not at the true
+    // physical overlap width — the real lap is already called out in the "lapping each by Xmm"
+    // instruction elsewhere, and drawing every strip's true overlapping width here just doubles up
+    // every seam line and makes a 30+ strip diagram unreadable.
+    const leftSeam = i === 0 ? 0 : (stationOf(i - 1) + station) / 2;
+    const rightSeam = i === cutLengths.length - 1 ? face.length : (station + stationOf(i + 1)) / 2;
     // Strips are drawn as real rectangles — square cut, same convention as the manual takeoffs —
-    // spanning the strip's full width and running from the true front boundary out to the true far
-    // boundary (sampled across the strip's own width in computeCutPlan), so there's never a gap
-    // between the grid and the extents on either side.
+    // running from the true front boundary out to the true far boundary (sampled across the strip's
+    // own width in computeCutPlan), so there's never a gap between the grid and the extents on either side.
     const farReach = (cutPlan.extentsReach || [])[i] ?? len;
     const nearReach = (cutPlan.frontReach || [])[i] ?? 0;
-    const xLeft = tx(station - w / 2), xRight = tx(station + w / 2);
+    const xLeft = tx(leftSeam), xRight = tx(rightSeam);
     const yFar = ty(farReach), yNear = ty(nearReach);
 
     const rect = document.createElementNS(ns, "rect");
@@ -1782,11 +1789,11 @@ function renderCutPlanSvg(svg, cutPlan, w) {
     rect.setAttribute("y", yFar.toFixed(1));
     rect.setAttribute("width", Math.abs(xRight - xLeft).toFixed(1));
     rect.setAttribute("height", Math.max(0, yNear - yFar).toFixed(1));
-    // Alternating shade of the same colour, purely so adjacent strips are visually distinguishable —
-    // not a second colour or a status code, just legibility for a wall of same-width rectangles.
-    rect.setAttribute("fill", "var(--accent)");
-    rect.setAttribute("fill-opacity", i % 2 === 0 ? "0.65" : "0.35");
-    rect.setAttribute("stroke", "var(--accent-strong)");
+    // Alternating between two distinct colours (not just one colour's opacity) so adjacent strips
+    // are clearly separable at a glance, even across a long dense run of similar-height rectangles.
+    rect.setAttribute("fill", i % 2 === 0 ? "var(--accent)" : "var(--clay)");
+    rect.setAttribute("fill-opacity", "0.75");
+    rect.setAttribute("stroke", i % 2 === 0 ? "var(--accent-strong)" : "var(--clay)");
     rect.setAttribute("stroke-width", "1");
     svg.appendChild(rect);
 
@@ -1808,18 +1815,19 @@ function renderCutPlanSvg(svg, cutPlan, w) {
     });
 
     // Small per-strip label — the strip's own sequence number (1, 2, 3…), left-to-right, always in
-    // order. Which physical roll each strip is cut from is a separate question the Roll schedule tab
-    // already answers properly (it's pooled and waste-optimised across every lift, so the same-length
-    // roll numbers jump around unpredictably lift-to-lift — showing that scatter here, next to each
-    // strip, read as noise rather than useful sequence).
-    if (i % labelEvery === 0) {
+    // order, every strip (a dense diagram shrinks the font instead of skipping numbers, so there's
+    // never a confusing gap in the sequence). Which physical roll each strip is cut from is a separate
+    // question the Roll schedule tab already answers properly (it's pooled and waste-optimised across
+    // every lift, so the same-length roll numbers jump around unpredictably lift-to-lift — showing
+    // that scatter here, next to each strip, read as noise rather than useful sequence).
+    {
       const margin = 6;
       const label = document.createElementNS(ns, "text");
       const lx = Math.max(margin, Math.min(W - margin, tx(station)));
       const ly = Math.max(margin, Math.min(H - margin, yFar - 8));
       label.setAttribute("x", lx.toFixed(1));
       label.setAttribute("y", ly.toFixed(1));
-      label.setAttribute("font-size", "7");
+      label.setAttribute("font-size", labelFontSize.toFixed(1));
       label.setAttribute("font-family", "var(--font-mono)");
       label.setAttribute("fill", "var(--ink-muted)");
       label.setAttribute("text-anchor", "middle");
