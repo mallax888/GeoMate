@@ -775,8 +775,7 @@ function buildRollPieces(results) {
  * where it's actually used.
  */
 function packRollsWindowed(results, rollLength, groupSize) {
-  results.forEach((r, i) => (r._buildIndex = i));
-
+  // r._buildIndex is tagged by the caller (renderSummary) before this runs — see buildRollPieces.
   let rolls;
   if (groupSize > 0) {
     rolls = [];
@@ -1261,6 +1260,11 @@ function faceAlignedFootprint(cutPlan) {
 }
 
 function renderSummary(results, rollLength, rollGroupSize) {
+  // Build-order position of each lift — used by buildRollPieces (below, and inside
+  // packRollsWindowed) to number rolls in first-used-on-site order. Tagged once, here, so it's set
+  // before EITHER caller reads it regardless of which one happens to run first.
+  results.forEach((r, i) => (r._buildIndex = i));
+
   const totalStrips = results.reduce((s, r) => s + r.n, 0);
   const totalArea = results.reduce((s, r) => s + r.area, 0);
   const totalTheoreticalArea = results.reduce((s, r) => s + r.theoreticalArea, 0);
