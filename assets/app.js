@@ -1281,11 +1281,13 @@ function buildRollLookup(rolls) {
   return map;
 }
 
+function rollNumbersForLabel(label, rollLookup) {
+  const rolls = rollLookup.get(label);
+  return rolls ? Array.from(rolls).sort((a, b) => a - b).join(",") : "";
+}
+
 function stripRollNumbersFor(r, rollLookup) {
-  return r.stripLengths.map((_, i) => {
-    const rolls = rollLookup.get(`RL ${r.rl} · Strip ${i + 1}`);
-    return rolls ? Array.from(rolls).sort((a, b) => a - b).join(",") : "";
-  });
+  return r.stripLengths.map((_, i) => rollNumbersForLabel(`RL ${r.rl} · Strip ${i + 1}`, rollLookup));
 }
 
 /** Renders the same small plan diagram as the on-screen Cut Plan card, as a standalone SVG string. */
@@ -1300,20 +1302,26 @@ function buildCutPlanSvgMarkup(cutPlan, w, stripRollNumbers) {
 }
 
 /** One <section class="cutplan-print-page"> per extents lift — shared by the Cut Plan print button and the full export. */
-function buildCutPlanPrintPages(results, project, w) {
-  const rollLookup = buildRollLookup(window.__geogridRolls || []);
+function buildCutPlanPrintPages(results, project, w, rollLength) {
+  const rolls = window.__geogridRolls || [];
+  const rollLookup = buildRollLookup(rolls);
   return results
     .map((r) => {
       const stripRollNumbers = stripRollNumbersFor(r, rollLookup);
       const stitchCount = r.cutPlan.stitches.reduce((s, arr) => s + arr.length, 0);
+      const rollsUsed = new Set();
       const rows = r.stripLengths
         .map((len, i) => {
-          const mainRow = `<tr><td>${i + 1}</td><td>${fmt.m(len)} m</td><td>Cut</td></tr>`;
+          const rollNums = stripRollNumbers[i];
+          rollNums.split(",").filter(Boolean).forEach((n) => rollsUsed.add(+n));
+          const mainRow = `<tr><td>${i + 1}</td><td>${fmt.m(len)} m</td><td>${rollNums}</td><td>Cut</td></tr>`;
           const stitchRows = (r.cutPlan.stitches[i] || [])
-            .map(
-              (s, si) =>
-                `<tr class="is-stitch"><td>${i + 1}${r.cutPlan.stitches[i].length > 1 ? `.${si + 1}` : ""}</td><td>${fmt.m(s.length)} m</td><td>Stitch, starts ${fmt.m(s.offset)} m back</td></tr>`
-            )
+            .map((s, si) => {
+              const suffix = r.cutPlan.stitches[i].length > 1 ? `.${si + 1}` : "";
+              const stitchRolls = rollNumbersForLabel(`RL ${r.rl} · Strip ${i + 1}${suffix} stitch`, rollLookup);
+              stitchRolls.split(",").filter(Boolean).forEach((n) => rollsUsed.add(+n));
+              return `<tr class="is-stitch"><td>${i + 1}${suffix}</td><td>${fmt.m(s.length)} m</td><td>${stitchRolls}</td><td>Stitch, starts ${fmt.m(s.offset)} m back</td></tr>`;
+            })
             .join("");
           return mainRow + stitchRows;
         })
@@ -1321,6 +1329,24 @@ function buildCutPlanPrintPages(results, project, w) {
       const metaParts = [`${r.n} strips`, `face ${fmt.m(r.L)} m`];
       if (stitchCount) metaParts.push(`${stitchCount} stitch patch${stitchCount === 1 ? "" : "es"}`);
       metaParts.push(`roll width ${fmt.m(r.materialWidth / r.n)} m`);
+
+      // Every roll this lift draws from, shown as the same fill bar used on the Roll schedule tab —
+      // a roll's leftover space here often belongs to a DIFFERENT lift (that's the whole point of
+      // pooling rolls to avoid waste), so this shows the true, complete picture for each roll, not
+      // just this lift's slice of it.
+      const rollsSection =
+        rollLength > 0 && rollsUsed.size
+          ? `
+            <div class="cutplan-print-page__rolls">
+              <h4>Rolls used on this page</h4>
+              ${Array.from(rollsUsed)
+                .sort((a, b) => a - b)
+                .map((n) => buildRollCardHtml(rolls[n - 1], n - 1, rollLength))
+                .join("")}
+            </div>
+          `
+          : "";
+
       return `
         <section class="cutplan-print-page">
           <div class="cutplan-print-page__head">
@@ -1330,10 +1356,11 @@ function buildCutPlanPrintPages(results, project, w) {
           <div class="cutplan-print-page__body">
             ${buildCutPlanSvgMarkup(r.cutPlan, w, stripRollNumbers)}
             <table class="cutplan-print-table">
-              <thead><tr><th>Strip #</th><th>Cut length</th><th>Note</th></tr></thead>
+              <thead><tr><th>Strip #</th><th>Cut length</th><th>Roll #</th><th>Note</th></tr></thead>
               <tbody>${rows}</tbody>
             </table>
           </div>
+          ${rollsSection}
         </section>
       `;
     })
@@ -1343,8 +1370,8 @@ function buildCutPlanPrintPages(results, project, w) {
 document.getElementById("printCutPlanBtn").addEventListener("click", () => {
   const results = window.__geogridCutPlanResults || [];
   const project = document.getElementById("projectName").value || "Geogrid takeoff";
-  const { w } = readSettings();
-  document.getElementById("cutPlanPrintView").innerHTML = buildCutPlanPrintPages(results, project, w);
+  const { w, rollLength } = readSettings();
+  document.getElementById("cutPlanPrintView").innerHTML = buildCutPlanPrintPages(results, project, w, rollLength);
   document.body.classList.add("printing-cutplan");
   window.print();
 });
@@ -1418,7 +1445,7 @@ document.getElementById("exportFullPdfBtn").addEventListener("click", () => {
   `;
 
   const extentsResults = results.filter((r) => r.mode === "extents" && r.cutPlan);
-  const cutPlanSheets = extentsResults.length ? buildCutPlanPrintPages(extentsResults, project, w) : "";
+  const cutPlanSheets = extentsResults.length ? buildCutPlanPrintPages(extentsResults, project, w, rollLength) : "";
 
   const canvasDataUrl = view3DCanvas ? view3DCanvas.toDataURL("image/png") : null;
   const view3dSheet = canvasDataUrl

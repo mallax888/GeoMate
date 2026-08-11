@@ -654,6 +654,13 @@ input[type="number"]::-webkit-outer-spin-button {
 .cutplan-print-table th { text-transform: uppercase; font-size: 0.68rem; letter-spacing: 0.05em; color: var(--ink-muted); }
 .cutplan-print-table tr.is-stitch td { color: var(--accent-strong); font-style: italic; }
 
+.cutplan-print-page__rolls { margin-top: 0.9rem; }
+.cutplan-print-page__rolls h4 {
+  font-family: var(--font-mono); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--ink-muted); margin: 0 0 0.5rem;
+}
+.cutplan-print-page__rolls .roll-card { margin-bottom: 0.5rem; break-inside: avoid; }
+
 .extents-badge {
   flex: none;
   display: inline-flex;
