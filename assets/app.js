@@ -2133,11 +2133,14 @@ function syncCompass() {
     render3D(window.__geogridResults || []);
   });
 
-  // Snap points (N/E/S/W + TOP) — jump straight to a standard view, cube-style, instead of having to
-  // free-drag to exactly the right spot. A flatter, elevation-style pitch for the four sides; straight
-  // down the stack for TOP. stopPropagation so the click doesn't also register as a free-drag to
-  // wherever on the ring the snap dot happens to sit.
+  // Snap points (N/E/S/W, the four corners NE/SE/SW/NW, and TOP via the cube's top face) — jump
+  // straight to a standard view, cube-navigator style, instead of having to free-drag to exactly the
+  // right spot. The four sides sit flatter (square-on to that face); the four corners tilt further so
+  // they read as looking at a corner of the cube, the way a real corner view would; TOP looks straight
+  // down the stack. stopPropagation so the click doesn't also register as a free-drag to wherever on
+  // the ring the snap dot happens to sit.
   const VIEW3D_SIDE_PITCH = 0.32;
+  const VIEW3D_CORNER_PITCH = 0.68;
   compass.querySelectorAll(".view3d-compass__snap").forEach((snap) => {
     snap.addEventListener("pointerdown", (e) => {
       e.stopPropagation();
@@ -2145,7 +2148,7 @@ function syncCompass() {
         view3DState.pitch = VIEW3D_PITCH_MAX;
       } else {
         view3DState.yaw = parseFloat(snap.dataset.yaw);
-        view3DState.pitch = VIEW3D_SIDE_PITCH;
+        view3DState.pitch = snap.dataset.pitch === "corner" ? VIEW3D_CORNER_PITCH : VIEW3D_SIDE_PITCH;
       }
       render3D(window.__geogridResults || []);
     });

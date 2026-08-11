@@ -220,34 +220,60 @@
         <svg id="view3DCompass" class="view3d-compass" viewBox="0 0 90 90" role="slider" aria-label="Drag to rotate and tilt the view" tabindex="0">
           <circle class="view3d-compass__bg" cx="45" cy="45" r="38"></circle>
           <circle class="view3d-compass__ring" cx="45" cy="45" r="36"></circle>
-          <circle class="view3d-compass__ring view3d-compass__ring--inner" cx="45" cy="45" r="17"></circle>
-          <line class="view3d-compass__crosshair" x1="45" y1="9" x2="45" y2="81"></line>
-          <line class="view3d-compass__crosshair" x1="9" y1="45" x2="81" y2="45"></line>
           <line id="view3DCompassSpoke" class="view3d-compass__spoke" x1="45" y1="45" x2="45" y2="14"></line>
           <circle id="view3DCompassHandle" class="view3d-compass__handle" cx="45" cy="14" r="6"></circle>
 
+          <!-- The cube itself — a real ViewCube: click any face to snap to that view, same as the
+               ring's snap dots (left = SW corner, right = SE corner, top = straight down). -->
+          <g class="view3d-compass__cube">
+            <g class="view3d-compass__snap" data-yaw="-2.356194490192345" data-pitch="corner">
+              <title>Southwest view</title>
+              <polygon class="view3d-compass__cube-face view3d-compass__cube-face--left" points="33,38 45,45 45,61 33,54"></polygon>
+            </g>
+            <g class="view3d-compass__snap" data-yaw="2.356194490192345" data-pitch="corner">
+              <title>Southeast view</title>
+              <polygon class="view3d-compass__cube-face view3d-compass__cube-face--right" points="45,45 57,38 57,54 45,61"></polygon>
+            </g>
+            <g class="view3d-compass__snap" data-pitch="top">
+              <title>Top view</title>
+              <polygon class="view3d-compass__cube-face view3d-compass__cube-face--top" points="45,31 57,38 45,45 33,38"></polygon>
+            </g>
+          </g>
+
           <!-- Snap points — click to jump straight to a standard view, cube-style, instead of
-               free-dragging to it. N/E/S/W sit on the ring (a flatter, elevation-style tilt facing
-               that side); TOP is the centre (looking straight down the stack). -->
+               free-dragging to it. The four sides (N/E/S/W) sit flatter, facing that side square-on;
+               the four corners (NE/SE/SW/NW) tilt a bit more so they read as a corner of the cube. -->
           <g class="view3d-compass__snap" data-yaw="0" data-pitch="side">
             <circle cx="45" cy="9" r="5"></circle>
             <text x="45" y="9" text-anchor="middle" dominant-baseline="central">N</text>
+          </g>
+          <g class="view3d-compass__snap" data-yaw="0.7853981633974483" data-pitch="corner">
+            <circle cx="70.5" cy="19.5" r="5"></circle>
+            <text x="70.5" y="19.5" text-anchor="middle" dominant-baseline="central">NE</text>
           </g>
           <g class="view3d-compass__snap" data-yaw="1.5707963267948966" data-pitch="side">
             <circle cx="81" cy="45" r="5"></circle>
             <text x="81" y="45" text-anchor="middle" dominant-baseline="central">E</text>
           </g>
+          <g class="view3d-compass__snap" data-yaw="2.356194490192345" data-pitch="corner">
+            <circle cx="70.5" cy="70.5" r="5"></circle>
+            <text x="70.5" y="70.5" text-anchor="middle" dominant-baseline="central">SE</text>
+          </g>
           <g class="view3d-compass__snap" data-yaw="3.14159265358979" data-pitch="side">
             <circle cx="45" cy="81" r="5"></circle>
             <text x="45" y="81" text-anchor="middle" dominant-baseline="central">S</text>
+          </g>
+          <g class="view3d-compass__snap" data-yaw="-2.356194490192345" data-pitch="corner">
+            <circle cx="19.5" cy="70.5" r="5"></circle>
+            <text x="19.5" y="70.5" text-anchor="middle" dominant-baseline="central">SW</text>
           </g>
           <g class="view3d-compass__snap" data-yaw="-1.5707963267948966" data-pitch="side">
             <circle cx="9" cy="45" r="5"></circle>
             <text x="9" y="45" text-anchor="middle" dominant-baseline="central">W</text>
           </g>
-          <g class="view3d-compass__snap view3d-compass__snap--top" data-pitch="top">
-            <circle cx="45" cy="45" r="8"></circle>
-            <text x="45" y="45" text-anchor="middle" dominant-baseline="central">TOP</text>
+          <g class="view3d-compass__snap" data-yaw="-0.7853981633974483" data-pitch="corner">
+            <circle cx="19.5" cy="19.5" r="5"></circle>
+            <text x="19.5" y="19.5" text-anchor="middle" dominant-baseline="central">NW</text>
           </g>
         </svg>
       </div>

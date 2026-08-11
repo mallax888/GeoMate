@@ -712,12 +712,18 @@ input[type="number"]::-webkit-outer-spin-button {
 .view3d-compass:active { cursor: grabbing; }
 .view3d-compass__bg { fill: var(--surface); fill-opacity: 0.88; stroke: none; }
 .view3d-compass__ring { fill: none; stroke: var(--line-strong); stroke-width: 1; }
-.view3d-compass__ring--inner { stroke-dasharray: 2,2; }
-.view3d-compass__crosshair { stroke: var(--line); stroke-width: 0.75; }
 .view3d-compass__spoke { stroke: var(--accent); stroke-width: 1.25; }
 .view3d-compass__handle { fill: var(--accent); stroke: var(--surface); stroke-width: 1.5; }
 .view3d-compass:hover .view3d-compass__handle,
 .view3d-compass:focus-visible .view3d-compass__handle { fill: var(--accent-strong); }
+
+/* The cube icon at the centre — a real ViewCube: three shaded faces (top lightest, left mid, right
+   darkest) for a simple isometric read, and each face is its own snap target (see the HTML). */
+.view3d-compass__cube-face { stroke: var(--ink-muted); stroke-width: 0.75; stroke-linejoin: round; cursor: pointer; }
+.view3d-compass__cube-face--top { fill: var(--accent-tint); }
+.view3d-compass__cube-face--left { fill: var(--line); }
+.view3d-compass__cube-face--right { fill: var(--line-strong); }
+.view3d-compass__snap:hover .view3d-compass__cube-face { fill: var(--accent); }
 
 .view3d-compass__snap { cursor: pointer; }
 .view3d-compass__snap circle { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1; }
@@ -727,8 +733,6 @@ input[type="number"]::-webkit-outer-spin-button {
 }
 .view3d-compass__snap:hover circle { stroke: var(--accent); fill: var(--accent-tint); }
 .view3d-compass__snap:hover text { fill: var(--accent-strong); }
-.view3d-compass__snap--top circle { stroke-dasharray: 1.5,1; }
-.view3d-compass__snap--top text { font-size: 5px; }
 
 /* ---------- Roll schedule ---------- */
 .roll-schedule-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 0.6rem; }
