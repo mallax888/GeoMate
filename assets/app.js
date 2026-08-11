@@ -1137,6 +1137,38 @@ function localFootprint(cutPlan, ref) {
   });
 }
 
+/**
+ * Re-express an extents polygon for the 2D Cut Plan diagram specifically: x = arc-length station
+ * along the (possibly multi-segment) face, y = depth in the fixed inward direction cutLengths and
+ * frontReach are already measured along. localFootprint above projects onto one straight direction
+ * for the whole face, which is right for stacking several lifts in the 3D view, but a real face often
+ * bends across a handful of segments — projected that way, the drawn boundary line wobbles above and
+ * below where the strips actually start even though the strips themselves tie up to it exactly (they're
+ * placed by true arc-length station, not by this projection). Snapping every boundary point to its
+ * nearest position ON the face keeps the drawn line and the strips on the same axis, so the face edge
+ * always renders as the flat baseline it actually is.
+ */
+function faceAlignedFootprint(cutPlan) {
+  const face = cutPlan.face;
+  const inward = inwardNormal(face.dir);
+  return cutPlan.poly.map((p) => {
+    let best = null;
+    let acc = 0;
+    for (const e of face.edges) {
+      const ex = e.to.x - e.from.x, ey = e.to.y - e.from.y;
+      const len2 = ex * ex + ey * ey;
+      let t = len2 > 1e-12 ? ((p.x - e.from.x) * ex + (p.y - e.from.y) * ey) / len2 : 0;
+      t = Math.max(0, Math.min(1, t));
+      const cx = e.from.x + ex * t, cy = e.from.y + ey * t;
+      const dx = p.x - cx, dy = p.y - cy;
+      const distSq = dx * dx + dy * dy;
+      if (!best || distSq < best.distSq) best = { distSq, station: acc + t * e.len, dx, dy };
+      acc += e.len;
+    }
+    return { x: best.station, y: best.dx * inward.x + best.dy * inward.y };
+  });
+}
+
 function renderSummary(results, rollLength) {
   const totalStrips = results.reduce((s, r) => s + r.n, 0);
   const totalArea = results.reduce((s, r) => s + r.area, 0);
@@ -1708,11 +1740,11 @@ function renderCutPlanSvg(svg, cutPlan, w) {
   const ns = "http://www.w3.org/2000/svg";
   const { face, cutLengths } = cutPlan;
 
-  // Face-aligned local frame: x = distance along the face (left to right, strip order), y = depth
-  // into the fill. Same rotation the 3D view already uses (localFootprint) — the face is drawn as a
-  // straight horizontal baseline with every strip a clean vertical bar, regardless of which way the
-  // wall actually runs in the DXF's survey coordinates.
-  const localPoly = localFootprint(cutPlan);
+  // Face-aligned local frame: x = arc-length station along the face (left to right, strip order),
+  // y = depth into the fill — every boundary point snapped to its true position relative to the face
+  // itself (see faceAlignedFootprint), not a single straight-line projection, so a face with several
+  // segments still draws as one flat baseline that the strips visibly tie up to.
+  const localPoly = faceAlignedFootprint(cutPlan);
   const xs = localPoly.map((p) => p.x), ys = localPoly.map((p) => p.y);
   const minX = Math.min(0, ...xs), maxX = Math.max(face.length, ...xs);
   const minY = Math.min(0, ...ys, ...(cutPlan.frontReach || [])), maxY = Math.max(...cutLengths, ...(cutPlan.extentsReach || []), ...ys);
