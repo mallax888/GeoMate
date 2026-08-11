@@ -201,7 +201,7 @@
 
     <div id="view3DPanel" class="view3d-panel" hidden>
       <div class="view3d-controls">
-        <p class="view3d-hint">Drag to rotate, scroll to zoom. Each lift is normalised to its own face start — this shows relative shape and stacking, not survey coordinates.</p>
+        <p class="view3d-hint">Drag to rotate, scroll to zoom. All lifts share one frame (aligned to the longest face) so their true relative shape and position carries over from the DXF — it's rotated to face front-on, not in survey coordinates.</p>
         <button id="view3DReset" class="btn btn--ghost" type="button">Reset view</button>
       </div>
       <canvas id="view3DCanvas" class="view3d-canvas" width="900" height="560"></canvas>

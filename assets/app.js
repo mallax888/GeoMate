@@ -970,6 +970,24 @@ function computeAndRender() {
   const rows = Array.from(tbody.querySelectorAll(".lift-row"));
   emptyState.hidden = rows.length > 0;
 
+  // Pre-pass: compute each extents-mode row's cut plan once, and pick a single shared frame (the
+  // longest face) for the 3D view — a short return/starter bench isn't representative of the main
+  // wall's orientation, and every lift needs the SAME frame to stack with its true relative
+  // alignment preserved, rather than each independently reset to its own face start.
+  const cutPlanByRow = new Map();
+  rows.forEach((row) => {
+    if (row.dataset.mode === "extents" && row._extentsPoints) {
+      const cp = oMin < w ? computeCutPlan(row._extentsPoints, w, oMin, row._extentsSwapped) : null;
+      if (cp) cutPlanByRow.set(row, cp);
+    }
+  });
+  let footprintRef = null;
+  cutPlanByRow.forEach((cp) => {
+    if (!footprintRef || cp.faceLength > footprintRef.faceLength) {
+      footprintRef = { faceLength: cp.faceLength, origin: cp.face.edges[0].from, dir: cp.face.dir };
+    }
+  });
+
   const liftResults = [];
 
   rows.forEach((row) => {
@@ -986,7 +1004,7 @@ function computeAndRender() {
     let L, result, stripLengths, theoreticalArea, cutPlan = null;
 
     if (mode === "extents" && row._extentsPoints) {
-      cutPlan = oMin < w ? computeCutPlan(row._extentsPoints, w, oMin, row._extentsSwapped) : null;
+      cutPlan = cutPlanByRow.get(row) || null;
       if (cutPlan) {
         L = cutPlan.faceLength;
         result = { n: cutPlan.n, overlap: cutPlan.overlap, materialWidth: cutPlan.materialWidth };
@@ -1036,7 +1054,7 @@ function computeAndRender() {
     renderDiagram(diagram, L, result, w);
 
     const footprint =
-      mode === "extents" && cutPlan ? localFootprint(cutPlan) : rectFootprint(L, Math.max(...stripLengths));
+      mode === "extents" && cutPlan ? localFootprint(cutPlan, footprintRef) : rectFootprint(L, Math.max(...stripLengths));
 
     liftResults.push({
       rl,
@@ -1074,10 +1092,16 @@ function rectFootprint(L, depth) {
   ];
 }
 
-/** Re-express an extents polygon in the same local frame: origin at the face's start, x along the face, y into the fill. */
-function localFootprint(cutPlan) {
-  const origin = cutPlan.face.edges[0].from;
-  const dir = cutPlan.face.dir;
+/**
+ * Re-express an extents polygon in a local frame: x along a face direction, y into the fill. Defaults
+ * to the lift's own face (origin at its start, its own direction) — right for a single Cut Plan
+ * diagram, where each bench is read on its own. Pass an explicit `ref` to project several lifts into
+ * one SHARED frame instead, e.g. for 3D stacking, where every lift needs the same origin/direction to
+ * preserve their true relative alignment rather than each being independently reset to its own (0,0).
+ */
+function localFootprint(cutPlan, ref) {
+  const origin = ref ? ref.origin : cutPlan.face.edges[0].from;
+  const dir = ref ? ref.dir : cutPlan.face.dir;
   const perp = inwardNormal(dir);
   return cutPlan.poly.map((p) => {
     const rx = p.x - origin.x, ry = p.y - origin.y;
