@@ -692,6 +692,28 @@ input[type="number"]::-webkit-outer-spin-button {
 }
 .view3d-canvas:active { cursor: grabbing; }
 
+.view3d-canvas-wrap { position: relative; }
+.view3d-compass {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+  width: 5.4rem;
+  height: 5.4rem;
+  touch-action: none;
+  cursor: grab;
+}
+.view3d-compass:active { cursor: grabbing; }
+.view3d-compass__bg { fill: var(--surface); fill-opacity: 0.88; stroke: none; }
+.view3d-compass__ring { fill: none; stroke: var(--line-strong); stroke-width: 1; }
+.view3d-compass__ring--inner { stroke-dasharray: 2,2; }
+.view3d-compass__crosshair { stroke: var(--line); stroke-width: 0.75; }
+.view3d-compass__tick { fill: var(--ink-muted); font-size: 6px; font-family: var(--font-mono); letter-spacing: 0.03em; }
+.view3d-compass__tick--outer { fill: var(--ink-muted); }
+.view3d-compass__spoke { stroke: var(--accent); stroke-width: 1.25; }
+.view3d-compass__handle { fill: var(--accent); stroke: var(--surface); stroke-width: 1.5; }
+.view3d-compass:hover .view3d-compass__handle,
+.view3d-compass:focus-visible .view3d-compass__handle { fill: var(--accent-strong); }
+
 /* ---------- Roll schedule ---------- */
 .roll-schedule-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 0.6rem; }
 .roll-schedule-intro { font-size: 0.85rem; color: var(--ink-muted); max-width: 68ch; margin: 0; }

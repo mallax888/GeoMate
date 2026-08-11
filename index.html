@@ -212,10 +212,23 @@
 
     <div id="view3DPanel" class="view3d-panel" hidden>
       <div class="view3d-controls">
-        <p class="view3d-hint">Drag to rotate, scroll to zoom. All lifts share one frame (aligned to the longest face) so their true relative shape and position carries over from the DXF — it's rotated to face front-on, not in survey coordinates.</p>
+        <p class="view3d-hint">Drag to rotate, scroll to zoom, or use the wheel top-right (angle = rotation, distance from centre = tilt). All lifts share one frame (aligned to the longest face) so their true relative shape and position carries over from the DXF — it's rotated to face front-on, not in survey coordinates.</p>
         <button id="view3DReset" class="btn btn--ghost" type="button">Reset view</button>
       </div>
-      <canvas id="view3DCanvas" class="view3d-canvas" width="900" height="560"></canvas>
+      <div class="view3d-canvas-wrap">
+        <canvas id="view3DCanvas" class="view3d-canvas" width="900" height="560"></canvas>
+        <svg id="view3DCompass" class="view3d-compass" viewBox="0 0 90 90" role="slider" aria-label="Drag to rotate and tilt the view" tabindex="0">
+          <circle class="view3d-compass__bg" cx="45" cy="45" r="38"></circle>
+          <circle class="view3d-compass__ring" cx="45" cy="45" r="36"></circle>
+          <circle class="view3d-compass__ring view3d-compass__ring--inner" cx="45" cy="45" r="17"></circle>
+          <line class="view3d-compass__crosshair" x1="45" y1="9" x2="45" y2="81"></line>
+          <line class="view3d-compass__crosshair" x1="9" y1="45" x2="81" y2="45"></line>
+          <text class="view3d-compass__tick" x="45" y="24" text-anchor="middle">TOP</text>
+          <text class="view3d-compass__tick view3d-compass__tick--outer" x="45" y="6" text-anchor="middle">SIDE</text>
+          <line id="view3DCompassSpoke" class="view3d-compass__spoke" x1="45" y1="45" x2="45" y2="14"></line>
+          <circle id="view3DCompassHandle" class="view3d-compass__handle" cx="45" cy="14" r="6"></circle>
+        </svg>
+      </div>
       <p id="view3DEmpty" class="empty-state">No lifts with a face length yet — fill in the takeoff table to see the stack.</p>
     </div>
 

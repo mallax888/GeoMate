@@ -1937,6 +1937,27 @@ function render3D(results) {
   ctx.textAlign = "left";
   ctx.font = "10px " + (style.getPropertyValue("--font-mono").trim() || "monospace");
   ctx.fillText(`${lifts.length} lifts · RL ${lifts[0].rlLabel} → ${lifts[lifts.length - 1].rlLabel}`, 12, H - 14);
+
+  syncCompass();
+}
+
+const VIEW3D_PITCH_MIN = 0.05, VIEW3D_PITCH_MAX = 1.5;
+
+/** Positions the compass handle to match view3DState — called after any interaction changes yaw/pitch,
+ * from any source (canvas drag, the compass itself, the reset button), so it never drifts out of sync. */
+function syncCompass() {
+  const spoke = document.getElementById("view3DCompassSpoke");
+  const handle = document.getElementById("view3DCompassHandle");
+  if (!spoke || !handle) return;
+  const cx = 45, cy = 45, minR = 8, maxR = 34;
+  const t = (view3DState.pitch - VIEW3D_PITCH_MIN) / (VIEW3D_PITCH_MAX - VIEW3D_PITCH_MIN);
+  const r = maxR - Math.max(0, Math.min(1, t)) * (maxR - minR);
+  const hx = cx + r * Math.sin(view3DState.yaw);
+  const hy = cy - r * Math.cos(view3DState.yaw);
+  spoke.setAttribute("x2", hx.toFixed(2));
+  spoke.setAttribute("y2", hy.toFixed(2));
+  handle.setAttribute("cx", hx.toFixed(2));
+  handle.setAttribute("cy", hy.toFixed(2));
 }
 
 (function wire3DInteraction() {
@@ -1955,7 +1976,7 @@ function render3D(results) {
     lastX = e.clientX;
     lastY = e.clientY;
     view3DState.yaw += dx * 0.008;
-    view3DState.pitch = Math.max(0.05, Math.min(1.5, view3DState.pitch + dy * 0.006));
+    view3DState.pitch = Math.max(VIEW3D_PITCH_MIN, Math.min(VIEW3D_PITCH_MAX, view3DState.pitch + dy * 0.006));
     render3D(window.__geogridResults || []);
   });
   ["pointerup", "pointercancel", "pointerleave"].forEach((evt) =>
@@ -1975,6 +1996,55 @@ function render3D(results) {
     Object.assign(view3DState, { yaw: -0.6, pitch: 0.5, zoom: 1, panX: 0, panY: 0 });
     render3D(window.__geogridResults || []);
   });
+})();
+
+/**
+ * Compass wheel — a single 2-axis control standing in for "drag to rotate, drag to tilt": angle around
+ * the ring sets yaw, distance from centre sets pitch (near centre = looking down from TOP, out at the
+ * ring's edge = a flatter SIDE-on view). Kept in sync with the main canvas drag via syncCompass() so
+ * either control always reflects the other's changes.
+ */
+(function wireCompass() {
+  const compass = document.getElementById("view3DCompass");
+  if (!compass) return;
+  const cx = 45, cy = 45, minR = 8, maxR = 34;
+
+  function applyFromPointer(e) {
+    const rect = compass.getBoundingClientRect();
+    const px = ((e.clientX - rect.left) / rect.width) * 90;
+    const py = ((e.clientY - rect.top) / rect.height) * 90;
+    const dx = px - cx, dy = py - cy;
+    view3DState.yaw = Math.atan2(dx, -dy);
+    const dist = Math.max(minR, Math.min(maxR, Math.hypot(dx, dy)));
+    const t = (maxR - dist) / (maxR - minR);
+    view3DState.pitch = VIEW3D_PITCH_MIN + t * (VIEW3D_PITCH_MAX - VIEW3D_PITCH_MIN);
+    render3D(window.__geogridResults || []);
+  }
+
+  let dragging = false;
+  compass.addEventListener("pointerdown", (e) => {
+    dragging = true;
+    compass.setPointerCapture(e.pointerId);
+    applyFromPointer(e);
+  });
+  compass.addEventListener("pointermove", (e) => {
+    if (dragging) applyFromPointer(e);
+  });
+  ["pointerup", "pointercancel", "pointerleave"].forEach((evt) => compass.addEventListener(evt, () => (dragging = false)));
+
+  // Basic keyboard support to match role="slider": arrows nudge yaw/pitch a step at a time.
+  compass.addEventListener("keydown", (e) => {
+    const step = 0.12;
+    if (e.key === "ArrowLeft") view3DState.yaw -= step;
+    else if (e.key === "ArrowRight") view3DState.yaw += step;
+    else if (e.key === "ArrowUp") view3DState.pitch = Math.min(VIEW3D_PITCH_MAX, view3DState.pitch + step);
+    else if (e.key === "ArrowDown") view3DState.pitch = Math.max(VIEW3D_PITCH_MIN, view3DState.pitch - step);
+    else return;
+    e.preventDefault();
+    render3D(window.__geogridResults || []);
+  });
+
+  syncCompass(); // correct position from the start, even before any data has loaded
 })();
 
 /* ============================================================
