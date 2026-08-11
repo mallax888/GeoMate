@@ -695,6 +695,51 @@ input[type="number"]::-webkit-outer-spin-button {
 }
 .view3d-canvas:active { cursor: grabbing; }
 
+/* ---------- Roll schedule ---------- */
+.roll-schedule-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 0.6rem; }
+.roll-schedule-intro { font-size: 0.85rem; color: var(--ink-muted); max-width: 68ch; margin: 0; }
+.roll-schedule-summary { font-size: 0.8rem; color: var(--ink-muted); margin: 0 0 0.8rem; }
+.roll-schedule-list { display: flex; flex-direction: column; gap: 0.7rem; }
+.roll-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 0.75rem 1rem; background: var(--surface-2); }
+.roll-card__head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.7rem; margin-bottom: 0.5rem; }
+.roll-card__title { font-family: var(--font-mono); font-weight: 700; font-size: 0.88rem; }
+.roll-card__meta { font-size: 0.76rem; color: var(--ink-muted); }
+.roll-bar {
+  display: flex;
+  width: 100%;
+  height: 1.6rem;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  margin-bottom: 0.5rem;
+}
+.roll-bar__piece {
+  height: 100%;
+  border-right: 1px solid var(--surface-2);
+  background: var(--accent-tint);
+  position: relative;
+}
+.roll-bar__piece:nth-child(odd) { background: var(--clay-tint); }
+.roll-bar__piece:last-child { border-right: none; }
+.roll-bar__offcut {
+  height: 100%;
+  background: repeating-linear-gradient(45deg, var(--line), var(--line) 4px, transparent 4px, transparent 8px);
+}
+.roll-card__pieces {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.15rem 1rem;
+}
+.roll-card__pieces li { display: flex; justify-content: space-between; gap: 0.5rem; padding: 0.15rem 0; border-bottom: 1px solid var(--line); }
+.roll-schedule-print-view { display: none; }
+
 @media print {
   .titleblock, .panel--settings, .panel--summary, .panel__headrow, .sequence-controls, .foot, #takeoffView { display: none !important; }
   body { background: #fff; }
@@ -712,6 +757,14 @@ input[type="number"]::-webkit-outer-spin-button {
 
   body.printing-full .layout { display: none !important; }
   body.printing-full .full-export-print { display: block !important; }
+
+  body.printing-rolls .layout { display: none !important; }
+  body.printing-rolls .roll-schedule-print-view { display: block !important; }
+  .roll-print-heading {
+    font-family: var(--font-mono); font-size: 1.1rem; text-transform: uppercase; letter-spacing: 0.05em;
+    border-bottom: 1px solid var(--line); padding-bottom: 0.5rem; margin: 0 0 1rem;
+  }
+  .roll-schedule-print-view .roll-card { break-inside: avoid; }
 }
 
 .full-export-print { display: none; }

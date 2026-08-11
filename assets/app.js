@@ -189,7 +189,7 @@ const STITCH_MIN = 0.05;
 
 // Reported strip/stitch lengths are rounded up to this step — practical site numbers, never a raw
 // CAD-precision decimal. Always UP: rounding must never leave a strip shorter than the design requires.
-const ROUND_STEP = 0.05;
+const ROUND_STEP = 0.5;
 // A raw length within this of the step below is DXF/survey noise (vertex-picking, triangulation),
 // not a real few-mm-longer requirement — snap down to the clean number instead of bumping a full
 // step up for it. Same noise floor as TRIM_THRESHOLD elsewhere in the app.
@@ -572,27 +572,70 @@ function parseDXFPolygons(text) {
 }
 
 /** Greedy first-fit-decreasing bin packing of strip lengths into fixed-length rolls. */
-function packRolls(lengths, rollLength) {
-  if (!(rollLength > 0)) return { rolls: 0, purchased: 0, used: 0, offcut: 0 };
-  const sorted = lengths.filter((l) => l > 1e-6).slice().sort((a, b) => b - a);
-  const bins = [];
-  let rolls = 0, purchased = 0, used = 0;
-  sorted.forEach((len) => {
-    used += len;
-    if (len > rollLength) {
-      const need = Math.ceil(len / rollLength);
-      rolls += need;
-      purchased += need * rollLength;
+/**
+ * First-fit-decreasing bin packing of labelled pieces (which lift, which strip) onto fixed-length
+ * rolls — a physical numbered cutting schedule, not just a summary count. Per site preference, a
+ * roll's leftover after packing is never left as discarded off-cut: it's added onto that roll's last
+ * (smallest) piece instead, since a strip longer than its design minimum is always safe, but an
+ * off-cut thrown in the bin isn't recoverable. Every roll therefore ends up used in full; each piece
+ * carries `extra` (how much beyond its design length it picked up to make that happen) so the bonus
+ * is visible rather than silently absorbed. A piece longer than one roll is split across as many
+ * whole rolls as it needs plus a final partial one.
+ */
+function packRollsDetailed(pieces, rollLength) {
+  if (!(rollLength > 0)) return [];
+  const sorted = pieces.filter((p) => p.length > 1e-6).slice().sort((a, b) => b.length - a.length);
+  const rolls = [];
+  sorted.forEach((piece) => {
+    if (piece.length > rollLength + 1e-9) {
+      let remaining = piece.length;
+      let part = 1;
+      const totalParts = Math.ceil(piece.length / rollLength);
+      while (remaining > 1e-9) {
+        const cut = Math.min(rollLength, remaining);
+        rolls.push({ remaining: rollLength - cut, pieces: [{ label: `${piece.label} (${part}/${totalParts})`, length: cut, extra: 0 }] });
+        remaining -= cut;
+        part++;
+      }
       return;
     }
-    for (let i = 0; i < bins.length; i++) {
-      if (bins[i] >= len - 1e-9) { bins[i] -= len; return; }
+    for (const roll of rolls) {
+      if (roll.remaining >= piece.length - 1e-9) {
+        roll.pieces.push({ label: piece.label, length: piece.length, extra: 0 });
+        roll.remaining -= piece.length;
+        return;
+      }
     }
-    rolls += 1;
-    purchased += rollLength;
-    bins.push(rollLength - len);
+    rolls.push({ remaining: rollLength - piece.length, pieces: [{ label: piece.label, length: piece.length, extra: 0 }] });
   });
-  return { rolls, purchased, used, offcut: purchased - used };
+
+  // Use up every roll fully: whatever's left after packing goes onto that roll's last (smallest)
+  // piece as extra length, rather than being thrown away.
+  rolls.forEach((roll) => {
+    if (roll.remaining > 1e-6) {
+      roll.pieces[roll.pieces.length - 1].extra += roll.remaining;
+      roll.remaining = 0;
+    }
+  });
+
+  return rolls;
+}
+
+/** Every strip and stitch across every lift, labelled by source, for the pooled cross-level roll schedule. */
+function buildRollPieces(results) {
+  const pieces = [];
+  results.forEach((r) => {
+    r.stripLengths.forEach((len, i) => {
+      if (len > 1e-6) pieces.push({ label: `RL ${r.rl} · Strip ${i + 1}`, length: len });
+      if (r.cutPlan) {
+        (r.cutPlan.stitches[i] || []).forEach((s, si) => {
+          const suffix = r.cutPlan.stitches[i].length > 1 ? `.${si + 1}` : "";
+          pieces.push({ label: `RL ${r.rl} · Strip ${i + 1}${suffix} stitch`, length: s.length });
+        });
+      }
+    });
+  });
+  return pieces;
 }
 
 /* ============================================================
@@ -995,6 +1038,7 @@ function computeAndRender() {
   renderSequence(liftResults, w);
   renderCutPlan(liftResults, w);
   render3D(liftResults);
+  renderRollSchedule(window.__geogridRolls || [], rollLength);
   window.__geogridResults = liftResults; // exposed for CSV export
 }
 
@@ -1039,8 +1083,8 @@ function renderSummary(results, rollLength) {
     wasteOverlapEl.className = "waste-row__pct";
   }
 
-  // Every individual strip length across the whole project (plus any stitch patches), flattened for
-  // bin-packing and for the breakdown table.
+  // Every individual strip length across the whole project (plus any stitch patches) — for the
+  // readable breakdown table below, and for the pooled cross-level roll schedule.
   const allLengths = results.flatMap((r) => [...r.stripLengths, ...(r.stitchLengths || [])]);
 
   // Bucket into 100mm bands purely for the readable breakdown table.
@@ -1059,15 +1103,22 @@ function renderSummary(results, rollLength) {
       rollTableBody.appendChild(tr);
     });
 
-  const packed = packRolls(allLengths, rollLength);
-  document.getElementById("statRolls").textContent = fmt.int(packed.rolls);
+  // Pack every strip/stitch across every lift onto numbered rolls (see Roll schedule tab) — the same
+  // packing drives both this summary and that tab, so they always agree.
+  const rollPieces = buildRollPieces(results);
+  const rolls = packRollsDetailed(rollPieces, rollLength);
+  window.__geogridRolls = rolls;
+  window.__geogridRollPieces = rollPieces;
 
-  const offcutWaste = packed.offcut;
-  const offcutWastePct = packed.purchased > 0 ? (offcutWaste / packed.purchased) * 100 : 0;
+  document.getElementById("statRolls").textContent = fmt.int(rolls.length);
+
+  const purchased = rolls.length * rollLength;
+  const extraTotal = rolls.reduce((s, roll) => s + roll.pieces.reduce((s2, p) => s2 + p.extra, 0), 0);
+  const extraPct = purchased > 0 ? (extraTotal / purchased) * 100 : 0;
   const wasteOffcutEl = document.getElementById("wasteOffcut");
-  if (packed.purchased > 0) {
-    wasteOffcutEl.textContent = `${fmt.m(offcutWaste)} m (${fmt.pct(offcutWastePct)})`;
-    wasteOffcutEl.className = `waste-row__pct level-${wasteLevel(offcutWastePct)}`;
+  if (purchased > 0) {
+    wasteOffcutEl.textContent = `${fmt.m(extraTotal)} m (${fmt.pct(extraPct)})`;
+    wasteOffcutEl.className = `waste-row__pct level-${wasteLevel(extraPct)}`;
   } else {
     wasteOffcutEl.textContent = "—";
     wasteOffcutEl.className = "waste-row__pct";
@@ -1082,10 +1133,12 @@ const tabTakeoff = document.getElementById("tabTakeoff");
 const tabSequence = document.getElementById("tabSequence");
 const tabCutPlan = document.getElementById("tabCutPlan");
 const tab3D = document.getElementById("tab3D");
+const tabRolls = document.getElementById("tabRolls");
 const takeoffView = document.getElementById("takeoffView");
 const sequenceView = document.getElementById("sequenceView");
 const cutPlanView = document.getElementById("cutPlanView");
 const view3DPanel = document.getElementById("view3DPanel");
+const rollScheduleView = document.getElementById("rollScheduleView");
 const staggerToggle = document.getElementById("staggerToggle");
 const sequenceList = document.getElementById("sequenceList");
 const cutPlanList = document.getElementById("cutPlanList");
@@ -1095,6 +1148,7 @@ tabTakeoff.addEventListener("click", () => switchTab("takeoff"));
 tabSequence.addEventListener("click", () => switchTab("sequence"));
 tabCutPlan.addEventListener("click", () => switchTab("cutplan"));
 tab3D.addEventListener("click", () => switchTab("view3d"));
+tabRolls.addEventListener("click", () => switchTab("rolls"));
 staggerToggle.addEventListener("change", computeAndRender);
 document.getElementById("printSequenceBtn").addEventListener("click", () => window.print());
 
@@ -1171,6 +1225,7 @@ document.getElementById("printCutPlanBtn").addEventListener("click", () => {
 window.addEventListener("afterprint", () => {
   document.body.classList.remove("printing-cutplan");
   document.body.classList.remove("printing-full");
+  document.body.classList.remove("printing-rolls");
 });
 
 document.getElementById("exportFullPdfBtn").addEventListener("click", () => {
@@ -1187,7 +1242,7 @@ document.getElementById("exportFullPdfBtn").addEventListener("click", () => {
         <div><dt>Grid area</dt><dd>${document.getElementById("statArea").textContent}</dd></div>
         <div><dt>Rolls to order</dt><dd>${document.getElementById("statRolls").textContent}</dd></div>
         <div><dt>Overlap waste</dt><dd>${document.getElementById("wasteOverlap").textContent}</dd></div>
-        <div><dt>Roll off-cut waste</dt><dd>${document.getElementById("wasteOffcut").textContent}</dd></div>
+        <div><dt>Extra to fill rolls</dt><dd>${document.getElementById("wasteOffcut").textContent}</dd></div>
       </dl>
     </section>
   `;
@@ -1243,7 +1298,13 @@ document.getElementById("exportFullPdfBtn").addEventListener("click", () => {
     ? `<section class="export-sheet export-sheet__3d"><h2>3D view</h2><img src="${canvasDataUrl}" alt="3D stacked view of all lifts" /></section>`
     : "";
 
-  document.getElementById("fullExportPrintView").innerHTML = coverSheet + takeoffSheet + sequenceSheet + cutPlanSheets + view3dSheet;
+  const rolls = window.__geogridRolls || [];
+  const rollCards = rolls.map((roll, i) => buildRollCardHtml(roll, i, rollLength)).join("");
+  const rollSheet = rolls.length
+    ? `<section class="export-sheet"><h2>Roll cutting schedule</h2><div class="roll-schedule-list">${rollCards}</div></section>`
+    : "";
+
+  document.getElementById("fullExportPrintView").innerHTML = coverSheet + takeoffSheet + sequenceSheet + cutPlanSheets + view3dSheet + rollSheet;
   document.body.classList.add("printing-full");
   window.print();
 });
@@ -1253,6 +1314,7 @@ const TABS = {
   sequence: { tab: tabSequence, view: sequenceView },
   cutplan: { tab: tabCutPlan, view: cutPlanView },
   view3d: { tab: tab3D, view: view3DPanel },
+  rolls: { tab: tabRolls, view: rollScheduleView },
 };
 
 function switchTab(which) {
@@ -1815,6 +1877,79 @@ function render3D(results) {
 })();
 
 /* ============================================================
+   Roll schedule — every strip/stitch pooled across every lift and packed onto
+   numbered rolls, aiming for zero discarded off-cut.
+   ============================================================ */
+
+/** One <div class="roll-card"> — a labelled bar diagram plus a piece list — shared by the on-screen list and print. */
+function buildRollCardHtml(roll, index, rollLength) {
+  const used = roll.pieces.reduce((s, p) => s + p.length + p.extra, 0);
+  const barPieces = roll.pieces
+    .map((p) => {
+      const total = p.length + p.extra;
+      const title = p.extra > 1e-6 ? `${escapeHtml(p.label)} — ${fmt.m(p.length)} m + ${fmt.m(p.extra)} m to fill roll` : `${escapeHtml(p.label)} — ${fmt.m(p.length)} m`;
+      return `<div class="roll-bar__piece" style="width:${((total / rollLength) * 100).toFixed(2)}%" title="${title}"></div>`;
+    })
+    .join("");
+  const pieceRows = roll.pieces
+    .map((p) => {
+      const detail = p.extra > 1e-6 ? `${fmt.m(p.length + p.extra)} m (+${fmt.m(p.extra)} m to fill roll)` : `${fmt.m(p.length)} m`;
+      return `<li><span>${escapeHtml(p.label)}</span><span>${detail}</span></li>`;
+    })
+    .join("");
+  return `
+    <div class="roll-card">
+      <div class="roll-card__head">
+        <span class="roll-card__title">Roll ${index + 1}</span>
+        <span class="roll-card__meta">${fmt.m(used)} m of ${fmt.m(rollLength)} m used · ${roll.pieces.length} piece${roll.pieces.length === 1 ? "" : "s"}</span>
+      </div>
+      <div class="roll-bar">${barPieces}</div>
+      <ul class="roll-card__pieces">${pieceRows}</ul>
+    </div>
+  `;
+}
+
+function renderRollSchedule(rolls, rollLength) {
+  const list = document.getElementById("rollScheduleList");
+  const emptyEl = document.getElementById("rollScheduleEmpty");
+  const summaryEl = document.getElementById("rollScheduleSummary");
+  const printBtn = document.getElementById("printRollScheduleBtn");
+
+  if (!rolls.length || !(rollLength > 0)) {
+    list.innerHTML = "";
+    emptyEl.hidden = false;
+    summaryEl.hidden = true;
+    printBtn.hidden = true;
+    return;
+  }
+
+  emptyEl.hidden = true;
+  printBtn.hidden = false;
+  summaryEl.hidden = false;
+
+  const totalPieces = rolls.reduce((s, roll) => s + roll.pieces.length, 0);
+  const extraTotal = rolls.reduce((s, roll) => s + roll.pieces.reduce((s2, p) => s2 + p.extra, 0), 0);
+  summaryEl.textContent = `${rolls.length} roll${rolls.length === 1 ? "" : "s"} · ${fmt.int(totalPieces)} pieces · every roll fully used${
+    extraTotal > 1e-6 ? ` (${fmt.m(extraTotal)} m installed as extra embedment to avoid off-cut, see individual pieces below)` : ""
+  }.`;
+
+  list.innerHTML = rolls.map((roll, i) => buildRollCardHtml(roll, i, rollLength)).join("");
+}
+
+document.getElementById("printRollScheduleBtn").addEventListener("click", () => {
+  const project = document.getElementById("projectName").value || "Geogrid takeoff";
+  const { rollLength } = readSettings();
+  const rolls = window.__geogridRolls || [];
+  const cards = rolls.map((roll, i) => buildRollCardHtml(roll, i, rollLength)).join("");
+  document.getElementById("rollSchedulePrintView").innerHTML = `
+    <h2 class="roll-print-heading">${escapeHtml(project)} — Roll cutting schedule</h2>
+    <div class="roll-schedule-list">${cards}</div>
+  `;
+  document.body.classList.add("printing-rolls");
+  window.print();
+});
+
+/* ============================================================
    CSV export
    ============================================================ */
 
@@ -1859,6 +1994,16 @@ document.getElementById("exportBtn").addEventListener("click", () => {
           const label = r.cutPlan.stitches[i].length > 1 ? `${i + 1}.${si + 1}` : `${i + 1}`;
           lines.push([csvEscape(r.rl), label, s.length.toFixed(3), "stitch", Math.round(s.offset * 1000)].join(","));
         });
+      });
+    });
+  }
+
+  const rolls = window.__geogridRolls || [];
+  if (rolls.length) {
+    lines.push("", "Roll cutting schedule", "Roll #,Piece,Length (m),Extra to fill roll (m)");
+    rolls.forEach((roll, i) => {
+      roll.pieces.forEach((p) => {
+        lines.push([i + 1, csvEscape(p.label), p.length.toFixed(3), p.extra > 1e-6 ? p.extra.toFixed(3) : ""].join(","));
       });
     });
   }

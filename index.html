@@ -125,6 +125,7 @@
         <button type="button" class="tab" id="tabSequence" role="tab" aria-selected="false">Installation sequence</button>
         <button type="button" class="tab" id="tabCutPlan" role="tab" aria-selected="false">Cut plan</button>
         <button type="button" class="tab" id="tab3D" role="tab" aria-selected="false">3D view</button>
+        <button type="button" class="tab" id="tabRolls" role="tab" aria-selected="false">Roll schedule</button>
       </div>
       <button id="addLiftBtn" class="btn btn--ghost" type="button">+ Add lift</button>
     </div>
@@ -206,6 +207,17 @@
       <canvas id="view3DCanvas" class="view3d-canvas" width="900" height="560"></canvas>
       <p id="view3DEmpty" class="empty-state">No lifts with a face length yet — fill in the takeoff table to see the stack.</p>
     </div>
+
+    <div id="rollScheduleView" class="roll-schedule-view" hidden>
+      <div class="roll-schedule-head">
+        <p class="roll-schedule-intro">Every strip and stitch across every lift, pooled together and packed onto numbered rolls to get the least possible off-cut — not one roll per lift. A strip can share a roll with pieces from other levels, and a roll can supply pieces to more than one level.</p>
+        <button id="printRollScheduleBtn" class="btn btn--ghost" type="button" hidden>Print / save PDF</button>
+      </div>
+      <p id="rollScheduleEmpty" class="empty-state">No strips yet — fill in the takeoff table to see the roll-by-roll cutting schedule.</p>
+      <p id="rollScheduleSummary" class="roll-schedule-summary" hidden></p>
+      <div id="rollScheduleList" class="roll-schedule-list"></div>
+      <div id="rollSchedulePrintView" class="roll-schedule-print-view"></div>
+    </div>
   </section>
 
   <aside class="panel panel--summary" aria-labelledby="summaryHeading">
@@ -236,7 +248,7 @@
         <span id="wasteOverlap" class="waste-row__pct">—</span>
       </div>
       <div class="waste-row">
-        <span>Roll off-cut waste <em>(minimise by pooling)</em></span>
+        <span>Extra to fill rolls <em>(installed, not discarded — see Roll schedule)</em></span>
         <span id="wasteOffcut" class="waste-row__pct">—</span>
       </div>
     </div>
