@@ -1,6 +1,17 @@
 "use strict";
 
 /* ============================================================
+   Offline support — cache the app shell so it opens with no signal on site.
+   Silently no-ops where service workers aren't available (e.g. served over plain
+   http:// or opened as a local file) rather than erroring.
+   ============================================================ */
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  });
+}
+
+/* ============================================================
    Theme toggle
    ============================================================ */
 (function initTheme() {
@@ -24,6 +35,66 @@
     document.getElementById("themeIconLight").hidden = current !== "dark";
   }
 })();
+
+/* ============================================================
+   Install-tracking — "installed" lifts and "cut" rolls persist per project
+   (keyed by project name) so a foreman can close the browser mid-job and
+   pick up where they left off. Keyed by RL / roll number, not array index,
+   since those are the identifiers already printed on-screen and on paper.
+   ============================================================ */
+function progressKey() {
+  const name = (document.getElementById("projectName").value || "").trim() || "default";
+  return `geogrid-progress::${name}`;
+}
+function loadProgress() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(progressKey()));
+    return raw && typeof raw === "object" ? { lifts: raw.lifts || {}, rolls: raw.rolls || {} } : { lifts: {}, rolls: {} };
+  } catch {
+    return { lifts: {}, rolls: {} };
+  }
+}
+function saveProgress(progress) {
+  try {
+    localStorage.setItem(progressKey(), JSON.stringify(progress));
+  } catch {
+    /* storage full or unavailable — progress just won't persist across reloads */
+  }
+}
+function isLiftInstalled(rl) {
+  return !!loadProgress().lifts[rl];
+}
+function setLiftInstalled(rl, val) {
+  const p = loadProgress();
+  if (val) p.lifts[rl] = true;
+  else delete p.lifts[rl];
+  saveProgress(p);
+}
+function isRollCut(rollNum) {
+  return !!loadProgress().rolls[rollNum];
+}
+function setRollCut(rollNum, val) {
+  const p = loadProgress();
+  if (val) p.rolls[rollNum] = true;
+  else delete p.rolls[rollNum];
+  saveProgress(p);
+}
+
+/** Refresh the Lifts installed / Rolls cut bars in the summary panel from current results + tracked state. */
+function updateProgressStats() {
+  const results = window.__geogridResults || [];
+  const rolls = window.__geogridRolls || [];
+  const liftsDone = results.filter((r) => isLiftInstalled(r.rl)).length;
+  const rollsDone = rolls.filter((_, i) => isRollCut(i + 1)).length;
+
+  const liftsPct = results.length ? (liftsDone / results.length) * 100 : 0;
+  const rollsPct = rolls.length ? (rollsDone / rolls.length) * 100 : 0;
+
+  document.getElementById("progressLiftsValue").textContent = `${liftsDone} / ${results.length}`;
+  document.getElementById("progressLiftsBar").style.width = `${liftsPct}%`;
+  document.getElementById("progressRollsValue").textContent = `${rollsDone} / ${rolls.length}`;
+  document.getElementById("progressRollsBar").style.width = `${rollsPct}%`;
+}
 
 /* ============================================================
    Core geogrid strip-layout math
@@ -1106,12 +1177,12 @@ function computeAndRender() {
     });
   });
 
+  window.__geogridResults = liftResults; // exposed for CSV export + progress tracking, set before renderSummary needs it
   renderSummary(liftResults, rollLength, rollGroupSize);
   renderSequence(liftResults, w);
   renderCutPlan(liftResults, w);
   render3D(liftResults);
   renderRollSchedule(window.__geogridRolls || [], rollLength, rollGroupSize);
-  window.__geogridResults = liftResults; // exposed for CSV export
 }
 
 /** Rectangle footprint for a uniform-embedment lift, already in the (x = along face, y = depth) local frame. */
@@ -1235,6 +1306,8 @@ function renderSummary(results, rollLength, rollGroupSize) {
     wasteOffcutEl.textContent = "—";
     wasteOffcutEl.className = "waste-row__pct";
   }
+
+  updateProgressStats();
 }
 
 /* ============================================================
@@ -1301,12 +1374,32 @@ function buildCutPlanSvgMarkup(cutPlan, w, stripRollNumbers) {
   return svg.outerHTML;
 }
 
-/** One <section class="cutplan-print-page"> per extents lift — shared by the Cut Plan print button and the full export. */
+/** One <section class="cutplan-print-page"> per extents lift — shared by the Cut Plan print button and the full export.
+ *  Folds in the installation-sequence steps (build order, stagger note, next fill target) and the
+ *  "Installed" checkbox too, so this one sheet is everything a crew needs for that level — no need to
+ *  separately print the Installation sequence tab and flip between two sheets on site. */
 function buildCutPlanPrintPages(results, project, w, rollLength) {
   const rolls = window.__geogridRolls || [];
   const rollLookup = buildRollLookup(rolls);
+  const allResults = window.__geogridResults || results;
+  const stagger = document.getElementById("staggerToggle").checked;
   return results
     .map((r) => {
+      const buildIndex = allResults.indexOf(r);
+      const next = buildIndex >= 0 ? allResults[buildIndex + 1] : null;
+      const fillTarget = next ? `RL ${escapeHtml(next.rl)}` : "final design surface";
+      let staggerNote = "";
+      if (stagger && r.n > 1 && buildIndex >= 0) {
+        const pitch = w - r.overlap;
+        const offsetMm = Math.round((pitch / 2) * 1000);
+        staggerNote =
+          buildIndex % 2 === 1
+            ? `Offset the first strip ${offsetMm.toLocaleString()} mm in from the left edge (not flush) to stagger lap joints from the lift below.`
+            : buildIndex > 0
+            ? "Start the first strip flush with the left edge."
+            : "";
+      }
+      const installed = isLiftInstalled(r.rl);
       const stripRollNumbers = stripRollNumbersFor(r, rollLookup);
       const stitchCount = r.cutPlan.stitches.reduce((s, arr) => s + arr.length, 0);
       const rollsUsed = new Set();
@@ -1347,12 +1440,25 @@ function buildCutPlanPrintPages(results, project, w, rollLength) {
           `
           : "";
 
+      const orderBadge = buildIndex >= 0 ? `<span class="cutplan-print-page__order">${buildIndex + 1}</span>` : "";
       return `
         <section class="cutplan-print-page">
           <div class="cutplan-print-page__head">
-            <h3>${escapeHtml(project)} — RL ${escapeHtml(r.rl)}</h3>
-            <p>${metaParts.join(" · ")}</p>
+            ${orderBadge}
+            <div>
+              <h3>${escapeHtml(project)} — RL ${escapeHtml(r.rl)}</h3>
+              <p>${metaParts.join(" · ")}</p>
+            </div>
+            <label class="checkbox cutplan-print-page__installed">
+              <input type="checkbox" disabled ${installed ? "checked" : ""} />
+              <span>Installed</span>
+            </label>
           </div>
+          <ol class="cutplan-print-page__steps">
+            <li>Roll out ${r.n} strip${r.n === 1 ? "" : "s"} per the cut lengths below${r.n > 1 ? `, lapping each by ${fmt.mm(r.overlap)} mm` : ""}.</li>
+            <li>Pin/stake the grid as required, then place and compact fill up to ${fillTarget}.</li>
+          </ol>
+          ${staggerNote ? `<div class="cutplan-print-page__stagger">${escapeHtml(staggerNote)}</div>` : ""}
           <div class="cutplan-print-page__body">
             ${buildCutPlanSvgMarkup(r.cutPlan, w, stripRollNumbers)}
             <table class="cutplan-print-table">
@@ -1380,6 +1486,7 @@ window.addEventListener("afterprint", () => {
   document.body.classList.remove("printing-cutplan");
   document.body.classList.remove("printing-full");
   document.body.classList.remove("printing-rolls");
+  document.body.classList.remove("printing-roll-labels");
 });
 
 document.getElementById("exportFullPdfBtn").addEventListener("click", () => {
@@ -1489,6 +1596,8 @@ function renderSequence(results, w) {
   results.forEach((r, i) => {
     const li = document.createElement("li");
     li.className = "sequence-card";
+    const installed = isLiftInstalled(r.rl);
+    if (installed) li.classList.add("is-installed");
 
     let staggerNote = "";
     if (stagger && r.n > 1) {
@@ -1513,6 +1622,10 @@ function renderSequence(results, w) {
       <div class="sequence-card__head">
         <span class="sequence-card__order">${i + 1}</span>
         <span class="sequence-card__rl">RL ${escapeHtml(r.rl) || "—"}</span>
+        <label class="checkbox sequence-card__installed">
+          <input type="checkbox" class="sequence-card__installed-input" ${installed ? "checked" : ""} />
+          <span>Installed</span>
+        </label>
       </div>
       <ol class="sequence-card__steps">
         <li>Roll out ${r.n} strip${r.n === 1 ? "" : "s"} across the ${fmt.m(r.L)} m face${
@@ -1527,6 +1640,12 @@ function renderSequence(results, w) {
     sequenceList.appendChild(li);
     const svg = li.querySelector(".sequence-card__diagram");
     renderDiagram(svg, r.L, { n: r.n, overlap: r.overlap, materialWidth: r.materialWidth }, w, 480, 40);
+
+    li.querySelector(".sequence-card__installed-input").addEventListener("change", (e) => {
+      setLiftInstalled(r.rl, e.target.checked);
+      li.classList.toggle("is-installed", e.target.checked);
+      updateProgressStats();
+    });
   });
 }
 
@@ -2178,11 +2297,16 @@ function buildRollCardHtml(roll, index, rollLength) {
       return `<li><span>${escapeHtml(p.label)}</span><span>${detail}</span></li>`;
     })
     .join("");
+  const cut = isRollCut(index + 1);
   return `
-    <div class="roll-card">
+    <div class="roll-card${cut ? " is-cut" : ""}">
       <div class="roll-card__head">
         <span class="roll-card__title">Roll ${index + 1}</span>
         <span class="roll-card__meta">${fmt.m(used)} m of ${fmt.m(rollLength)} m used · ${roll.pieces.length} piece${roll.pieces.length === 1 ? "" : "s"}</span>
+        <label class="checkbox roll-card__cut">
+          <input type="checkbox" class="roll-card__cut-input" data-roll="${index + 1}" ${cut ? "checked" : ""} />
+          <span>Cut</span>
+        </label>
       </div>
       <div class="roll-bar">${barPieces}</div>
       <ul class="roll-card__pieces">${pieceRows}</ul>
@@ -2195,6 +2319,7 @@ function renderRollSchedule(rolls, rollLength, rollGroupSize) {
   const emptyEl = document.getElementById("rollScheduleEmpty");
   const summaryEl = document.getElementById("rollScheduleSummary");
   const printBtn = document.getElementById("printRollScheduleBtn");
+  const labelsBtn = document.getElementById("printRollLabelsBtn");
   const introEl = document.getElementById("rollScheduleIntro");
   if (introEl) {
     introEl.textContent =
@@ -2208,11 +2333,13 @@ function renderRollSchedule(rolls, rollLength, rollGroupSize) {
     emptyEl.hidden = false;
     summaryEl.hidden = true;
     printBtn.hidden = true;
+    labelsBtn.hidden = true;
     return;
   }
 
   emptyEl.hidden = true;
   printBtn.hidden = false;
+  labelsBtn.hidden = false;
   summaryEl.hidden = false;
 
   const totalPieces = rolls.reduce((s, roll) => s + roll.pieces.length, 0);
@@ -2223,6 +2350,46 @@ function renderRollSchedule(rolls, rollLength, rollGroupSize) {
 
   list.innerHTML = rolls.map((roll, i) => buildRollCardHtml(roll, i, rollLength)).join("");
 }
+
+// Delegated once on the (persistent) list container — card HTML is fully replaced on every
+// render, so per-card listeners would leak; this survives re-renders for free.
+document.getElementById("rollScheduleList").addEventListener("change", (e) => {
+  const input = e.target.closest(".roll-card__cut-input");
+  if (!input) return;
+  setRollCut(input.dataset.roll, input.checked);
+  input.closest(".roll-card").classList.toggle("is-cut", input.checked);
+  updateProgressStats();
+});
+
+/** Small stick-on tags, 3-up per row, meant to be printed, cut apart, and stuck straight onto each
+ *  physical roll before it goes out — so the field crew is reading a label on the roll itself instead
+ *  of matching numbers off a table. */
+function buildRollLabelsHtml(rolls, rollLength, project) {
+  const cards = rolls
+    .map((roll, i) => {
+      const pieces = roll.pieces
+        .map((p) => `<li><span>${escapeHtml(p.label)}</span><span>${fmt.m(p.length + p.extra)} m</span></li>`)
+        .join("");
+      return `
+        <div class="roll-label">
+          <div class="roll-label__num">Roll ${i + 1}</div>
+          <div class="roll-label__len">${fmt.m(rollLength)} m roll — ${escapeHtml(project)}</div>
+          <ul class="roll-label__pieces">${pieces}</ul>
+        </div>
+      `;
+    })
+    .join("");
+  return `<div class="roll-label-sheet">${cards}</div>`;
+}
+
+document.getElementById("printRollLabelsBtn").addEventListener("click", () => {
+  const project = document.getElementById("projectName").value || "Geogrid takeoff";
+  const { rollLength } = readSettings();
+  const rolls = window.__geogridRolls || [];
+  document.getElementById("rollLabelsPrintView").innerHTML = buildRollLabelsHtml(rolls, rollLength, project);
+  document.body.classList.add("printing-roll-labels");
+  window.print();
+});
 
 document.getElementById("printRollScheduleBtn").addEventListener("click", () => {
   const project = document.getElementById("projectName").value || "Geogrid takeoff";

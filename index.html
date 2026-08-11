@@ -6,6 +6,11 @@
 <title>Geogrid Takeoff — Reinforced Fill Installation Calculator</title>
 <meta name="description" content="Strip layout and material takeoff calculator for lift-by-lift geogrid reinforced fill installation." />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231f6672'/%3E%3Cpath d='M4 12h24M4 20h24M12 4v24M20 4v24' stroke='white' stroke-width='2.4' fill='none'/%3E%3C/svg%3E" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="apple-touch-icon" href="assets/icons/icon-192.png" />
+<meta name="theme-color" content="#1f6672" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="Geogrid Takeoff" />
 <link rel="stylesheet" href="assets/style.css" />
 </head>
 <body>
@@ -283,17 +288,34 @@
     <div id="rollScheduleView" class="roll-schedule-view" hidden>
       <div class="roll-schedule-head">
         <p id="rollScheduleIntro" class="roll-schedule-intro">Every strip and stitch across every lift, pooled together and packed onto numbered rolls to get the least possible off-cut — not one roll per lift. A strip can share a roll with pieces from other levels, and a roll can supply pieces to more than one level.</p>
-        <button id="printRollScheduleBtn" class="btn btn--ghost" type="button" hidden>Print / save PDF</button>
+        <div class="roll-schedule-head__actions">
+          <button id="printRollLabelsBtn" class="btn btn--ghost" type="button" hidden>Print roll labels</button>
+          <button id="printRollScheduleBtn" class="btn btn--ghost" type="button" hidden>Print / save PDF</button>
+        </div>
       </div>
       <p id="rollScheduleEmpty" class="empty-state">No strips yet — fill in the takeoff table to see the roll-by-roll cutting schedule.</p>
       <p id="rollScheduleSummary" class="roll-schedule-summary" hidden></p>
       <div id="rollScheduleList" class="roll-schedule-list"></div>
       <div id="rollSchedulePrintView" class="roll-schedule-print-view"></div>
+      <div id="rollLabelsPrintView" class="roll-labels-print-view"></div>
     </div>
   </section>
 
   <aside class="panel panel--summary" aria-labelledby="summaryHeading">
     <h2 id="summaryHeading" class="panel__heading">Material schedule</h2>
+
+    <div class="progress-block">
+      <div class="progress-row">
+        <span>Lifts installed</span>
+        <span id="progressLiftsValue" class="progress-row__value">0 / 0</span>
+      </div>
+      <div class="progress-bar"><div id="progressLiftsBar" class="progress-bar__fill"></div></div>
+      <div class="progress-row">
+        <span>Rolls cut</span>
+        <span id="progressRollsValue" class="progress-row__value">0 / 0</span>
+      </div>
+      <div class="progress-bar"><div id="progressRollsBar" class="progress-bar__fill"></div></div>
+    </div>
 
     <div class="stat-grid">
       <div class="stat">
