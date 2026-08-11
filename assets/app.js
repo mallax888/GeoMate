@@ -714,7 +714,7 @@ function packRollsDetailed(pieces, rollLength) {
       const totalParts = Math.ceil(piece.length / rollLength);
       while (remaining > 1e-9) {
         const cut = Math.min(rollLength, remaining);
-        rolls.push({ remaining: rollLength - cut, pieces: [{ label: `${piece.label} (${part}/${totalParts})`, length: cut, extra: 0 }] });
+        rolls.push({ remaining: rollLength - cut, pieces: [{ label: `${piece.label} (${part}/${totalParts})`, length: cut, extra: 0, seq: piece.seq }] });
         remaining -= cut;
         part++;
       }
@@ -722,12 +722,12 @@ function packRollsDetailed(pieces, rollLength) {
     }
     for (const roll of rolls) {
       if (roll.remaining >= piece.length - 1e-9) {
-        roll.pieces.push({ label: piece.label, length: piece.length, extra: 0 });
+        roll.pieces.push({ label: piece.label, length: piece.length, extra: 0, seq: piece.seq });
         roll.remaining -= piece.length;
         return;
       }
     }
-    rolls.push({ remaining: rollLength - piece.length, pieces: [{ label: piece.label, length: piece.length, extra: 0 }] });
+    rolls.push({ remaining: rollLength - piece.length, pieces: [{ label: piece.label, length: piece.length, extra: 0, seq: piece.seq }] });
   });
 
   // Use up every roll fully: whatever's left after packing goes onto that roll's last (smallest)
@@ -746,12 +746,18 @@ function packRollsDetailed(pieces, rollLength) {
 function buildRollPieces(results) {
   const pieces = [];
   results.forEach((r) => {
+    // r._buildIndex is this lift's position in the FULL job (see packRollsWindowed) — not its
+    // position within whatever subset was passed in here, which for a grouped/banded pack is only
+    // one band. seq lets rolls be renumbered by first-used-on-site order after packing, regardless
+    // of which band or how the bin packer itself ordered them internally.
+    const buildIndex = r._buildIndex ?? 0;
     r.stripLengths.forEach((len, i) => {
-      if (len > 1e-6) pieces.push({ label: `RL ${r.rl} · Strip ${i + 1}`, length: len });
+      const seq = buildIndex * 1000 + i;
+      if (len > 1e-6) pieces.push({ label: `RL ${r.rl} · Strip ${i + 1}`, length: len, seq });
       if (r.cutPlan) {
         (r.cutPlan.stitches[i] || []).forEach((s, si) => {
           const suffix = r.cutPlan.stitches[i].length > 1 ? `.${si + 1}` : "";
-          pieces.push({ label: `RL ${r.rl} · Strip ${i + 1}${suffix} stitch`, length: s.length });
+          pieces.push({ label: `RL ${r.rl} · Strip ${i + 1}${suffix} stitch`, length: s.length, seq });
         });
       }
     });
@@ -769,12 +775,22 @@ function buildRollPieces(results) {
  * where it's actually used.
  */
 function packRollsWindowed(results, rollLength, groupSize) {
-  if (!(groupSize > 0)) return packRollsDetailed(buildRollPieces(results), rollLength);
-  let rolls = [];
-  for (let start = 0; start < results.length; start += groupSize) {
-    const band = results.slice(start, start + groupSize);
-    rolls = rolls.concat(packRollsDetailed(buildRollPieces(band), rollLength));
+  results.forEach((r, i) => (r._buildIndex = i));
+
+  let rolls;
+  if (groupSize > 0) {
+    rolls = [];
+    for (let start = 0; start < results.length; start += groupSize) {
+      const band = results.slice(start, start + groupSize);
+      rolls = rolls.concat(packRollsDetailed(buildRollPieces(band), rollLength));
+    }
+  } else {
+    rolls = packRollsDetailed(buildRollPieces(results), rollLength);
   }
+
+  // Renumber by first-used-on-site order, not whatever order the bin packer (which sorts purely by
+  // piece length) happened to create them in — so "Roll 1" really is the first roll a crew needs.
+  rolls.sort((a, b) => Math.min(...a.pieces.map((p) => p.seq)) - Math.min(...b.pieces.map((p) => p.seq)));
   return rolls;
 }
 
