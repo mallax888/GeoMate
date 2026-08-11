@@ -1863,6 +1863,22 @@ function renderCutPlanSvg(svg, cutPlan, w) {
     rowRightEdge[row] = xMid + halfWidth;
     const y = Math.max(margin + 8, baseY - row * rowHeight);
 
+    // Leader line down to the top of this group's own strips — with labels staggered into several
+    // rows to avoid collisions, position on the page alone no longer makes it obvious which label
+    // belongs to which strips (a label bumped up a row can end up hovering over its neighbour's
+    // strips instead of its own). The line removes the ambiguity regardless of row.
+    let groupMaxFar = -Infinity;
+    for (let k = groupStart; k <= groupEnd; k++) groupMaxFar = Math.max(groupMaxFar, (cutPlan.extentsReach || [])[k] ?? cutLengths[k]);
+    const leader = document.createElementNS(ns, "line");
+    leader.setAttribute("x1", xMid.toFixed(1));
+    leader.setAttribute("y1", (y + 2).toFixed(1));
+    leader.setAttribute("x2", xMid.toFixed(1));
+    leader.setAttribute("y2", ty(groupMaxFar).toFixed(1));
+    leader.setAttribute("stroke", "var(--ink-muted)");
+    leader.setAttribute("stroke-width", "0.75");
+    leader.setAttribute("stroke-dasharray", "1.5,1.5");
+    svg.appendChild(leader);
+
     const groupLabel = document.createElementNS(ns, "text");
     groupLabel.setAttribute("x", xMid.toFixed(1));
     groupLabel.setAttribute("y", y.toFixed(1));
