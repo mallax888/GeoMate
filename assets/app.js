@@ -192,7 +192,7 @@ const STITCH_MIN = 0.05;
 const ROUND_STEP = 0.5;
 // A raw length within this of the step below is DXF/survey noise (vertex-picking, triangulation),
 // not a real few-mm-longer requirement — snap down to the clean number instead of bumping a full
-// step up for it. Same noise floor as TRIM_THRESHOLD elsewhere in the app.
+// step up for it.
 const ROUND_SNAP_TOL = 0.02;
 function roundUpToStep(value, step) {
   const lower = Math.floor(value / step + 1e-9) * step;
@@ -975,21 +975,6 @@ function renderDiagram(svg, L, result, w, W = 240, H = 34) {
    Compute + render everything
    ============================================================ */
 
-// Below this, a strip is "full length" for display/flagging purposes — sub-cm
-// clipping differences aren't practically meaningful to a crew cutting on site.
-const TRIM_THRESHOLD = 0.02;
-
-/**
- * Flags whether a strip is already at this lift's longest length ("full", nothing to cut) or shorter
- * ("cut", needs cutting to its own reported length). Each strip's length is already independently
- * correct — computeCutPlan works it out directly from the true boundary — so this is just "is this the
- * one strip in the lift that's already at max length" for display, not a judgement call about how to
- * handle leftover material.
- */
-function classifyStrip(len, maxLen) {
-  const excess = maxLen - len;
-  return excess <= TRIM_THRESHOLD ? { action: "full", excess } : { action: "cut", excess };
-}
 
 const fmt = {
   int: (v) => v.toLocaleString(undefined, { maximumFractionDigits: 0 }),
@@ -1294,15 +1279,10 @@ function buildCutPlanSvgMarkup(cutPlan, w) {
 function buildCutPlanPrintPages(results, project, w) {
   return results
     .map((r) => {
-      const maxLen = Math.max(...r.stripLengths);
-      const classified = r.stripLengths.map((len) => classifyStrip(len, maxLen));
-      const cutCount = classified.filter((c) => c.action === "cut").length;
       const stitchCount = r.cutPlan.stitches.reduce((s, arr) => s + arr.length, 0);
-      const noteByAction = { full: "Full length", cut: "Cut" };
       const rows = r.stripLengths
         .map((len, i) => {
-          const { action } = classifyStrip(len, maxLen);
-          const mainRow = `<tr class="${action !== "full" ? `is-${action}` : ""}"><td>${i + 1}</td><td>${fmt.m(len)} m</td><td>${noteByAction[action]}</td></tr>`;
+          const mainRow = `<tr><td>${i + 1}</td><td>${fmt.m(len)} m</td><td>Cut</td></tr>`;
           const stitchRows = (r.cutPlan.stitches[i] || [])
             .map(
               (s, si) =>
@@ -1313,7 +1293,6 @@ function buildCutPlanPrintPages(results, project, w) {
         })
         .join("");
       const metaParts = [`${r.n} strips`, `face ${fmt.m(r.L)} m`];
-      if (cutCount) metaParts.push(`${cutCount} to cut`);
       if (stitchCount) metaParts.push(`${stitchCount} stitch patch${stitchCount === 1 ? "" : "es"}`);
       metaParts.push(`roll width ${fmt.m(r.materialWidth / r.n)} m`);
       return `
@@ -1700,12 +1679,8 @@ function renderCutPlan(results, w) {
     const card = document.createElement("div");
     card.className = "cutplan-card";
 
-    const maxLen0 = Math.max(...r.stripLengths);
-    const classified0 = r.stripLengths.map((len) => classifyStrip(len, maxLen0));
-    const cutCount = classified0.filter((c) => c.action === "cut").length;
     const stitchCount = r.cutPlan.stitches.reduce((s, arr) => s + arr.length, 0);
     const metaParts = [`${r.n} strips`, `face ${fmt.m(r.L)} m`];
-    if (cutCount) metaParts.push(`${cutCount} to cut`);
     if (stitchCount) metaParts.push(`${stitchCount} stitch patch${stitchCount === 1 ? "" : "es"}`);
 
     card.innerHTML = `
@@ -1722,16 +1697,9 @@ function renderCutPlan(results, w) {
     cutPlanList.appendChild(card);
 
     const stripsList = card.querySelector(".cutplan-card__strips");
-    const maxLen = Math.max(...r.stripLengths);
     r.stripLengths.forEach((len, i) => {
       const li = document.createElement("li");
-      const { action } = classifyStrip(len, maxLen);
-      const noteByAction = {
-        full: `${fmt.m(len)} m`,
-        cut: `cut to ${fmt.m(len)} m`,
-      };
-      if (action !== "full") li.classList.add(`is-${action}`);
-      li.innerHTML = `<span>Strip ${i + 1}</span><span>${noteByAction[action]}</span>`;
+      li.innerHTML = `<span>Strip ${i + 1}</span><span>cut to ${fmt.m(len)} m</span>`;
       stripsList.appendChild(li);
 
       (r.cutPlan.stitches[i] || []).forEach((s, si) => {
@@ -2127,10 +2095,8 @@ document.getElementById("exportBtn").addEventListener("click", () => {
   if (extentsResults.length) {
     lines.push("", "Cut schedule (DXF extents lifts)", "RL,Strip #,Cut length (m),Note");
     extentsResults.forEach((r) => {
-      const maxLen = Math.max(...r.stripLengths);
       r.stripLengths.forEach((len, i) => {
-        const { action } = classifyStrip(len, maxLen);
-        lines.push([csvEscape(r.rl), i + 1, len.toFixed(3), action === "full" ? "full length" : ""].join(","));
+        lines.push([csvEscape(r.rl), i + 1, len.toFixed(3), ""].join(","));
         (r.cutPlan.stitches[i] || []).forEach((s, si) => {
           const label = r.cutPlan.stitches[i].length > 1 ? `${i + 1}.${si + 1}` : `${i + 1}`;
           lines.push([csvEscape(r.rl), label, s.length.toFixed(3), `stitch, starts ${Math.round(s.offset * 1000)} mm back`].join(","));
