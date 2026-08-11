@@ -223,10 +223,32 @@
           <circle class="view3d-compass__ring view3d-compass__ring--inner" cx="45" cy="45" r="17"></circle>
           <line class="view3d-compass__crosshair" x1="45" y1="9" x2="45" y2="81"></line>
           <line class="view3d-compass__crosshair" x1="9" y1="45" x2="81" y2="45"></line>
-          <text class="view3d-compass__tick" x="45" y="24" text-anchor="middle">TOP</text>
-          <text class="view3d-compass__tick view3d-compass__tick--outer" x="45" y="6" text-anchor="middle">SIDE</text>
           <line id="view3DCompassSpoke" class="view3d-compass__spoke" x1="45" y1="45" x2="45" y2="14"></line>
           <circle id="view3DCompassHandle" class="view3d-compass__handle" cx="45" cy="14" r="6"></circle>
+
+          <!-- Snap points — click to jump straight to a standard view, cube-style, instead of
+               free-dragging to it. N/E/S/W sit on the ring (a flatter, elevation-style tilt facing
+               that side); TOP is the centre (looking straight down the stack). -->
+          <g class="view3d-compass__snap" data-yaw="0" data-pitch="side">
+            <circle cx="45" cy="9" r="5"></circle>
+            <text x="45" y="9" text-anchor="middle" dominant-baseline="central">N</text>
+          </g>
+          <g class="view3d-compass__snap" data-yaw="1.5707963267948966" data-pitch="side">
+            <circle cx="81" cy="45" r="5"></circle>
+            <text x="81" y="45" text-anchor="middle" dominant-baseline="central">E</text>
+          </g>
+          <g class="view3d-compass__snap" data-yaw="3.14159265358979" data-pitch="side">
+            <circle cx="45" cy="81" r="5"></circle>
+            <text x="45" y="81" text-anchor="middle" dominant-baseline="central">S</text>
+          </g>
+          <g class="view3d-compass__snap" data-yaw="-1.5707963267948966" data-pitch="side">
+            <circle cx="9" cy="45" r="5"></circle>
+            <text x="9" y="45" text-anchor="middle" dominant-baseline="central">W</text>
+          </g>
+          <g class="view3d-compass__snap view3d-compass__snap--top" data-pitch="top">
+            <circle cx="45" cy="45" r="8"></circle>
+            <text x="45" y="45" text-anchor="middle" dominant-baseline="central">TOP</text>
+          </g>
         </svg>
       </div>
       <p id="view3DEmpty" class="empty-state">No lifts with a face length yet — fill in the takeoff table to see the stack.</p>

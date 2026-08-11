@@ -2133,6 +2133,24 @@ function syncCompass() {
     render3D(window.__geogridResults || []);
   });
 
+  // Snap points (N/E/S/W + TOP) — jump straight to a standard view, cube-style, instead of having to
+  // free-drag to exactly the right spot. A flatter, elevation-style pitch for the four sides; straight
+  // down the stack for TOP. stopPropagation so the click doesn't also register as a free-drag to
+  // wherever on the ring the snap dot happens to sit.
+  const VIEW3D_SIDE_PITCH = 0.32;
+  compass.querySelectorAll(".view3d-compass__snap").forEach((snap) => {
+    snap.addEventListener("pointerdown", (e) => {
+      e.stopPropagation();
+      if (snap.dataset.pitch === "top") {
+        view3DState.pitch = VIEW3D_PITCH_MAX;
+      } else {
+        view3DState.yaw = parseFloat(snap.dataset.yaw);
+        view3DState.pitch = VIEW3D_SIDE_PITCH;
+      }
+      render3D(window.__geogridResults || []);
+    });
+  });
+
   syncCompass(); // correct position from the start, even before any data has loaded
 })();
 
