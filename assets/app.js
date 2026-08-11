@@ -688,6 +688,25 @@ function buildRollPieces(results) {
   return pieces;
 }
 
+/**
+ * Packs every strip/stitch onto numbered rolls, optionally restricted to sharing a roll only with
+ * OTHER lifts within a small adjacent band, instead of pooling the whole job. Pooling everything (no
+ * groupSize) finds the fewest possible rolls, but a bin packer sorts purely by length — it has no idea
+ * a roll ends up with pieces from lift 2 and lift 30 on it, which is useless on site if lifts are built
+ * in order. Splitting into bands of `groupSize` adjacent lifts and packing each band on its own costs a
+ * bit more offcut (fewer chances to fill a gap with an unrelated piece) but keeps every roll close to
+ * where it's actually used.
+ */
+function packRollsWindowed(results, rollLength, groupSize) {
+  if (!(groupSize > 0)) return packRollsDetailed(buildRollPieces(results), rollLength);
+  let rolls = [];
+  for (let start = 0; start < results.length; start += groupSize) {
+    const band = results.slice(start, start + groupSize);
+    rolls = rolls.concat(packRollsDetailed(buildRollPieces(band), rollLength));
+  }
+  return rolls;
+}
+
 /* ============================================================
    DOM wiring
    ============================================================ */
@@ -700,13 +719,17 @@ const settingsInputs = {
   rollWidth: document.getElementById("rollWidth"),
   minOverlapMm: document.getElementById("minOverlap"),
   rollLength: document.getElementById("rollLength"),
+  rollGroupSize: document.getElementById("rollGroupSize"),
 };
 
 function readSettings() {
+  const rollGroupSizeRaw = parseInt(settingsInputs.rollGroupSize.value, 10);
   return {
     w: parseFloat(settingsInputs.rollWidth.value) || 0,
     oMin: (parseFloat(settingsInputs.minOverlapMm.value) || 0) / 1000,
     rollLength: parseFloat(settingsInputs.rollLength.value) || 0,
+    // How many adjacent lifts may share a roll — 0/blank pools every lift together (lowest waste).
+    rollGroupSize: rollGroupSizeRaw > 0 ? rollGroupSizeRaw : 0,
   };
 }
 
@@ -986,7 +1009,7 @@ function wasteLevel(pct) {
 }
 
 function computeAndRender() {
-  const { w, oMin, rollLength } = readSettings();
+  const { w, oMin, rollLength, rollGroupSize } = readSettings();
   const specWarning = document.getElementById("specWarning");
   if (oMin >= w) {
     specWarning.hidden = false;
@@ -1102,11 +1125,11 @@ function computeAndRender() {
     });
   });
 
-  renderSummary(liftResults, rollLength);
+  renderSummary(liftResults, rollLength, rollGroupSize);
   renderSequence(liftResults, w);
   renderCutPlan(liftResults, w);
   render3D(liftResults);
-  renderRollSchedule(window.__geogridRolls || [], rollLength);
+  renderRollSchedule(window.__geogridRolls || [], rollLength, rollGroupSize);
   window.__geogridResults = liftResults; // exposed for CSV export
 }
 
@@ -1169,7 +1192,7 @@ function faceAlignedFootprint(cutPlan) {
   });
 }
 
-function renderSummary(results, rollLength) {
+function renderSummary(results, rollLength, rollGroupSize) {
   const totalStrips = results.reduce((s, r) => s + r.n, 0);
   const totalArea = results.reduce((s, r) => s + r.area, 0);
   const totalTheoreticalArea = results.reduce((s, r) => s + r.theoreticalArea, 0);
@@ -1209,10 +1232,12 @@ function renderSummary(results, rollLength) {
       rollTableBody.appendChild(tr);
     });
 
-  // Pack every strip/stitch across every lift onto numbered rolls (see Roll schedule tab) — the same
-  // packing drives both this summary and that tab, so they always agree.
+  // Pack every strip/stitch onto numbered rolls (see Roll schedule tab) — the same packing drives
+  // both this summary and that tab, so they always agree. Pooled across every lift by default (fewest
+  // rolls); optionally restricted to bands of `rollGroupSize` adjacent lifts so a roll never mixes
+  // pieces from opposite ends of the job (see packRollsWindowed).
   const rollPieces = buildRollPieces(results);
-  const rolls = packRollsDetailed(rollPieces, rollLength);
+  const rolls = packRollsWindowed(results, rollLength, rollGroupSize);
   window.__geogridRolls = rolls;
   window.__geogridRollPieces = rollPieces;
 
@@ -2032,11 +2057,18 @@ function buildRollCardHtml(roll, index, rollLength) {
   `;
 }
 
-function renderRollSchedule(rolls, rollLength) {
+function renderRollSchedule(rolls, rollLength, rollGroupSize) {
   const list = document.getElementById("rollScheduleList");
   const emptyEl = document.getElementById("rollScheduleEmpty");
   const summaryEl = document.getElementById("rollScheduleSummary");
   const printBtn = document.getElementById("printRollScheduleBtn");
+  const introEl = document.getElementById("rollScheduleIntro");
+  if (introEl) {
+    introEl.textContent =
+      rollGroupSize > 0
+        ? `Every strip and stitch, packed onto numbered rolls to get the least possible off-cut — but only ever shared between lifts within a ${rollGroupSize}-lift band, so a roll never mixes pieces from opposite ends of the job. Change "Group rolls across" in the spec panel to pool everything for the lowest possible waste instead.`
+        : `Every strip and stitch across every lift, pooled together and packed onto numbered rolls to get the least possible off-cut — not one roll per lift. A strip can share a roll with pieces from other levels, and a roll can supply pieces to more than one level. Set "Group rolls across" in the spec panel to keep rolls within a band of nearby lifts instead.`;
+  }
 
   if (!rolls.length || !(rollLength > 0)) {
     list.innerHTML = "";
@@ -2078,7 +2110,7 @@ document.getElementById("printRollScheduleBtn").addEventListener("click", () => 
 
 document.getElementById("exportBtn").addEventListener("click", () => {
   const results = window.__geogridResults || [];
-  const { w, oMin, rollLength } = readSettings();
+  const { w, oMin, rollLength, rollGroupSize } = readSettings();
   const project = document.getElementById("projectName").value || "geogrid-takeoff";
 
   const lines = [
@@ -2086,6 +2118,7 @@ document.getElementById("exportBtn").addEventListener("click", () => {
     `Roll width (m),${w}`,
     `Minimum overlap (mm),${Math.round(oMin * 1000)}`,
     `Roll length (m),${rollLength}`,
+    `Roll grouping,${rollGroupSize > 0 ? `${rollGroupSize} adjacent lifts` : "pooled across all lifts"}`,
     "",
     "RL,Face length (m),Embedment (m),Strips,Overlap (mm),Material width (m),Area (m2),Theoretical area (m2),Source",
   ];

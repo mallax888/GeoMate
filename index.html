@@ -51,7 +51,18 @@
         <span>Roll length</span>
         <div class="field__unit"><input type="number" id="rollLength" value="50" min="1" step="1" /><em>m</em></div>
       </label>
+      <label class="field">
+        <span>Group rolls across</span>
+        <div class="field__unit"><input type="number" id="rollGroupSize" min="0" step="1" placeholder="all lifts" /><em>lifts</em></div>
+      </label>
     </div>
+    <p class="generator__hint">
+      The Roll schedule packs strips onto the fewest possible rolls by pooling every lift together —
+      lowest waste, but any one roll can end up with pieces from lifts scattered right across the job.
+      Set a lift count here (e.g. 3) to only ever share a roll between that many <em>adjacent</em>
+      lifts — a bit more offcut, but each roll stays close to where it's actually used. Leave blank to
+      pool everything.
+    </p>
     <p id="specWarning" class="warning-text" hidden></p>
 
     <div class="generator">
@@ -210,7 +221,7 @@
 
     <div id="rollScheduleView" class="roll-schedule-view" hidden>
       <div class="roll-schedule-head">
-        <p class="roll-schedule-intro">Every strip and stitch across every lift, pooled together and packed onto numbered rolls to get the least possible off-cut — not one roll per lift. A strip can share a roll with pieces from other levels, and a roll can supply pieces to more than one level.</p>
+        <p id="rollScheduleIntro" class="roll-schedule-intro">Every strip and stitch across every lift, pooled together and packed onto numbered rolls to get the least possible off-cut — not one roll per lift. A strip can share a roll with pieces from other levels, and a roll can supply pieces to more than one level.</p>
         <button id="printRollScheduleBtn" class="btn btn--ghost" type="button" hidden>Print / save PDF</button>
       </div>
       <p id="rollScheduleEmpty" class="empty-state">No strips yet — fill in the takeoff table to see the roll-by-roll cutting schedule.</p>
