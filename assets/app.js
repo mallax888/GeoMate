@@ -979,20 +979,16 @@ function renderDiagram(svg, L, result, w, W = 240, H = 34) {
 // clipping differences aren't practically meaningful to a crew cutting on site.
 const TRIM_THRESHOLD = 0.02;
 
-// A trimmed strip's leftover (design length minus cut length) is either folded back on
-// itself or cut off, per site instruction: under 500mm it can be folded without fouling
-// the grid layer above; at 600mm or more it must be cut. 500-600mm is a judgement call,
-// so it's flagged for review rather than silently assigned either way.
-const FOLD_MAX = 0.5;
-const CUT_MIN = 0.6;
-
-/** Classifies a trimmed strip's leftover material as fold / cut / review, or "full" if untrimmed. */
+/**
+ * Flags whether a strip is already at this lift's longest length ("full", nothing to cut) or shorter
+ * ("cut", needs cutting to its own reported length). Each strip's length is already independently
+ * correct — computeCutPlan works it out directly from the true boundary — so this is just "is this the
+ * one strip in the lift that's already at max length" for display, not a judgement call about how to
+ * handle leftover material.
+ */
 function classifyStrip(len, maxLen) {
   const excess = maxLen - len;
-  if (excess <= TRIM_THRESHOLD) return { action: "full", excess };
-  if (excess < FOLD_MAX) return { action: "fold", excess };
-  if (excess >= CUT_MIN) return { action: "cut", excess };
-  return { action: "review", excess };
+  return excess <= TRIM_THRESHOLD ? { action: "full", excess } : { action: "cut", excess };
 }
 
 const fmt = {
@@ -1301,15 +1297,12 @@ function buildCutPlanPrintPages(results, project, w) {
       const maxLen = Math.max(...r.stripLengths);
       const classified = r.stripLengths.map((len) => classifyStrip(len, maxLen));
       const cutCount = classified.filter((c) => c.action === "cut").length;
-      const foldCount = classified.filter((c) => c.action === "fold").length;
-      const reviewCount = classified.filter((c) => c.action === "review").length;
       const stitchCount = r.cutPlan.stitches.reduce((s, arr) => s + arr.length, 0);
-      const noteByAction = { full: "Full length", fold: "Fold", cut: "Cut", review: "Cut — review" };
+      const noteByAction = { full: "Full length", cut: "Cut" };
       const rows = r.stripLengths
         .map((len, i) => {
-          const { action, excess } = classifyStrip(len, maxLen);
-          const detail = action === "fold" || action === "review" ? ` (${fmt.mm(excess)} mm)` : "";
-          const mainRow = `<tr class="${action !== "full" ? `is-${action}` : ""}"><td>${i + 1}</td><td>${fmt.m(len)} m</td><td>${noteByAction[action]}${detail}</td></tr>`;
+          const { action } = classifyStrip(len, maxLen);
+          const mainRow = `<tr class="${action !== "full" ? `is-${action}` : ""}"><td>${i + 1}</td><td>${fmt.m(len)} m</td><td>${noteByAction[action]}</td></tr>`;
           const stitchRows = (r.cutPlan.stitches[i] || [])
             .map(
               (s, si) =>
@@ -1321,8 +1314,6 @@ function buildCutPlanPrintPages(results, project, w) {
         .join("");
       const metaParts = [`${r.n} strips`, `face ${fmt.m(r.L)} m`];
       if (cutCount) metaParts.push(`${cutCount} to cut`);
-      if (foldCount) metaParts.push(`${foldCount} to fold`);
-      if (reviewCount) metaParts.push(`${reviewCount} need review`);
       if (stitchCount) metaParts.push(`${stitchCount} stitch patch${stitchCount === 1 ? "" : "es"}`);
       metaParts.push(`roll width ${fmt.m(r.materialWidth / r.n)} m`);
       return `
@@ -1712,13 +1703,9 @@ function renderCutPlan(results, w) {
     const maxLen0 = Math.max(...r.stripLengths);
     const classified0 = r.stripLengths.map((len) => classifyStrip(len, maxLen0));
     const cutCount = classified0.filter((c) => c.action === "cut").length;
-    const foldCount = classified0.filter((c) => c.action === "fold").length;
-    const reviewCount = classified0.filter((c) => c.action === "review").length;
     const stitchCount = r.cutPlan.stitches.reduce((s, arr) => s + arr.length, 0);
     const metaParts = [`${r.n} strips`, `face ${fmt.m(r.L)} m`];
     if (cutCount) metaParts.push(`${cutCount} to cut`);
-    if (foldCount) metaParts.push(`${foldCount} to fold`);
-    if (reviewCount) metaParts.push(`${reviewCount} need review`);
     if (stitchCount) metaParts.push(`${stitchCount} stitch patch${stitchCount === 1 ? "" : "es"}`);
 
     card.innerHTML = `
@@ -1738,12 +1725,10 @@ function renderCutPlan(results, w) {
     const maxLen = Math.max(...r.stripLengths);
     r.stripLengths.forEach((len, i) => {
       const li = document.createElement("li");
-      const { action, excess } = classifyStrip(len, maxLen);
+      const { action } = classifyStrip(len, maxLen);
       const noteByAction = {
         full: `${fmt.m(len)} m`,
-        fold: `fold back ${fmt.mm(excess)} mm`,
         cut: `cut to ${fmt.m(len)} m`,
-        review: `cut to ${fmt.m(len)} m — review (${fmt.mm(excess)} mm)`,
       };
       if (action !== "full") li.classList.add(`is-${action}`);
       li.innerHTML = `<span>Strip ${i + 1}</span><span>${noteByAction[action]}</span>`;
@@ -2140,15 +2125,15 @@ document.getElementById("exportBtn").addEventListener("click", () => {
 
   const extentsResults = results.filter((r) => r.mode === "extents");
   if (extentsResults.length) {
-    lines.push("", "Cut schedule (DXF extents lifts)", "RL,Strip #,Cut length (m),Action,Leftover (mm)");
+    lines.push("", "Cut schedule (DXF extents lifts)", "RL,Strip #,Cut length (m),Note");
     extentsResults.forEach((r) => {
       const maxLen = Math.max(...r.stripLengths);
       r.stripLengths.forEach((len, i) => {
-        const { action, excess } = classifyStrip(len, maxLen);
-        lines.push([csvEscape(r.rl), i + 1, len.toFixed(3), action, action === "full" ? "" : Math.round(excess * 1000)].join(","));
+        const { action } = classifyStrip(len, maxLen);
+        lines.push([csvEscape(r.rl), i + 1, len.toFixed(3), action === "full" ? "full length" : ""].join(","));
         (r.cutPlan.stitches[i] || []).forEach((s, si) => {
           const label = r.cutPlan.stitches[i].length > 1 ? `${i + 1}.${si + 1}` : `${i + 1}`;
-          lines.push([csvEscape(r.rl), label, s.length.toFixed(3), "stitch", Math.round(s.offset * 1000)].join(","));
+          lines.push([csvEscape(r.rl), label, s.length.toFixed(3), `stitch, starts ${Math.round(s.offset * 1000)} mm back`].join(","));
         });
       });
     });
