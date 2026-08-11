@@ -1116,6 +1116,36 @@ function localFootprint(cutPlan, ref) {
   });
 }
 
+/**
+ * Sutherland-Hodgman clip of a polygon against an axis-aligned rectangle. Used to cut a strip's
+ * drawn shape down to what the true extents boundary actually gives it within a fixed x-lane —
+ * the strip stays put longitudinally (fixed x band) but its back/front edge follows the real
+ * boundary contour instead of being flattened to a square cut.
+ */
+function clipPolyToRect(poly, xMin, xMax, yMin, yMax) {
+  const clipEdge = (points, inside, intersect) => {
+    const out = [];
+    for (let i = 0; i < points.length; i++) {
+      const cur = points[i], prev = points[(i + points.length - 1) % points.length];
+      const curIn = inside(cur), prevIn = inside(prev);
+      if (curIn) {
+        if (!prevIn) out.push(intersect(prev, cur));
+        out.push(cur);
+      } else if (prevIn) {
+        out.push(intersect(prev, cur));
+      }
+    }
+    return out;
+  };
+  const lerp = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+  let pts = poly;
+  pts = clipEdge(pts, (p) => p.x >= xMin, (a, b) => lerp(a, b, (xMin - a.x) / (b.x - a.x)));
+  pts = clipEdge(pts, (p) => p.x <= xMax, (a, b) => lerp(a, b, (xMax - a.x) / (b.x - a.x)));
+  pts = clipEdge(pts, (p) => p.y >= yMin, (a, b) => lerp(a, b, (yMin - a.y) / (b.y - a.y)));
+  pts = clipEdge(pts, (p) => p.y <= yMax, (a, b) => lerp(a, b, (yMax - a.y) / (b.y - a.y)));
+  return pts;
+}
+
 function renderSummary(results, rollLength) {
   const totalStrips = results.reduce((s, r) => s + r.n, 0);
   const totalArea = results.reduce((s, r) => s + r.area, 0);
@@ -1713,24 +1743,28 @@ function renderCutPlanSvg(svg, cutPlan, w) {
   const labelEvery = cutLengths.length > 24 ? 2 : 1; // thin out numbers on dense diagrams so they stay legible
   cutLengths.forEach((len, i) => {
     const station = Math.max(0, Math.min(face.length, i * pitch + w / 2));
-    // Each strip drawn as an actual rectangle — its real width, not a single line — starting and
-    // ending flush with the true extents boundary on both the near and far side (sampled across the
-    // strip's own width in computeCutPlan), so there's never a gap between the grid and the extents.
+    // Each strip stays in a fixed lane along the face (station ± w/2) — that's what "lines up
+    // longitudinally" means — but its drawn shape is the TRUE extents polygon clipped to that lane,
+    // so the near/far edge follows the real boundary contour (steps, diagonals and all) instead of
+    // being flattened to a square cut. On site the crew trims to fit; this just shows them the true
+    // material footprint they're working with rather than an idealised rectangle.
     const farReach = (cutPlan.extentsReach || [])[i] ?? len;
-    const nearReach = (cutPlan.frontReach || [])[i] ?? 0;
-    const xLeft = tx(station - w / 2), xRight = tx(station + w / 2);
-    const yFar = ty(farReach), yNear = ty(nearReach);
+    const laneXMin = station - w / 2, laneXMax = station + w / 2;
+    const clipped = clipPolyToRect(localPoly, laneXMin, laneXMax, minY - 1, maxY + 1);
 
-    const rect = document.createElementNS(ns, "rect");
-    rect.setAttribute("x", Math.min(xLeft, xRight).toFixed(1));
-    rect.setAttribute("y", yFar.toFixed(1));
-    rect.setAttribute("width", Math.abs(xRight - xLeft).toFixed(1));
-    rect.setAttribute("height", Math.max(0, yNear - yFar).toFixed(1));
-    rect.setAttribute("fill", "var(--accent)");
-    rect.setAttribute("fill-opacity", "0.55");
-    rect.setAttribute("stroke", "var(--accent-strong)");
-    rect.setAttribute("stroke-width", "1");
-    svg.appendChild(rect);
+    if (clipped.length >= 3) {
+      const points = clipped.map((p) => `${tx(p.x).toFixed(1)},${ty(p.y).toFixed(1)}`).join(" ");
+      const stripPoly = document.createElementNS(ns, "polygon");
+      stripPoly.setAttribute("points", points);
+      // Alternating shade of the same colour, purely so adjacent strips are visually distinguishable —
+      // not a second colour or a status code, just legibility for a wall of same-width lanes.
+      stripPoly.setAttribute("fill", "var(--accent)");
+      stripPoly.setAttribute("fill-opacity", i % 2 === 0 ? "0.65" : "0.35");
+      stripPoly.setAttribute("stroke", "var(--accent-strong)");
+      stripPoly.setAttribute("stroke-width", "1");
+      svg.appendChild(stripPoly);
+    }
+    const yFar = ty(farReach);
 
     // Stitch patches — a separate small piece further back along the same line, past a gap the
     // main strip's single straight cut can't reach in one piece. Drawn dashed so it reads as its
