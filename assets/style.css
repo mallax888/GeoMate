@@ -760,6 +760,14 @@ input[type="number"]::-webkit-outer-spin-button {
 .roll-schedule-print-view { display: none; }
 
 @media print {
+  /* Chrome/Edge/Firefox all default to stripping background colours and (for Chrome/Edge, at least)
+     dimming everything else unless a page explicitly opts in — otherwise every fill/background here
+     prints washed out regardless of the page's own colours. This tells the browser to keep them; the
+     browser's own print dialog usually also needs "Background graphics" (Chrome/Edge) or "Print
+     backgrounds" (Firefox) switched on for it to fully take effect — that toggle lives in the printer/
+     destination settings of the print dialog, not in this app. */
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; color-adjust: exact; }
+
   .titleblock, .panel--settings, .panel--summary, .panel__headrow, .sequence-controls, .foot, #takeoffView { display: none !important; }
   body { background: #fff; }
   .layout { grid-template-columns: 1fr; padding: 0; max-width: none; }

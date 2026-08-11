@@ -1264,21 +1264,47 @@ tabRolls.addEventListener("click", () => switchTab("rolls"));
 staggerToggle.addEventListener("change", computeAndRender);
 document.getElementById("printSequenceBtn").addEventListener("click", () => window.print());
 
+/**
+ * Reverse-map each roll's pieces back to "which roll did this strip come from", keyed by the same
+ * label buildRollPieces uses ("RL <rl> · Strip <n>"). A piece longer than one roll is split across
+ * several ("... (1/2)", "... (2/2)") — those collapse back onto one strip with multiple roll numbers.
+ */
+function buildRollLookup(rolls) {
+  const map = new Map();
+  rolls.forEach((roll, idx) => {
+    roll.pieces.forEach((piece) => {
+      const baseLabel = piece.label.replace(/\s*\(\d+\/\d+\)$/, "");
+      if (!map.has(baseLabel)) map.set(baseLabel, new Set());
+      map.get(baseLabel).add(idx + 1);
+    });
+  });
+  return map;
+}
+
+function stripRollNumbersFor(r, rollLookup) {
+  return r.stripLengths.map((_, i) => {
+    const rolls = rollLookup.get(`RL ${r.rl} · Strip ${i + 1}`);
+    return rolls ? Array.from(rolls).sort((a, b) => a - b).join(",") : "";
+  });
+}
+
 /** Renders the same small plan diagram as the on-screen Cut Plan card, as a standalone SVG string. */
-function buildCutPlanSvgMarkup(cutPlan, w) {
+function buildCutPlanSvgMarkup(cutPlan, w, stripRollNumbers) {
   const ns = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(ns, "svg");
   svg.setAttribute("viewBox", "0 0 400 260");
   svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
   svg.setAttribute("class", "cutplan-print-page__plan");
-  renderCutPlanSvg(svg, cutPlan, w);
+  renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers);
   return svg.outerHTML;
 }
 
 /** One <section class="cutplan-print-page"> per extents lift — shared by the Cut Plan print button and the full export. */
 function buildCutPlanPrintPages(results, project, w) {
+  const rollLookup = buildRollLookup(window.__geogridRolls || []);
   return results
     .map((r) => {
+      const stripRollNumbers = stripRollNumbersFor(r, rollLookup);
       const stitchCount = r.cutPlan.stitches.reduce((s, arr) => s + arr.length, 0);
       const rows = r.stripLengths
         .map((len, i) => {
@@ -1302,7 +1328,7 @@ function buildCutPlanPrintPages(results, project, w) {
             <p>${metaParts.join(" · ")}</p>
           </div>
           <div class="cutplan-print-page__body">
-            ${buildCutPlanSvgMarkup(r.cutPlan, w)}
+            ${buildCutPlanSvgMarkup(r.cutPlan, w, stripRollNumbers)}
             <table class="cutplan-print-table">
               <thead><tr><th>Strip #</th><th>Cut length</th><th>Note</th></tr></thead>
               <tbody>${rows}</tbody>
@@ -1671,6 +1697,7 @@ function renderCutPlan(results, w) {
   cutPlanList.innerHTML = "";
   window.__geogridCutPlanResults = extentsResults;
   window.__geogridRowsById = window.__geogridRowsById || new Map();
+  const rollLookup = buildRollLookup(window.__geogridRolls || []);
 
   extentsResults.forEach((r) => {
     const id = `row-${Math.random().toString(36).slice(2)}`;
@@ -1710,11 +1737,11 @@ function renderCutPlan(results, w) {
       });
     });
 
-    renderCutPlanSvg(card.querySelector(".cutplan-card__plan"), r.cutPlan, w);
+    renderCutPlanSvg(card.querySelector(".cutplan-card__plan"), r.cutPlan, w, stripRollNumbersFor(r, rollLookup));
   });
 }
 
-function renderCutPlanSvg(svg, cutPlan, w) {
+function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
   const ns = "http://www.w3.org/2000/svg";
   const { face, cutLengths } = cutPlan;
 
@@ -1745,6 +1772,10 @@ function renderCutPlanSvg(svg, cutPlan, w) {
   // Strip count doesn't shrink the font below this, so numbers stay every-strip and legible without
   // ever skipping one — dense diagrams get a smaller font instead of thinned labels.
   const labelFontSize = Math.max(4.5, Math.min(7, 165 / Math.max(cutLengths.length, 1)));
+  // Roll-number circles are sized off the actual on-screen strip width, not a fixed size, so
+  // neighbouring circles never overlap even on a 40-strip lift.
+  const avgStripPx = (W - pad * 2) / Math.max(cutLengths.length, 1);
+  const rollCircleR = Math.max(3, Math.min(7.5, avgStripPx / 2 - 0.6));
 
   cutLengths.forEach((len, i) => {
     const station = stationOf(i);
@@ -1794,10 +1825,7 @@ function renderCutPlanSvg(svg, cutPlan, w) {
 
     // Small per-strip label — the strip's own sequence number (1, 2, 3…), left-to-right, always in
     // order, every strip (a dense diagram shrinks the font instead of skipping numbers, so there's
-    // never a confusing gap in the sequence). Which physical roll each strip is cut from is a separate
-    // question the Roll schedule tab already answers properly (it's pooled and waste-optimised across
-    // every lift, so the same-length roll numbers jump around unpredictably lift-to-lift — showing
-    // that scatter here, next to each strip, read as noise rather than useful sequence).
+    // never a confusing gap in the sequence).
     {
       const margin = 6;
       const label = document.createElementNS(ns, "text");
@@ -1807,10 +1835,44 @@ function renderCutPlanSvg(svg, cutPlan, w) {
       label.setAttribute("y", ly.toFixed(1));
       label.setAttribute("font-size", labelFontSize.toFixed(1));
       label.setAttribute("font-family", "var(--font-mono)");
-      label.setAttribute("fill", "var(--ink-muted)");
+      label.setAttribute("font-weight", "700");
+      label.setAttribute("fill", "var(--ink)");
       label.setAttribute("text-anchor", "middle");
       label.textContent = String(i + 1);
       svg.appendChild(label);
+    }
+
+    // Roll number, circled, at the bottom of the strip (near the face) — which physical roll to pull
+    // this piece from, per the Roll schedule tab's packing. Pooled packing mixes lifts by length, so
+    // this can jump around between neighbouring strips; use "Group rolls across N lifts" in the spec
+    // panel if you want it to stay within a band of nearby lifts instead.
+    const rollLabel = (stripRollNumbers && stripRollNumbers[i]) || "";
+    if (rollLabel) {
+      const margin = 6;
+      const ccx = Math.max(margin + rollCircleR, Math.min(W - margin - rollCircleR, tx(station)));
+      const ccy = Math.max(margin + rollCircleR, Math.min(H - margin - rollCircleR, yNear - rollCircleR - 2));
+      const circle = document.createElementNS(ns, "circle");
+      circle.setAttribute("cx", ccx.toFixed(1));
+      circle.setAttribute("cy", ccy.toFixed(1));
+      circle.setAttribute("r", rollCircleR.toFixed(1));
+      circle.setAttribute("fill", "var(--surface)");
+      circle.setAttribute("stroke", "var(--ink)");
+      circle.setAttribute("stroke-width", "1");
+      svg.appendChild(circle);
+
+      // Longer roll numbers (rolls run into the hundreds on a big job) need a smaller font to still
+      // fit inside a small circle — sized relative to digit count, not a single fixed size.
+      const rollFontSize = rollLabel.length >= 3 ? rollCircleR * 0.82 : rollLabel.length === 2 ? rollCircleR * 0.98 : rollCircleR * 1.15;
+      const rollText = document.createElementNS(ns, "text");
+      rollText.setAttribute("x", ccx.toFixed(1));
+      rollText.setAttribute("y", ccy.toFixed(1));
+      rollText.setAttribute("font-size", Math.max(3, rollFontSize).toFixed(1));
+      rollText.setAttribute("font-family", "var(--font-mono)");
+      rollText.setAttribute("fill", "var(--ink)");
+      rollText.setAttribute("text-anchor", "middle");
+      rollText.setAttribute("dominant-baseline", "central");
+      rollText.textContent = rollLabel;
+      svg.appendChild(rollText);
     }
   });
 }
