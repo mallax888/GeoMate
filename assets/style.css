@@ -586,7 +586,7 @@ input[type="number"]::-webkit-outer-spin-button {
   max-width: 68ch;
   margin: 0 0 0.8rem;
 }
-.cutplan-upload { display: flex; align-items: center; gap: 0.8rem; margin-bottom: 1rem; flex-wrap: wrap; }
+.cutplan-upload { display: flex; align-items: flex-end; gap: 0.8rem; margin-bottom: 1rem; flex-wrap: wrap; }
 .cutplan-tolerance { flex: none; }
 .cutplan-tolerance .field__unit { width: 6rem; }
 .btn--upload { cursor: pointer; }
