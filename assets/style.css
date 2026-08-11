@@ -374,6 +374,9 @@ input[type="number"]::-webkit-outer-spin-button {
 .col-face { min-width: 9.5rem; }
 .col-embed { width: 6.5rem; }
 .col-strips, .col-overlap, .col-area { width: 5rem; text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.col-area { width: 6rem; white-space: nowrap; }
+.lift-table th.col-strips, .lift-table th.col-overlap, .lift-table th.col-area { text-align: right; }
+.area-value small { color: var(--ink-muted); font-weight: 400; margin-left: 0.15em; }
 .col-diagram { width: 12rem; }
 .col-remove { width: 2rem; }
 .result-cell { color: var(--ink); }

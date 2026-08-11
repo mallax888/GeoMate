@@ -223,6 +223,16 @@ function computeCutPlan(rawPoints, w, oMin, swapped) {
   // is parallel, which is what "grids can only ever be square" means in practice.
   const inward = inwardNormal(face.dir);
 
+  // Every polygon vertex's approximate position along the face, as a station — used below so a strip
+  // never misses a boundary kink no matter how narrow, even one confined to a sliver of its width. An
+  // evenly-spaced sample sweep alone can straddle a kink and never land on it; the exact vertex station
+  // always does.
+  const faceOrigin = face.edges[0].from;
+  const vertexStations = poly
+    .map((p) => (p.x - faceOrigin.x) * face.dir.x + (p.y - faceOrigin.y) * face.dir.y)
+    .filter((s) => s >= 0 && s <= face.length)
+    .sort((a, b) => a - b);
+
   const cutLengths = [];
   const stitches = [];
   const extentsReach = [];
@@ -233,12 +243,23 @@ function computeCutPlan(rawPoints, w, oMin, swapped) {
     const segments = insideSegments(pt, inward, poly);
     const main = segments.find((s) => s.start <= 1e-6);
 
-    // The true boundary reach for this strip, sampled across its full width (not just its centreline)
-    // — a boundary edge that isn't parallel to the face can sit further out (or in) at one edge of the
-    // strip than at its middle, so a single centreline ray can under-reach the extents even though the
-    // strip's width would actually touch it. Sampled at both the front (near) and back (far) boundary
-    // so the strip can start and end flush with the true extents, not a nominal straight line.
-    const edgeStations = [Math.max(0, station - w / 2), station, Math.min(face.length, station + w / 2)];
+    // The true boundary reach for this strip, sampled across its full width — a boundary that kinks
+    // partway across the strip's width can dodge a coarse, evenly-spaced sample and leave a real,
+    // uncovered sliver between the strip and the true line. Worst of all at the wall FACE itself,
+    // where the strip has to tie up flush with zero gap (the far/inner end just ties into existing
+    // ground, so it's rounded up generously and is far less sensitive to this). Combines a modest
+    // even sweep with every actual polygon vertex that falls inside this strip's width, so a kink is
+    // always sampled exactly rather than only approximately.
+    const laneMin = Math.max(0, station - w / 2), laneMax = Math.min(face.length, station + w / 2);
+    const sampleCount = Math.max(3, Math.min(15, Math.round(w / 0.3) + 1));
+    const edgeStations = [];
+    for (let k = 0; k < sampleCount; k++) {
+      const t = sampleCount === 1 ? 0.5 : k / (sampleCount - 1);
+      edgeStations.push(laneMin + t * (laneMax - laneMin));
+    }
+    vertexStations.forEach((s) => {
+      if (s > laneMin && s < laneMax) edgeStations.push(s);
+    });
     let farReach = 0, nearReach = 0;
     edgeStations.forEach((s) => {
       const p = pointAtStation(face, s);
@@ -1057,7 +1078,7 @@ function computeAndRender() {
     // consume grid too, so they count toward area, roll purchasing, and waste stats same as any strip.
     const stitchLengths = cutPlan ? cutPlan.stitches.flat().map((s) => s.length) : [];
     const area = stripLengths.reduce((s, len) => s + w * len, 0) + stitchLengths.reduce((s, len) => s + w * len, 0);
-    areaCell.textContent = fmt.m(area);
+    areaCell.innerHTML = `${fmt.m(area)}<small> m²</small>`;
     renderDiagram(diagram, L, result, w);
 
     const footprint =
@@ -1206,25 +1227,20 @@ staggerToggle.addEventListener("change", computeAndRender);
 document.getElementById("printSequenceBtn").addEventListener("click", () => window.print());
 
 /** Renders the same small plan diagram as the on-screen Cut Plan card, as a standalone SVG string. */
-function buildCutPlanSvgMarkup(cutPlan, w, stripRollNumbers) {
+function buildCutPlanSvgMarkup(cutPlan, w) {
   const ns = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(ns, "svg");
   svg.setAttribute("viewBox", "0 0 400 260");
   svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
   svg.setAttribute("class", "cutplan-print-page__plan");
-  renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers);
+  renderCutPlanSvg(svg, cutPlan, w);
   return svg.outerHTML;
 }
 
 /** One <section class="cutplan-print-page"> per extents lift — shared by the Cut Plan print button and the full export. */
 function buildCutPlanPrintPages(results, project, w) {
-  const rollLookup = buildRollLookup(window.__geogridRolls || []);
   return results
     .map((r) => {
-      const stripRollNumbers = r.stripLengths.map((_, i) => {
-        const rolls = rollLookup.get(`RL ${r.rl} · Strip ${i + 1}`);
-        return rolls ? Array.from(rolls).sort((a, b) => a - b).join(",") : "";
-      });
       const maxLen = Math.max(...r.stripLengths);
       const classified = r.stripLengths.map((len) => classifyStrip(len, maxLen));
       const cutCount = classified.filter((c) => c.action === "cut").length;
@@ -1259,7 +1275,7 @@ function buildCutPlanPrintPages(results, project, w) {
             <p>${metaParts.join(" · ")}</p>
           </div>
           <div class="cutplan-print-page__body">
-            ${buildCutPlanSvgMarkup(r.cutPlan, w, stripRollNumbers)}
+            ${buildCutPlanSvgMarkup(r.cutPlan, w)}
             <table class="cutplan-print-table">
               <thead><tr><th>Strip #</th><th>Cut length</th><th>Note</th></tr></thead>
               <tbody>${rows}</tbody>
@@ -1621,23 +1637,6 @@ cutPlanList.addEventListener("click", (e) => {
   computeAndRender();
 });
 
-/**
- * Reverse-map each roll's pieces back to "which roll did this strip come from", keyed by the same
- * label buildRollPieces uses ("RL <rl> · Strip <n>"). A piece longer than one roll is split across
- * several ("... (1/2)", "... (2/2)") — those collapse back onto one strip with multiple roll numbers.
- */
-function buildRollLookup(rolls) {
-  const map = new Map();
-  rolls.forEach((roll, idx) => {
-    roll.pieces.forEach((piece) => {
-      const baseLabel = piece.label.replace(/\s*\(\d+\/\d+\)$/, "");
-      if (!map.has(baseLabel)) map.set(baseLabel, new Set());
-      map.get(baseLabel).add(idx + 1);
-    });
-  });
-  return map;
-}
-
 function renderCutPlan(results, w) {
   const extentsResults = results.filter((r) => r.mode === "extents" && r.cutPlan);
   cutPlanEmpty.hidden = extentsResults.length > 0;
@@ -1645,7 +1644,6 @@ function renderCutPlan(results, w) {
   cutPlanList.innerHTML = "";
   window.__geogridCutPlanResults = extentsResults;
   window.__geogridRowsById = window.__geogridRowsById || new Map();
-  const rollLookup = buildRollLookup(window.__geogridRolls || []);
 
   extentsResults.forEach((r) => {
     const id = `row-${Math.random().toString(36).slice(2)}`;
@@ -1702,15 +1700,11 @@ function renderCutPlan(results, w) {
       });
     });
 
-    const stripRollNumbers = r.stripLengths.map((_, i) => {
-      const rolls = rollLookup.get(`RL ${r.rl} · Strip ${i + 1}`);
-      return rolls ? Array.from(rolls).sort((a, b) => a - b).join(",") : "";
-    });
-    renderCutPlanSvg(card.querySelector(".cutplan-card__plan"), r.cutPlan, w, stripRollNumbers);
+    renderCutPlanSvg(card.querySelector(".cutplan-card__plan"), r.cutPlan, w);
   });
 }
 
-function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
+function renderCutPlanSvg(svg, cutPlan, w) {
   const ns = "http://www.w3.org/2000/svg";
   const { face, cutLengths } = cutPlan;
 
@@ -1781,11 +1775,12 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
       svg.appendChild(stitchLine);
     });
 
-    // Small per-strip label — the roll(s) it's cut from (see Roll schedule tab), not the strip's
-    // sequence number, so a crew can match a strip on this drawing to the physical roll to cut it
-    // from. Same convention as the manual Civil3D takeoffs this is modelled on.
-    const rollLabel = (stripRollNumbers && stripRollNumbers[i]) || "";
-    if (rollLabel && i % labelEvery === 0) {
+    // Small per-strip label — the strip's own sequence number (1, 2, 3…), left-to-right, always in
+    // order. Which physical roll each strip is cut from is a separate question the Roll schedule tab
+    // already answers properly (it's pooled and waste-optimised across every lift, so the same-length
+    // roll numbers jump around unpredictably lift-to-lift — showing that scatter here, next to each
+    // strip, read as noise rather than useful sequence).
+    if (i % labelEvery === 0) {
       const margin = 6;
       const label = document.createElementNS(ns, "text");
       const lx = Math.max(margin, Math.min(W - margin, tx(station)));
@@ -1796,7 +1791,7 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
       label.setAttribute("font-family", "var(--font-mono)");
       label.setAttribute("fill", "var(--ink-muted)");
       label.setAttribute("text-anchor", "middle");
-      label.textContent = rollLabel;
+      label.textContent = String(i + 1);
       svg.appendChild(label);
     }
   });
