@@ -867,6 +867,8 @@ const settingsInputs = {
   minOverlapMm: document.getElementById("minOverlap"),
   rollLength: document.getElementById("rollLength"),
   rollGroupSize: document.getElementById("rollGroupSize"),
+  costPerRoll: document.getElementById("costPerRoll"),
+  installRate: document.getElementById("installRate"),
 };
 
 function readSettings() {
@@ -877,6 +879,8 @@ function readSettings() {
     rollLength: parseFloat(settingsInputs.rollLength.value) || 0,
     // How many adjacent lifts may share a roll — 0/blank pools every lift together (lowest waste).
     rollGroupSize: rollGroupSizeRaw > 0 ? rollGroupSizeRaw : 0,
+    costPerRoll: parseFloat(settingsInputs.costPerRoll.value) || 0,
+    installRate: parseFloat(settingsInputs.installRate.value) || 0,
   };
 }
 
@@ -1128,6 +1132,9 @@ const fmt = {
   m: (v) => v.toLocaleString(undefined, { maximumFractionDigits: 2 }),
   mm: (v) => Math.round(v * 1000).toLocaleString(),
   pct: (v) => `${v.toFixed(1)}%`,
+  // No currency symbol/code assumed — the input's own "$" unit label already says what's being
+  // entered, and guessing USD/NZD/AUD would just as often be wrong as right.
+  cost: (v) => `$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
 };
 
 function wasteLevel(pct) {
@@ -1137,7 +1144,7 @@ function wasteLevel(pct) {
 }
 
 function computeAndRender() {
-  const { w, oMin, rollLength, rollGroupSize } = readSettings();
+  const { w, oMin, rollLength, rollGroupSize, costPerRoll, installRate } = readSettings();
   const specWarning = document.getElementById("specWarning");
   if (oMin >= w) {
     specWarning.hidden = false;
@@ -1261,7 +1268,7 @@ function computeAndRender() {
   });
 
   window.__geogridResults = liftResults; // exposed for CSV export + progress tracking, set before renderSummary needs it
-  renderSummary(liftResults, rollLength, rollGroupSize);
+  renderSummary(liftResults, rollLength, rollGroupSize, costPerRoll, installRate);
   renderSequence(liftResults, w);
   renderCutPlan(liftResults, w);
   render3D(liftResults);
@@ -1340,7 +1347,7 @@ function faceAlignedFootprint(cutPlan) {
   });
 }
 
-function renderSummary(results, rollLength, rollGroupSize) {
+function renderSummary(results, rollLength, rollGroupSize, costPerRoll, installRate) {
   // Build-order position of each lift — used by buildRollPieces (below, and inside
   // packRollsWindowed) to number rolls in first-used-on-site order. Tagged once, here, so it's set
   // before EITHER caller reads it regardless of which one happens to run first.
@@ -1395,6 +1402,12 @@ function renderSummary(results, rollLength, rollGroupSize) {
   window.__geogridRollPieces = rollPieces;
 
   document.getElementById("statRolls").textContent = fmt.int(rolls.length);
+
+  // Both blank/zero by default (see readSettings) — a project with no cost or rate entered shows
+  // "—", not a $0/instant estimate that would misread as a real answer rather than missing input.
+  document.getElementById("statCost").textContent = costPerRoll > 0 ? fmt.cost(rolls.length * costPerRoll) : "—";
+  const installDays = installRate > 0 ? Math.ceil((totalArea / installRate) * 2) / 2 : 0;
+  document.getElementById("statInstallTime").textContent = installDays > 0 ? `${fmt.m(installDays)} day${installDays === 1 ? "" : "s"}` : "—";
 
   const purchased = rolls.length * rollLength;
   const extraTotal = rolls.reduce((s, roll) => s + roll.pieces.reduce((s2, p) => s2 + p.extra, 0), 0);
@@ -1605,6 +1618,8 @@ document.getElementById("exportFullPdfBtn").addEventListener("click", () => {
         <div><dt>Rolls to order</dt><dd>${document.getElementById("statRolls").textContent}</dd></div>
         <div><dt>Overlap waste</dt><dd>${document.getElementById("wasteOverlap").textContent}</dd></div>
         <div><dt>Extra to fill rolls</dt><dd>${document.getElementById("wasteOffcut").textContent}</dd></div>
+        <div><dt>Material cost</dt><dd>${document.getElementById("statCost").textContent}</dd></div>
+        <div><dt>Est. install time</dt><dd>${document.getElementById("statInstallTime").textContent}</dd></div>
       </dl>
     </section>
   `;
@@ -2675,7 +2690,7 @@ document.getElementById("printRollScheduleBtn").addEventListener("click", () => 
 
 document.getElementById("exportBtn").addEventListener("click", () => {
   const results = window.__geogridResults || [];
-  const { w, oMin, rollLength, rollGroupSize } = readSettings();
+  const { w, oMin, rollLength, rollGroupSize, costPerRoll, installRate } = readSettings();
   const project = document.getElementById("projectName").value || "geogrid-takeoff";
 
   const lines = [
@@ -2684,6 +2699,8 @@ document.getElementById("exportBtn").addEventListener("click", () => {
     `Minimum overlap (mm),${Math.round(oMin * 1000)}`,
     `Roll length (m),${rollLength}`,
     `Roll grouping,${rollGroupSize > 0 ? `${rollGroupSize} adjacent lifts` : "pooled across all lifts"}`,
+    `Material cost,${csvEscape(document.getElementById("statCost").textContent)}`,
+    `Est. install time,${csvEscape(document.getElementById("statInstallTime").textContent)}`,
     "",
     "RL,Face length (m),Embedment (m),Strips,Overlap (mm),Material width (m),Area (m2),Theoretical area (m2),Source",
   ];

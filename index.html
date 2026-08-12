@@ -60,6 +60,14 @@
         <span>Group rolls across</span>
         <div class="field__unit"><input type="number" id="rollGroupSize" min="0" step="1" placeholder="all lifts" /><em>lifts</em></div>
       </label>
+      <label class="field">
+        <span>Cost per roll</span>
+        <div class="field__unit"><input type="number" id="costPerRoll" min="0" step="1" placeholder="0" /><em>$</em></div>
+      </label>
+      <label class="field">
+        <span>Install rate</span>
+        <div class="field__unit"><input type="number" id="installRate" min="0" step="10" placeholder="0" /><em>m&sup2;/day</em></div>
+      </label>
     </div>
     <p class="generator__hint">
       The Roll schedule packs strips onto the fewest possible rolls by pooling every lift together —
@@ -364,6 +372,14 @@
       <div class="stat">
         <span class="stat__label">Rolls to order</span>
         <span class="stat__value" id="statRolls">0</span>
+      </div>
+      <div class="stat">
+        <span class="stat__label">Material cost</span>
+        <span class="stat__value" id="statCost">—</span>
+      </div>
+      <div class="stat">
+        <span class="stat__label">Est. install time</span>
+        <span class="stat__value" id="statInstallTime">—</span>
       </div>
     </div>
 
