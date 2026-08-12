@@ -1305,12 +1305,12 @@ function localFootprint(cutPlan, ref) {
 
 /**
  * Re-express an extents polygon for 3D stacking WITHOUT rotating it onto a shared face direction —
- * a straight translation only, same offset for every pit row. localFootprint's shared-frame rotation
- * is right for a single wall (every lift really does share one face direction, so forcing them onto
- * it just normalises for display) but wrong for a multi-wall pit row: each wall has its own genuine
- * direction, and every wall at every level already shares one real coordinate system from being
- * sliced out of the same surface — rotating them onto one wall's direction would tear that apart
- * rather than preserve it.
+ * a straight translation only, same offset for every battered level. localFootprint's shared-frame
+ * rotation is right for a hand-drawn extents lift (every lift really does share one face direction,
+ * so forcing them onto it just normalises for display) but wrong here: every battered level is
+ * already sliced out of the same surface, so they already share one real coordinate system, and a
+ * taper's true relative size and position between levels only survives if that's preserved — rotating
+ * each one onto its own longest edge would tear that relationship apart instead of showing it.
  */
 function absoluteFootprint(cutPlan, origin) {
   return cutPlan.poly.map((p) => ({ x: p.x - origin.x, y: p.y - origin.y }));
@@ -1898,7 +1898,7 @@ document.getElementById("dxfLengthsInput").addEventListener("change", async (e) 
 function wireMeshUpload(inputId, parseFn, noTrianglesMessage) {
   document.getElementById(inputId).addEventListener("change", async (e) => {
     const file = e.target.files[0];
-    const statusEl = document.getElementById("dxfMeshStatus");
+    const statusEl = document.getElementById("benchedStatus");
     if (!file) return;
 
     try {
@@ -1910,7 +1910,7 @@ function wireMeshUpload(inputId, parseFn, noTrianglesMessage) {
         return;
       }
 
-      const tol = (parseFloat(document.getElementById("meshTolerance").value) || 0) / 1000;
+      const tol = (parseFloat(document.getElementById("benchedTolerance").value) || 0) / 1000;
       const rows = Array.from(tbody.querySelectorAll(".lift-row"));
       let matched = 0, ambiguous = 0;
 
@@ -1941,8 +1941,8 @@ function wireMeshUpload(inputId, parseFn, noTrianglesMessage) {
   });
 }
 
-wireMeshUpload("dxfMeshInput", parseDXF3DFaces, "No 3DFACE triangles found in that file.");
-wireMeshUpload("landxmlMeshInput", parseLandXMLSurface, "No TIN surface (Pnts/Faces) found in that LandXML file.");
+wireMeshUpload("dxfBenchedInput", parseDXF3DFaces, "No 3DFACE triangles found in that file.");
+wireMeshUpload("landxmlBenchedInput", parseLandXMLSurface, "No TIN surface (Pnts/Faces) found in that LandXML file.");
 
 /**
  * From a full excavation surface (already dug, all sides), builds one extents-mode lift row per
@@ -1998,17 +1998,17 @@ function buildBatteredLiftRows(triangles, targetRLs) {
 }
 
 // Kept after a successful upload so Start RL/Spacing/Count can be tweaked and re-run against the
-// SAME surface via rebuildPitBtn — re-picking the file from a dialog every time just to try a
+// SAME surface via rebuildBatteredBtn — re-picking the file from a dialog every time just to try a
 // different spacing is real friction, and it invites exactly the confusion of editing the fields
 // then reading a status line that's still reporting the previous settings.
-let lastPitTriangles = null;
+let lastBatteredTriangles = null;
 
-/** Slices lastPitTriangles/triangles at the RLs implied by the current Start RL/Spacing/Count fields
+/** Slices lastBatteredTriangles/triangles at the RLs implied by the current Start RL/Spacing/Count fields
  *  and rebuilds the lift table from them. Shared by the upload handlers and the "Rebuild rows" button. */
-function runPitSurfaceBuild(triangles) {
-  const statusEl = document.getElementById("pitSurfaceStatus");
+function runBatteredSurfaceBuild(triangles) {
+  const statusEl = document.getElementById("batteredStatus");
 
-  const spacingMm = parseFloat(document.getElementById("pitSpacing").value) || 0;
+  const spacingMm = parseFloat(document.getElementById("batteredSpacing").value) || 0;
   if (!(spacingMm > 0)) {
     statusEl.textContent = "Enter a spacing first.";
     statusEl.className = "cutplan-status is-error";
@@ -2026,7 +2026,7 @@ function runPitSurfaceBuild(triangles) {
   const zs = triangles.flat().map((p) => p.z);
   const meshMin = Math.min(...zs), meshMax = Math.max(...zs);
 
-  const startRaw = document.getElementById("pitStartRL").value;
+  const startRaw = document.getElementById("batteredStartRL").value;
   const start = startRaw.trim() === "" ? meshMin + spacing : parseFloat(startRaw);
   if (!Number.isFinite(start)) {
     statusEl.textContent = "Start RL isn't a valid number.";
@@ -2037,7 +2037,7 @@ function runPitSurfaceBuild(triangles) {
   // Tiny epsilon so an exact-multiple range (e.g. exactly 1.000m of relief at exactly 0.500m
   // spacing) doesn't compute a last step sitting exactly on meshMax, which — like meshMin — can
   // never actually slice; better to just not offer that step than have it silently skip.
-  const countRaw = document.getElementById("pitCount").value;
+  const countRaw = document.getElementById("batteredCount").value;
   const count = countRaw.trim() === "" ? Math.max(1, Math.floor((meshMax - start - 1e-6) / spacing) + 1) : Math.round(parseFloat(countRaw));
   if (!Number.isFinite(count) || count < 1) {
     statusEl.textContent = "Count isn't a valid number.";
@@ -2045,8 +2045,8 @@ function runPitSurfaceBuild(triangles) {
     return;
   }
 
-  document.getElementById("pitStartRL").value = start.toFixed(2);
-  document.getElementById("pitCount").value = count;
+  document.getElementById("batteredStartRL").value = start.toFixed(2);
+  document.getElementById("batteredCount").value = count;
   const targetRLs = Array.from({ length: count }, (_, i) => +(start + i * spacing).toFixed(2));
   const { rows: levelRows, skippedRLs, partialRLs } = buildBatteredLiftRows(triangles, targetRLs);
 
@@ -2071,15 +2071,15 @@ function runPitSurfaceBuild(triangles) {
     notes.length ? ` (${notes.join("; ")})` : ""
   }. This replaced every existing lift row.`;
   statusEl.className = "cutplan-status is-ok";
-  document.getElementById("rebuildPitBtn").hidden = false;
+  document.getElementById("rebuildBatteredBtn").hidden = false;
   switchTab("cutplan");
   computeAndRender();
 }
 
-function wirePitSurfaceUpload(inputId, parseFn, noTrianglesMessage) {
+function wireBatteredSurfaceUpload(inputId, parseFn, noTrianglesMessage) {
   document.getElementById(inputId).addEventListener("change", async (e) => {
     const file = e.target.files[0];
-    const statusEl = document.getElementById("pitSurfaceStatus");
+    const statusEl = document.getElementById("batteredStatus");
     if (!file) return;
 
     try {
@@ -2090,8 +2090,8 @@ function wirePitSurfaceUpload(inputId, parseFn, noTrianglesMessage) {
         statusEl.className = "cutplan-status is-error";
         return;
       }
-      lastPitTriangles = triangles;
-      runPitSurfaceBuild(triangles);
+      lastBatteredTriangles = triangles;
+      runBatteredSurfaceBuild(triangles);
     } catch (err) {
       statusEl.textContent = `Couldn't read that file: ${err.message}`;
       statusEl.className = "cutplan-status is-error";
@@ -2101,11 +2101,11 @@ function wirePitSurfaceUpload(inputId, parseFn, noTrianglesMessage) {
   });
 }
 
-wirePitSurfaceUpload("dxfPitInput", parseDXF3DFaces, "No 3DFACE triangles found in that file.");
-wirePitSurfaceUpload("landxmlPitInput", parseLandXMLSurface, "No TIN surface (Pnts/Faces) found in that LandXML file.");
+wireBatteredSurfaceUpload("dxfBatteredInput", parseDXF3DFaces, "No 3DFACE triangles found in that file.");
+wireBatteredSurfaceUpload("landxmlBatteredInput", parseLandXMLSurface, "No TIN surface (Pnts/Faces) found in that LandXML file.");
 
-document.getElementById("rebuildPitBtn").addEventListener("click", () => {
-  if (lastPitTriangles) runPitSurfaceBuild(lastPitTriangles);
+document.getElementById("rebuildBatteredBtn").addEventListener("click", () => {
+  if (lastBatteredTriangles) runBatteredSurfaceBuild(lastBatteredTriangles);
 });
 
 cutPlanList.addEventListener("click", (e) => {
