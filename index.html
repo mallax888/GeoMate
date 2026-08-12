@@ -130,7 +130,7 @@
         <dt>Roll off-cut</dt>
         <dd>Strips are pooled across all lifts that share the same embedment length, then packed into 1×roll-length pieces (floor(roll length ÷ embedment)) to minimise leftover per roll.</dd>
         <dt>Pit surface walls</dt>
-        <dd>Each target RL slices the surface into a closed cross-section; the slice is split into its straight-ish runs (a direction change under 20° stays part of the same run), and any run shorter than the roll width is treated as a corner return rather than a wall of its own. Remaining runs become one lift row per wall, numbered by angle around the slice's centroid so "Wall 1" is the same physical side at every level.</dd>
+        <dd>Each target RL slices the surface into a cross-section; the slice is split into its straight-ish runs (a direction change under 20° stays part of the same run), and any run shorter than the roll width is treated as a corner return rather than a wall of its own. Remaining runs become one lift row per wall, numbered by angle around the slice's centroid so "Wall 1" is the same physical side at every level. If the top of the surface is uneven, a wall can end (daylight into the original ground) below another wall's rim — a level in between them slices to a partial, not fully closed, cross-section. The gap is closed with a straight line between the two ends purely so the boundary math has a defined "inside"; that line never becomes a wall of its own, and only the walls actually present at that RL get a row.</dd>
       </dl>
     </details>
   </section>

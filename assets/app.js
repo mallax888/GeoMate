@@ -1947,34 +1947,60 @@ wireMeshUpload("landxmlMeshInput", parseLandXMLSurface, "No TIN surface (Pnts/Fa
 function buildPitLiftRows(triangles, targetRLs, minWallLength) {
   const rows = [];
   const skippedRLs = [];
+  const partialRLs = new Set(); // RLs where the top of cut is uneven enough that a wall had already
+  // ended (daylighted into original ground) before this RL, so the ring isn't fully closed here.
+
   targetRLs.forEach((rl) => {
-    const closedLoops = sliceMeshAt(triangles, rl).filter((l) => l.closed);
-    if (!closedLoops.length) {
+    const loops = sliceMeshAt(triangles, rl);
+    if (!loops.length) {
       skippedRLs.push(rl);
       return;
     }
-    // The largest closed loop by area is the real pit outline; a stray smaller one is noise/artifact.
-    const loop = closedLoops.reduce((a, b) => (Math.abs(signedArea(a.points)) >= Math.abs(signedArea(b.points)) ? a : b));
-    const poly = ensureCCW(loop.points.slice(0, -1)); // drop the repeated closing point
-    const chains = chainEdges(poly);
-    const cx = poly.reduce((s, p) => s + p.x, 0) / poly.length;
-    const cy = poly.reduce((s, p) => s + p.y, 0) / poly.length;
 
-    const walls = chains
-      .map((chain, chainIndex) => ({ chain, chainIndex }))
-      .filter(({ chain }) => chain.length >= minWallLength)
-      .map(({ chain, chainIndex }) => {
-        const mid = chain.edges[Math.floor(chain.edges.length / 2)];
-        const angle = Math.atan2((mid.from.y + mid.to.y) / 2 - cy, (mid.from.x + mid.to.x) / 2 - cx);
-        return { chainIndex, angle };
-      })
-      .sort((a, b) => a.angle - b.angle);
+    let anyWalls = false;
+    loops.forEach((loop) => {
+      if (loop.points.length < 3) return;
 
-    walls.forEach((wallInfo, i) => {
-      rows.push({ rl, wallNumber: i + 1, totalWalls: walls.length, points: poly, faceChainIndex: wallInfo.chainIndex });
+      // An open chain means part of the ring genuinely doesn't exist at this RL (that section's
+      // wall already ended below here) — close it with a straight line directly between its two
+      // ends so the standard closed-boundary clipping math still has a well-defined "inside" for
+      // the walls that DO exist, same as a hand-drawn extents polygon always has. That synthetic
+      // edge is a straight-line approximation standing in for missing surface, not a real wall, so
+      // it must never become a row of its own — isSynthetic below excludes whichever chain it
+      // lands in.
+      const openStart = loop.points[0];
+      const openEnd = loop.points[loop.points.length - 1];
+      const poly = ensureCCW(loop.closed ? loop.points.slice(0, -1) : loop.points);
+      if (poly.length < 3) return;
+
+      const chains = chainEdges(poly);
+      const cx = poly.reduce((s, p) => s + p.x, 0) / poly.length;
+      const cy = poly.reduce((s, p) => s + p.y, 0) / poly.length;
+      const isSynthetic = (chain) =>
+        !loop.closed &&
+        chain.edges.some((e) => (e.from === openStart && e.to === openEnd) || (e.from === openEnd && e.to === openStart));
+
+      const walls = chains
+        .map((chain, chainIndex) => ({ chain, chainIndex }))
+        .filter(({ chain }) => chain.length >= minWallLength && !isSynthetic(chain))
+        .map(({ chain, chainIndex }) => {
+          const mid = chain.edges[Math.floor(chain.edges.length / 2)];
+          const angle = Math.atan2((mid.from.y + mid.to.y) / 2 - cy, (mid.from.x + mid.to.x) / 2 - cx);
+          return { chainIndex, angle };
+        })
+        .sort((a, b) => a.angle - b.angle);
+
+      if (!walls.length) return;
+      anyWalls = true;
+      if (!loop.closed) partialRLs.add(rl);
+      walls.forEach((wallInfo, i) => {
+        rows.push({ rl, wallNumber: i + 1, totalWalls: walls.length, points: poly, faceChainIndex: wallInfo.chainIndex });
+      });
     });
+    if (!anyWalls) skippedRLs.push(rl);
   });
-  return { rows, skippedRLs };
+
+  return { rows, skippedRLs, partialRLs };
 }
 
 function wirePitSurfaceUpload(inputId, parseFn, noTrianglesMessage) {
@@ -2033,7 +2059,7 @@ function wirePitSurfaceUpload(inputId, parseFn, noTrianglesMessage) {
       document.getElementById("pitCount").value = count;
       const targetRLs = Array.from({ length: count }, (_, i) => +(start + i * spacing).toFixed(2));
       const { w } = readSettings();
-      const { rows: wallRows, skippedRLs } = buildPitLiftRows(triangles, targetRLs, w);
+      const { rows: wallRows, skippedRLs, partialRLs } = buildPitLiftRows(triangles, targetRLs, w);
 
       if (!wallRows.length) {
         statusEl.textContent = `No closed section found at any of the ${count} target RLs — the surface only covers ${meshMin.toFixed(2)} to ${meshMax.toFixed(2)}, check the Start RL/Count are within that range.`;
@@ -2050,8 +2076,11 @@ function wirePitSurfaceUpload(inputId, parseFn, noTrianglesMessage) {
       });
 
       const matchedRLs = count - skippedRLs.length;
+      const notes = [];
+      if (skippedRLs.length) notes.push(`${skippedRLs.length} RL${skippedRLs.length === 1 ? "" : "s"} outside the surface, skipped`);
+      if (partialRLs.size) notes.push(`${partialRLs.size} RL${partialRLs.size === 1 ? "" : "s"} had an uneven top of cut — only the walls that actually exist at that RL got a row, the rest of that ring is a straight approximation`);
       statusEl.textContent = `Built ${wallRows.length} lift row${wallRows.length === 1 ? "" : "s"} across ${matchedRLs} of ${count} RLs from ${triangles.length} triangles${
-        skippedRLs.length ? ` (${skippedRLs.length} RL${skippedRLs.length === 1 ? "" : "s"} outside the surface, skipped)` : ""
+        notes.length ? ` (${notes.join("; ")})` : ""
       }. This replaced every existing lift row.`;
       statusEl.className = "cutplan-status is-ok";
       switchTab("cutplan");
