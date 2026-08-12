@@ -2003,6 +2003,87 @@ function buildPitLiftRows(triangles, targetRLs, minWallLength) {
   return { rows, skippedRLs, partialRLs };
 }
 
+// Kept after a successful upload so Start RL/Spacing/Count can be tweaked and re-run against the
+// SAME surface via rebuildPitBtn — re-picking the file from a dialog every time just to try a
+// different spacing is real friction, and it invites exactly the confusion of editing the fields
+// then reading a status line that's still reporting the previous settings.
+let lastPitTriangles = null;
+
+/** Slices lastPitTriangles/triangles at the RLs implied by the current Start RL/Spacing/Count fields
+ *  and rebuilds the lift table from them. Shared by the upload handlers and the "Rebuild rows" button. */
+function runPitSurfaceBuild(triangles) {
+  const statusEl = document.getElementById("pitSurfaceStatus");
+
+  const spacingMm = parseFloat(document.getElementById("pitSpacing").value) || 0;
+  if (!(spacingMm > 0)) {
+    statusEl.textContent = "Enter a spacing first.";
+    statusEl.className = "cutplan-status is-error";
+    return;
+  }
+  const spacing = spacingMm / 1000;
+
+  // Start RL / Count are optional — the surface already knows its own elevation range, so
+  // there's no reason to make someone work that out by hand before they've even picked a file.
+  // Left blank: start one spacing above the surface's lowest point and take as many further
+  // steps as fit below its highest point (build order is bottom-up). The floor itself and the
+  // original rim aren't wall levels needing their own grid, and neither can actually be sliced
+  // anyway — a horizontal plane exactly at a surface's own min/max never crosses it, only touches
+  // it. Either field still overrides if set, including setting Start RL to the exact floor/rim.
+  const zs = triangles.flat().map((p) => p.z);
+  const meshMin = Math.min(...zs), meshMax = Math.max(...zs);
+
+  const startRaw = document.getElementById("pitStartRL").value;
+  const start = startRaw.trim() === "" ? meshMin + spacing : parseFloat(startRaw);
+  if (!Number.isFinite(start)) {
+    statusEl.textContent = "Start RL isn't a valid number.";
+    statusEl.className = "cutplan-status is-error";
+    return;
+  }
+
+  // Tiny epsilon so an exact-multiple range (e.g. exactly 1.000m of relief at exactly 0.500m
+  // spacing) doesn't compute a last step sitting exactly on meshMax, which — like meshMin — can
+  // never actually slice; better to just not offer that step than have it silently skip.
+  const countRaw = document.getElementById("pitCount").value;
+  const count = countRaw.trim() === "" ? Math.max(1, Math.floor((meshMax - start - 1e-6) / spacing) + 1) : Math.round(parseFloat(countRaw));
+  if (!Number.isFinite(count) || count < 1) {
+    statusEl.textContent = "Count isn't a valid number.";
+    statusEl.className = "cutplan-status is-error";
+    return;
+  }
+
+  document.getElementById("pitStartRL").value = start.toFixed(2);
+  document.getElementById("pitCount").value = count;
+  const targetRLs = Array.from({ length: count }, (_, i) => +(start + i * spacing).toFixed(2));
+  const { w } = readSettings();
+  const { rows: wallRows, skippedRLs, partialRLs } = buildPitLiftRows(triangles, targetRLs, w);
+
+  if (!wallRows.length) {
+    statusEl.textContent = `No closed section found at any of the ${count} target RLs — the surface only covers ${meshMin.toFixed(2)} to ${meshMax.toFixed(2)}, check the Start RL/Count are within that range.`;
+    statusEl.className = "cutplan-status is-error";
+    return;
+  }
+
+  tbody.innerHTML = "";
+  wallRows.forEach(({ rl, wallNumber, totalWalls, points, faceChainIndex }) => {
+    const label = totalWalls > 1 ? `${rl.toFixed(2)} · Wall ${wallNumber}` : rl.toFixed(2);
+    const row = addLiftRow(label, "", "");
+    applyExtents(row, points);
+    row._faceChainIndex = faceChainIndex;
+  });
+
+  const matchedRLs = count - skippedRLs.length;
+  const notes = [];
+  if (skippedRLs.length) notes.push(`${skippedRLs.length} RL${skippedRLs.length === 1 ? "" : "s"} outside the surface, skipped`);
+  if (partialRLs.size) notes.push(`${partialRLs.size} RL${partialRLs.size === 1 ? "" : "s"} had an uneven top of cut — only the walls that actually exist at that RL got a row, the rest of that ring is a straight approximation`);
+  statusEl.textContent = `Built ${wallRows.length} lift row${wallRows.length === 1 ? "" : "s"} across ${matchedRLs} of ${count} RLs from ${triangles.length} triangles${
+    notes.length ? ` (${notes.join("; ")})` : ""
+  }. This replaced every existing lift row.`;
+  statusEl.className = "cutplan-status is-ok";
+  document.getElementById("rebuildPitBtn").hidden = false;
+  switchTab("cutplan");
+  computeAndRender();
+}
+
 function wirePitSurfaceUpload(inputId, parseFn, noTrianglesMessage) {
   document.getElementById(inputId).addEventListener("change", async (e) => {
     const file = e.target.files[0];
@@ -2017,74 +2098,8 @@ function wirePitSurfaceUpload(inputId, parseFn, noTrianglesMessage) {
         statusEl.className = "cutplan-status is-error";
         return;
       }
-
-      const spacingMm = parseFloat(document.getElementById("pitSpacing").value) || 0;
-      if (!(spacingMm > 0)) {
-        statusEl.textContent = "Enter a spacing first.";
-        statusEl.className = "cutplan-status is-error";
-        return;
-      }
-      const spacing = spacingMm / 1000;
-
-      // Start RL / Count are optional — the surface already knows its own elevation range, so
-      // there's no reason to make someone work that out by hand before they've even picked a file.
-      // Left blank: start one spacing above the surface's lowest point and take as many further
-      // steps as fit below its highest point (build order is bottom-up). The floor itself and the
-      // original rim aren't wall levels needing their own grid, and neither can actually be sliced
-      // anyway — a horizontal plane exactly at a surface's own min/max never crosses it, only touches
-      // it. Either field still overrides if set, including setting Start RL to the exact floor/rim.
-      const zs = triangles.flat().map((p) => p.z);
-      const meshMin = Math.min(...zs), meshMax = Math.max(...zs);
-
-      const startRaw = document.getElementById("pitStartRL").value;
-      const start = startRaw.trim() === "" ? meshMin + spacing : parseFloat(startRaw);
-      if (!Number.isFinite(start)) {
-        statusEl.textContent = "Start RL isn't a valid number.";
-        statusEl.className = "cutplan-status is-error";
-        return;
-      }
-
-      // Tiny epsilon so an exact-multiple range (e.g. exactly 1.000m of relief at exactly 0.500m
-      // spacing) doesn't compute a last step sitting exactly on meshMax, which — like meshMin — can
-      // never actually slice; better to just not offer that step than have it silently skip.
-      const countRaw = document.getElementById("pitCount").value;
-      const count = countRaw.trim() === "" ? Math.max(1, Math.floor((meshMax - start - 1e-6) / spacing) + 1) : Math.round(parseFloat(countRaw));
-      if (!Number.isFinite(count) || count < 1) {
-        statusEl.textContent = "Count isn't a valid number.";
-        statusEl.className = "cutplan-status is-error";
-        return;
-      }
-
-      document.getElementById("pitStartRL").value = start.toFixed(2);
-      document.getElementById("pitCount").value = count;
-      const targetRLs = Array.from({ length: count }, (_, i) => +(start + i * spacing).toFixed(2));
-      const { w } = readSettings();
-      const { rows: wallRows, skippedRLs, partialRLs } = buildPitLiftRows(triangles, targetRLs, w);
-
-      if (!wallRows.length) {
-        statusEl.textContent = `No closed section found at any of the ${count} target RLs — the surface only covers ${meshMin.toFixed(2)} to ${meshMax.toFixed(2)}, check the Start RL/Count are within that range.`;
-        statusEl.className = "cutplan-status is-error";
-        return;
-      }
-
-      tbody.innerHTML = "";
-      wallRows.forEach(({ rl, wallNumber, totalWalls, points, faceChainIndex }) => {
-        const label = totalWalls > 1 ? `${rl.toFixed(2)} · Wall ${wallNumber}` : rl.toFixed(2);
-        const row = addLiftRow(label, "", "");
-        applyExtents(row, points);
-        row._faceChainIndex = faceChainIndex;
-      });
-
-      const matchedRLs = count - skippedRLs.length;
-      const notes = [];
-      if (skippedRLs.length) notes.push(`${skippedRLs.length} RL${skippedRLs.length === 1 ? "" : "s"} outside the surface, skipped`);
-      if (partialRLs.size) notes.push(`${partialRLs.size} RL${partialRLs.size === 1 ? "" : "s"} had an uneven top of cut — only the walls that actually exist at that RL got a row, the rest of that ring is a straight approximation`);
-      statusEl.textContent = `Built ${wallRows.length} lift row${wallRows.length === 1 ? "" : "s"} across ${matchedRLs} of ${count} RLs from ${triangles.length} triangles${
-        notes.length ? ` (${notes.join("; ")})` : ""
-      }. This replaced every existing lift row.`;
-      statusEl.className = "cutplan-status is-ok";
-      switchTab("cutplan");
-      computeAndRender();
+      lastPitTriangles = triangles;
+      runPitSurfaceBuild(triangles);
     } catch (err) {
       statusEl.textContent = `Couldn't read that file: ${err.message}`;
       statusEl.className = "cutplan-status is-error";
@@ -2096,6 +2111,10 @@ function wirePitSurfaceUpload(inputId, parseFn, noTrianglesMessage) {
 
 wirePitSurfaceUpload("dxfPitInput", parseDXF3DFaces, "No 3DFACE triangles found in that file.");
 wirePitSurfaceUpload("landxmlPitInput", parseLandXMLSurface, "No TIN surface (Pnts/Faces) found in that LandXML file.");
+
+document.getElementById("rebuildPitBtn").addEventListener("click", () => {
+  if (lastPitTriangles) runPitSurfaceBuild(lastPitTriangles);
+});
 
 cutPlanList.addEventListener("click", (e) => {
   const btn = e.target.closest(".cutplan-card__swap");

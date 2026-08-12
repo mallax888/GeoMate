@@ -112,6 +112,12 @@
 
 /* ---------- Base ---------- */
 * { box-sizing: border-box; }
+/* Author CSS beats the browser's own [hidden]{display:none} regardless of specificity — any element
+   whose class also sets `display` (every .btn--ghost, every flex/grid container) stays visibly on
+   screen despite the hidden attribute unless something re-asserts none. This is that assertion, once,
+   globally, instead of a fresh .foo[hidden]{display:none} override every time a new hidden-toggled
+   element happens to collide with a display-setting class. */
+[hidden] { display: none !important; }
 html { color-scheme: light dark; }
 body {
   margin: 0;
@@ -309,7 +315,6 @@ input[type="number"]::-webkit-outer-spin-button {
   text-align: right;
   margin-top: 0.15rem;
 }
-.intermediate-badge[hidden] { display: none; }
 
 /* ---------- Buttons ---------- */
 .btn {
@@ -697,7 +702,6 @@ input[type="number"]::-webkit-outer-spin-button {
   font-size: 0.66rem;
   font-weight: 700;
 }
-.extents-badge[hidden] { display: none; }
 .extents-release { background: none; border: none; color: inherit; cursor: pointer; font-size: 0.7rem; padding: 0; }
 .embed-range { display: block; font-size: 0.62rem; color: var(--ink-muted); margin-top: 0.15rem; text-align: right; }
 
