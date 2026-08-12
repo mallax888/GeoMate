@@ -35,28 +35,35 @@
   src: url("fonts/PlexMono-600.woff2") format("woff2");
 }
 
-/* ---------- Tokens ---------- */
+/* ---------- Tokens ----------
+   "Hi-Vis": the safety-lime-against-charcoal palette real site PPE and plant already use.
+   --accent-pop/--ink-on-accent are the one loud lime fill + its dark text, constant in both
+   themes (a hazard chip reads the same whether the page around it is light or dark); --accent
+   itself is tuned per theme since raw lime text has poor contrast on white. */
 :root {
-  --bg: #eef1ef;
+  --bg: #f2f3ee;
   --surface: #ffffff;
-  --surface-2: #e4e9e5;
-  --ink: #172420;
-  --ink-muted: #58685f;
-  --line: #c9d2ca;
-  --line-strong: #a9b6ac;
-  --accent: #1f6672;
-  --accent-strong: #144a53;
-  --accent-tint: #dcebec;
-  --clay: #b4703a;
-  --clay-tint: #f2e3d5;
+  --surface-2: #eef0e8;
+  --ink: #1a1c1d;
+  --ink-muted: #63695f;
+  --line: #dde1d3;
+  --line-strong: #c4cab8;
+  --accent: #6b8f00;
+  --accent-strong: #4f6b00;
+  --accent-tint: #eef8c9;
+  --accent-pop: #d7fb00;
+  --accent-pop-deep: #a6c400;
+  --ink-on-accent: #14170f;
+  --clay: #b4600a;
+  --clay-tint: #fdead2;
   --graphite: #3c433f;
-  --good: #3f7a5a;
+  --good: #2f7a4a;
   --good-tint: #e1efe6;
-  --warn: #b07a24;
+  --warn: #a5690a;
   --warn-tint: #f5ead2;
   --critical: #b1483c;
   --critical-tint: #f6dfdb;
-  --shadow: 0 1px 2px rgba(23, 36, 32, 0.06), 0 4px 14px rgba(23, 36, 32, 0.05);
+  --shadow: 0 1px 2px rgba(26, 28, 29, 0.06), 0 4px 14px rgba(26, 28, 29, 0.05);
   --radius: 5px;
   --font-display: "Plex Sans", ui-sans-serif, system-ui, sans-serif;
   --font-body: "Plex Sans", ui-sans-serif, system-ui, sans-serif;
@@ -65,18 +72,18 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #10171a;
-    --surface: #182224;
-    --surface-2: #1e2a2c;
-    --ink: #e7ece9;
-    --ink-muted: #92a39a;
-    --line: #2c3a3b;
-    --line-strong: #3d4e4f;
-    --accent: #63b8c3;
-    --accent-strong: #93d5dd;
-    --accent-tint: #1c3438;
-    --clay: #d99257;
-    --clay-tint: #33261b;
+    --bg: #1a1c1d;
+    --surface: #232628;
+    --surface-2: #2b2f30;
+    --ink: #f4f5f0;
+    --ink-muted: #8d938a;
+    --line: #34383a;
+    --line-strong: #454b4d;
+    --accent: #d7fb00;
+    --accent-strong: #eeff5c;
+    --accent-tint: #2b3306;
+    --clay: #ffb238;
+    --clay-tint: #3a2a0a;
     --graphite: #a3aca6;
     --good: #7dc199;
     --good-tint: #1c3226;
@@ -88,18 +95,18 @@
   }
 }
 :root[data-theme="dark"] {
-  --bg: #10171a;
-  --surface: #182224;
-  --surface-2: #1e2a2c;
-  --ink: #e7ece9;
-  --ink-muted: #92a39a;
-  --line: #2c3a3b;
-  --line-strong: #3d4e4f;
-  --accent: #63b8c3;
-  --accent-strong: #93d5dd;
-  --accent-tint: #1c3438;
-  --clay: #d99257;
-  --clay-tint: #33261b;
+  --bg: #1a1c1d;
+  --surface: #232628;
+  --surface-2: #2b2f30;
+  --ink: #f4f5f0;
+  --ink-muted: #8d938a;
+  --line: #34383a;
+  --line-strong: #454b4d;
+  --accent: #d7fb00;
+  --accent-strong: #eeff5c;
+  --accent-tint: #2b3306;
+  --clay: #ffb238;
+  --clay-tint: #3a2a0a;
   --graphite: #a3aca6;
   --good: #7dc199;
   --good-tint: #1c3226;
@@ -147,7 +154,7 @@ h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
   gap: 1.5rem;
   padding: 1.1rem 1.75rem;
   background: var(--surface);
-  border-bottom: 1px solid var(--line);
+  border-bottom: 3px solid var(--accent-pop);
 }
 .titleblock__id { display: flex; align-items: center; gap: 0.9rem; }
 .titleblock__mark { color: var(--accent); flex: none; }
@@ -326,8 +333,8 @@ input[type="number"]::-webkit-outer-spin-button {
   cursor: pointer;
   border: 1px solid transparent;
 }
-.btn--primary { background: var(--accent); color: #fff; }
-.btn--primary:hover { background: var(--accent-strong); }
+.btn--primary { background: var(--accent-pop); color: var(--ink-on-accent); }
+.btn--primary:hover { background: var(--accent-pop-deep); }
 .btn--ghost {
   background: transparent;
   border-color: var(--line-strong);
@@ -572,8 +579,8 @@ input[type="number"]::-webkit-outer-spin-button {
   font-family: var(--font-mono);
   font-weight: 700;
   font-size: 0.78rem;
-  color: #fff;
-  background: var(--accent);
+  color: var(--ink-on-accent);
+  background: var(--accent-pop);
   border-radius: 3px;
   padding: 0.1rem 0.45rem;
   flex: none;
@@ -659,8 +666,8 @@ input[type="number"]::-webkit-outer-spin-button {
 .cutplan-print-page__head h3 { font-family: var(--font-mono); font-size: 1.1rem; margin: 0; }
 .cutplan-print-page__head p { font-size: 0.82rem; color: var(--ink-muted); margin: 0.2rem 0 0; }
 .cutplan-print-page__order {
-  font-family: var(--font-mono); font-weight: 700; font-size: 0.78rem; color: #fff;
-  background: var(--accent); border-radius: 3px; padding: 0.1rem 0.45rem; flex: none;
+  font-family: var(--font-mono); font-weight: 700; font-size: 0.78rem; color: var(--ink-on-accent);
+  background: var(--accent-pop); border-radius: 3px; padding: 0.1rem 0.45rem; flex: none;
 }
 .cutplan-print-page__installed { margin-left: auto; flex: none; }
 .cutplan-print-page__steps { margin: 0 0 0.4rem; padding-left: 1.1rem; font-size: 0.84rem; }
