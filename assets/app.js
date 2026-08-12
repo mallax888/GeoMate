@@ -1273,6 +1273,7 @@ function computeAndRender() {
   renderCutPlan(liftResults, w);
   render3D(liftResults);
   renderRollSchedule(window.__geogridRolls || [], rollLength, rollGroupSize);
+  saveAutosave();
 }
 
 /** Rectangle footprint for a uniform-embedment lift, already in the (x = along face, y = depth) local frame. */
@@ -2766,6 +2767,90 @@ function escapeHtml(str) {
 }
 
 /* ============================================================
-   Boot — start empty; use "Generate lift rows" or "Add lift" to begin
+   Autosave — the whole project (spec, settings, every lift row, including DXF/mesh-derived
+   extents) persists to localStorage on every recompute, and is restored on load. A refresh or
+   an accidentally-closed tab shouldn't cost a foreman their afternoon's data entry. This is one
+   fixed slot (not per-project — renaming the project just relabels what's already there), unlike
+   the install-tracking progress above, which is deliberately keyed by project name.
    ============================================================ */
+const AUTOSAVE_KEY = "geogrid-autosave";
+
+function saveAutosave() {
+  try {
+    const rows = Array.from(tbody.querySelectorAll(".lift-row")).map((row) => ({
+      rl: row.querySelector(".rl-input").value,
+      isIntermediate: !row.querySelector(".intermediate-badge").hidden,
+      mode: row.dataset.mode,
+      faceLength: row.querySelector(".face-length").value,
+      coords: row.querySelector(".face-coords").value,
+      embed: row.querySelector(".embed-length").value,
+      extentsPoints: row._extentsPoints || null,
+      extentsSwapped: !!row._extentsSwapped,
+      batteredLevel: !!row._batteredLevel,
+    }));
+    const state = {
+      version: 1,
+      projectName: document.getElementById("projectName").value,
+      settings: {
+        rollWidth: settingsInputs.rollWidth.value,
+        minOverlap: settingsInputs.minOverlapMm.value,
+        rollLength: settingsInputs.rollLength.value,
+        rollGroupSize: settingsInputs.rollGroupSize.value,
+        costPerRoll: settingsInputs.costPerRoll.value,
+        installRate: settingsInputs.installRate.value,
+      },
+      rows,
+    };
+    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(state));
+  } catch {
+    /* storage full or unavailable — autosave just won't persist across reloads */
+  }
+}
+
+/** Rebuilds the settings panel and lift table from the last autosave. Returns true if anything was restored. */
+function restoreAutosave() {
+  let state;
+  try {
+    state = JSON.parse(localStorage.getItem(AUTOSAVE_KEY));
+  } catch {
+    return false;
+  }
+  if (!state || !Array.isArray(state.rows) || !state.rows.length) return false;
+
+  if (state.projectName != null) document.getElementById("projectName").value = state.projectName;
+  const s = state.settings || {};
+  if (s.rollWidth != null) settingsInputs.rollWidth.value = s.rollWidth;
+  if (s.minOverlap != null) settingsInputs.minOverlapMm.value = s.minOverlap;
+  if (s.rollLength != null) settingsInputs.rollLength.value = s.rollLength;
+  if (s.rollGroupSize != null) settingsInputs.rollGroupSize.value = s.rollGroupSize;
+  if (s.costPerRoll != null) settingsInputs.costPerRoll.value = s.costPerRoll;
+  if (s.installRate != null) settingsInputs.installRate.value = s.installRate;
+
+  state.rows.forEach((r) => {
+    const row = addLiftRow(r.rl || "", r.mode === "length" ? r.faceLength || "" : "", r.embed || "", null, !!r.isIntermediate);
+    if (r.mode === "coords") {
+      row.dataset.mode = "coords";
+      row.querySelector(".face-input__length").hidden = true;
+      row.querySelector(".face-coords").hidden = false;
+      row.querySelector(".face-coords").value = r.coords || "";
+      const modeBtn = row.querySelector(".mode-toggle");
+      modeBtn.textContent = "XY";
+      modeBtn.title = "Pasted-coordinate arc length — click to switch to a straight length";
+    } else if (r.mode === "extents" && Array.isArray(r.extentsPoints) && r.extentsPoints.length) {
+      applyExtents(row, r.extentsPoints);
+      row._extentsSwapped = !!r.extentsSwapped;
+      row._batteredLevel = !!r.batteredLevel;
+    }
+  });
+
+  return true;
+}
+
+document.getElementById("projectName").addEventListener("input", saveAutosave);
+
+/* ============================================================
+   Boot — restore the last autosaved project, if any; otherwise start empty
+   and use "Generate lift rows" or "Add lift" to begin.
+   ============================================================ */
+restoreAutosave();
 computeAndRender();
