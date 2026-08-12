@@ -1946,7 +1946,17 @@ function buildBatteredLiftRows(triangles, targetRLs) {
   // had already ended (daylighted into original ground) before this RL, so the ring isn't fully closed.
 
   targetRLs.forEach((rl) => {
-    const loops = sliceMeshAt(triangles, rl).filter((l) => l.points.length >= 3);
+    // A target RL sitting exactly on the surface's own lowest/highest point can't be sliced — a
+    // plane exactly there touches the surface without crossing it. Rather than count that as
+    // "outside the surface" and short the requested Count by one, nudge a hair off the exact
+    // elevation and try again; the row still reports as the RL actually asked for, not the nudged
+    // one. Only a genuinely out-of-range RL (nudging either way still finds nothing) gets skipped.
+    let loops = sliceMeshAt(triangles, rl).filter((l) => l.points.length >= 3);
+    if (!loops.length) {
+      const nudge = 1e-4;
+      loops = sliceMeshAt(triangles, rl + nudge).filter((l) => l.points.length >= 3);
+      if (!loops.length) loops = sliceMeshAt(triangles, rl - nudge).filter((l) => l.points.length >= 3);
+    }
     if (!loops.length) {
       skippedRLs.push(rl);
       return;
