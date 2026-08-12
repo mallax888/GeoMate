@@ -209,11 +209,11 @@
         </div>
         <span id="dxfMeshStatus" class="cutplan-status"></span>
 
-        <p>Or upload a full excavation/pit surface — already dug, all sides — and skip building lift rows entirely: the tool slices the surface at every RL below, splits each slice into its walls, and builds one row per wall itself. For a box-shaped pit that's four rows per level, not one.</p>
+        <p>Or upload a full excavation/pit surface — already dug, all sides — and skip building lift rows entirely: set a spacing below, then the tool reads the surface's own elevation range, slices it at every RL that fits, splits each slice into its walls, and builds one row per wall itself. For a box-shaped pit that's four rows per level, not one.</p>
         <div class="cutplan-upload">
           <label class="field field--compact">
             <span>Start RL</span>
-            <input type="number" id="pitStartRL" step="0.01" placeholder="e.g. 75" />
+            <input type="number" id="pitStartRL" step="0.01" placeholder="from surface" />
           </label>
           <label class="field field--compact">
             <span>Spacing</span>
@@ -221,9 +221,10 @@
           </label>
           <label class="field field--compact">
             <span>Count</span>
-            <input type="number" id="pitCount" min="1" step="1" placeholder="e.g. 12" />
+            <input type="number" id="pitCount" min="1" step="1" placeholder="from surface" />
           </label>
         </div>
+        <p class="generator__hint">Leave Start RL and Count blank to use the whole surface (lowest point up to highest, in steps of Spacing) — set either one to override just that end.</p>
         <div class="cutplan-upload">
           <label class="btn btn--primary btn--upload">
             Upload pit surface DXF (mesh)
