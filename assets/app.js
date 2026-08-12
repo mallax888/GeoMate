@@ -1169,8 +1169,11 @@ function computeAndRender() {
     }
   });
   let footprintRef = null;
-  cutPlanByRow.forEach((cp) => {
-    if (!footprintRef || cp.faceLength > footprintRef.faceLength) {
+  let pitOrigin = null; // shared translation-only origin for multi-wall pit rows — see absoluteFootprint
+  cutPlanByRow.forEach((cp, row) => {
+    if (Number.isInteger(row._faceChainIndex)) {
+      if (!pitOrigin) pitOrigin = cp.poly[0];
+    } else if (!footprintRef || cp.faceLength > footprintRef.faceLength) {
       footprintRef = { faceLength: cp.faceLength, origin: cp.face.edges[0].from, dir: cp.face.dir };
     }
   });
@@ -1241,7 +1244,11 @@ function computeAndRender() {
     renderDiagram(diagram, L, result, w);
 
     const footprint =
-      mode === "extents" && cutPlan ? localFootprint(cutPlan, footprintRef) : rectFootprint(L, Math.max(...stripLengths));
+      mode === "extents" && cutPlan
+        ? Number.isInteger(row._faceChainIndex)
+          ? absoluteFootprint(cutPlan, pitOrigin)
+          : localFootprint(cutPlan, footprintRef)
+        : rectFootprint(L, Math.max(...stripLengths));
 
     liftResults.push({
       rl,
@@ -1294,6 +1301,19 @@ function localFootprint(cutPlan, ref) {
     const rx = p.x - origin.x, ry = p.y - origin.y;
     return { x: rx * dir.x + ry * dir.y, y: rx * perp.x + ry * perp.y };
   });
+}
+
+/**
+ * Re-express an extents polygon for 3D stacking WITHOUT rotating it onto a shared face direction —
+ * a straight translation only, same offset for every pit row. localFootprint's shared-frame rotation
+ * is right for a single wall (every lift really does share one face direction, so forcing them onto
+ * it just normalises for display) but wrong for a multi-wall pit row: each wall has its own genuine
+ * direction, and every wall at every level already shares one real coordinate system from being
+ * sliced out of the same surface — rotating them onto one wall's direction would tear that apart
+ * rather than preserve it.
+ */
+function absoluteFootprint(cutPlan, origin) {
+  return cutPlan.poly.map((p) => ({ x: p.x - origin.x, y: p.y - origin.y }));
 }
 
 /**
@@ -2279,9 +2299,24 @@ function render3D(results) {
   const W = view3DCanvas.width, H = view3DCanvas.height;
   ctx.clearRect(0, 0, W, H);
 
+  // A pit-wall row's footprint is the WHOLE level's cross-section (see absoluteFootprint) — every
+  // wall at a given RL draws the identical ring, so only the first is kept here rather than stacking
+  // 4 redundant overlapping outlines (and 4 redundant labels) on top of each other per level.
+  const seenPitRL = new Set();
   const lifts = results
     .filter((r) => r.footprint && r.footprint.length >= 3 && Number.isFinite(parseFloat(r.rl)))
-    .map((r) => ({ rl: parseFloat(r.rl), rlLabel: r.rl, footprint: r.footprint }))
+    .filter((r) => {
+      if (!Number.isInteger(r.row?._faceChainIndex)) return true;
+      const rlNum = parseFloat(r.rl);
+      if (seenPitRL.has(rlNum)) return false;
+      seenPitRL.add(rlNum);
+      return true;
+    })
+    .map((r) => ({
+      rl: parseFloat(r.rl),
+      rlLabel: Number.isInteger(r.row?._faceChainIndex) ? parseFloat(r.rl).toFixed(2) : r.rl,
+      footprint: r.footprint,
+    }))
     .sort((a, b) => a.rl - b.rl);
 
   view3DEmpty.hidden = lifts.length > 0;
