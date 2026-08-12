@@ -279,20 +279,12 @@ function roundUpToStep(value, step) {
  * area beyond a gap that a strip's single straight cut can't reach in one piece, that pocket is
  * reported as a "stitch" — a small supplementary patch strip — rather than distorting the main strip.
  */
-function computeCutPlan(rawPoints, w, oMin, swapped, forcedFaceIndex) {
+function computeCutPlan(rawPoints, w, oMin, swapped) {
   const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
   const chains = chainEdges(poly);
   if (chains.length < 2) return null;
-  let face, back;
-  if (Number.isInteger(forcedFaceIndex) && chains[forcedFaceIndex]) {
-    // Multi-wall pit lift: which chain is "the face" was already decided when the row was built
-    // (one row per wall, see buildPitLiftRows), not auto-picked by length here.
-    face = chains[forcedFaceIndex];
-    back = null;
-  } else {
-    ({ face, back } = pickFaceAndBack(chains));
-    if (swapped && back) { const t = face; face = back; back = t; }
-  }
+  let { face, back } = pickFaceAndBack(chains);
+  if (swapped && back) { const t = face; face = back; back = t; }
 
   const result = calcLift(face.length, w, oMin);
   if (!result) return null;
@@ -1164,15 +1156,15 @@ function computeAndRender() {
   const cutPlanByRow = new Map();
   rows.forEach((row) => {
     if (row.dataset.mode === "extents" && row._extentsPoints) {
-      const cp = oMin < w ? computeCutPlan(row._extentsPoints, w, oMin, row._extentsSwapped, row._faceChainIndex) : null;
+      const cp = oMin < w ? computeCutPlan(row._extentsPoints, w, oMin, row._extentsSwapped) : null;
       if (cp) cutPlanByRow.set(row, cp);
     }
   });
   let footprintRef = null;
-  let pitOrigin = null; // shared translation-only origin for multi-wall pit rows — see absoluteFootprint
+  let batteredOrigin = null; // shared translation-only origin for battered-surface levels — see absoluteFootprint
   cutPlanByRow.forEach((cp, row) => {
-    if (Number.isInteger(row._faceChainIndex)) {
-      if (!pitOrigin) pitOrigin = cp.poly[0];
+    if (row._batteredLevel) {
+      if (!batteredOrigin) batteredOrigin = cp.poly[0];
     } else if (!footprintRef || cp.faceLength > footprintRef.faceLength) {
       footprintRef = { faceLength: cp.faceLength, origin: cp.face.edges[0].from, dir: cp.face.dir };
     }
@@ -1245,8 +1237,8 @@ function computeAndRender() {
 
     const footprint =
       mode === "extents" && cutPlan
-        ? Number.isInteger(row._faceChainIndex)
-          ? absoluteFootprint(cutPlan, pitOrigin)
+        ? row._batteredLevel
+          ? absoluteFootprint(cutPlan, batteredOrigin)
           : localFootprint(cutPlan, footprintRef)
         : rectFootprint(L, Math.max(...stripLengths));
 
@@ -1937,67 +1929,43 @@ wireMeshUpload("dxfMeshInput", parseDXF3DFaces, "No 3DFACE triangles found in th
 wireMeshUpload("landxmlMeshInput", parseLandXMLSurface, "No TIN surface (Pnts/Faces) found in that LandXML file.");
 
 /**
- * From a full excavation/pit surface (all walls, already dug), builds one extents-mode lift row per
- * wall at each target RL — no pre-existing rows or hand-drawn extents needed. Each RL is sliced
- * horizontally (sliceMeshAt) into the pit's outline at that depth, which is then split into its
- * straight-ish runs (chainEdges) — anything shorter than minWallLength is a corner return, not a wall
- * of its own. Walls are numbered by angle around the slice's centroid rather than by where the slice
- * loop happened to start walking, so "Wall 1" is the same physical side at every level.
+ * From a full excavation surface (already dug, all sides), builds one extents-mode lift row per
+ * target RL — no pre-existing rows or hand-drawn extents needed. This is a fill sequence, not a
+ * facing sequence: one horizontal grid layer goes down at each level, running in a single direction
+ * across the whole footprint, reaching out to whatever the cut is in every direction — not a separate
+ * independently-oriented layer per wall. So each RL is sliced horizontally (sliceMeshAt) into the
+ * excavation's outline at that depth, and that WHOLE outline becomes one lift's extents, same as a
+ * hand-drawn closed polyline in the existing "Upload extents DXF" workflow — computeCutPlan already
+ * picks the longest edge as the nominal face and clips every strip against the rest of the boundary,
+ * exactly the "reaches out to the cut in every direction" behaviour this needs.
  */
-function buildPitLiftRows(triangles, targetRLs, minWallLength) {
+function buildBatteredLiftRows(triangles, targetRLs) {
   const rows = [];
   const skippedRLs = [];
-  const partialRLs = new Set(); // RLs where the top of cut is uneven enough that a wall had already
-  // ended (daylighted into original ground) before this RL, so the ring isn't fully closed here.
+  const partialRLs = new Set(); // RLs where the top of cut is uneven enough that the wall on one side
+  // had already ended (daylighted into original ground) before this RL, so the ring isn't fully closed.
 
   targetRLs.forEach((rl) => {
-    const loops = sliceMeshAt(triangles, rl);
+    const loops = sliceMeshAt(triangles, rl).filter((l) => l.points.length >= 3);
     if (!loops.length) {
       skippedRLs.push(rl);
       return;
     }
 
-    let anyWalls = false;
-    loops.forEach((loop) => {
-      if (loop.points.length < 3) return;
+    // An open chain means part of the boundary genuinely doesn't exist at this RL (that section's
+    // wall already ended below here) — close it with a straight line directly between its two ends
+    // so the standard closed-boundary clipping math still has a well-defined "inside", same as a
+    // hand-drawn extents polygon always has. Where more than one loop was found, the largest by area
+    // is the real excavation outline; anything else is noise/an artifact of the triangulation.
+    const closedPolys = loops.map((loop) => ({ loop, poly: ensureCCW(loop.closed ? loop.points.slice(0, -1) : loop.points) }));
+    const best = closedPolys.reduce((a, b) => (Math.abs(signedArea(a.poly)) >= Math.abs(signedArea(b.poly)) ? a : b));
+    if (best.poly.length < 3) {
+      skippedRLs.push(rl);
+      return;
+    }
 
-      // An open chain means part of the ring genuinely doesn't exist at this RL (that section's
-      // wall already ended below here) — close it with a straight line directly between its two
-      // ends so the standard closed-boundary clipping math still has a well-defined "inside" for
-      // the walls that DO exist, same as a hand-drawn extents polygon always has. That synthetic
-      // edge is a straight-line approximation standing in for missing surface, not a real wall, so
-      // it must never become a row of its own — isSynthetic below excludes whichever chain it
-      // lands in.
-      const openStart = loop.points[0];
-      const openEnd = loop.points[loop.points.length - 1];
-      const poly = ensureCCW(loop.closed ? loop.points.slice(0, -1) : loop.points);
-      if (poly.length < 3) return;
-
-      const chains = chainEdges(poly);
-      const cx = poly.reduce((s, p) => s + p.x, 0) / poly.length;
-      const cy = poly.reduce((s, p) => s + p.y, 0) / poly.length;
-      const isSynthetic = (chain) =>
-        !loop.closed &&
-        chain.edges.some((e) => (e.from === openStart && e.to === openEnd) || (e.from === openEnd && e.to === openStart));
-
-      const walls = chains
-        .map((chain, chainIndex) => ({ chain, chainIndex }))
-        .filter(({ chain }) => chain.length >= minWallLength && !isSynthetic(chain))
-        .map(({ chain, chainIndex }) => {
-          const mid = chain.edges[Math.floor(chain.edges.length / 2)];
-          const angle = Math.atan2((mid.from.y + mid.to.y) / 2 - cy, (mid.from.x + mid.to.x) / 2 - cx);
-          return { chainIndex, angle };
-        })
-        .sort((a, b) => a.angle - b.angle);
-
-      if (!walls.length) return;
-      anyWalls = true;
-      if (!loop.closed) partialRLs.add(rl);
-      walls.forEach((wallInfo, i) => {
-        rows.push({ rl, wallNumber: i + 1, totalWalls: walls.length, points: poly, faceChainIndex: wallInfo.chainIndex });
-      });
-    });
-    if (!anyWalls) skippedRLs.push(rl);
+    if (!best.loop.closed) partialRLs.add(rl);
+    rows.push({ rl, points: best.poly });
   });
 
   return { rows, skippedRLs, partialRLs };
@@ -2054,28 +2022,26 @@ function runPitSurfaceBuild(triangles) {
   document.getElementById("pitStartRL").value = start.toFixed(2);
   document.getElementById("pitCount").value = count;
   const targetRLs = Array.from({ length: count }, (_, i) => +(start + i * spacing).toFixed(2));
-  const { w } = readSettings();
-  const { rows: wallRows, skippedRLs, partialRLs } = buildPitLiftRows(triangles, targetRLs, w);
+  const { rows: levelRows, skippedRLs, partialRLs } = buildBatteredLiftRows(triangles, targetRLs);
 
-  if (!wallRows.length) {
+  if (!levelRows.length) {
     statusEl.textContent = `No closed section found at any of the ${count} target RLs — the surface only covers ${meshMin.toFixed(2)} to ${meshMax.toFixed(2)}, check the Start RL/Count are within that range.`;
     statusEl.className = "cutplan-status is-error";
     return;
   }
 
   tbody.innerHTML = "";
-  wallRows.forEach(({ rl, wallNumber, totalWalls, points, faceChainIndex }) => {
-    const label = totalWalls > 1 ? `${rl.toFixed(2)} · Wall ${wallNumber}` : rl.toFixed(2);
-    const row = addLiftRow(label, "", "");
+  levelRows.forEach(({ rl, points }) => {
+    const row = addLiftRow(rl.toFixed(2), "", "");
     applyExtents(row, points);
-    row._faceChainIndex = faceChainIndex;
+    row._batteredLevel = true;
   });
 
   const matchedRLs = count - skippedRLs.length;
   const notes = [];
   if (skippedRLs.length) notes.push(`${skippedRLs.length} RL${skippedRLs.length === 1 ? "" : "s"} outside the surface, skipped`);
-  if (partialRLs.size) notes.push(`${partialRLs.size} RL${partialRLs.size === 1 ? "" : "s"} had an uneven top of cut — only the walls that actually exist at that RL got a row, the rest of that ring is a straight approximation`);
-  statusEl.textContent = `Built ${wallRows.length} lift row${wallRows.length === 1 ? "" : "s"} across ${matchedRLs} of ${count} RLs from ${triangles.length} triangles${
+  if (partialRLs.size) notes.push(`${partialRLs.size} RL${partialRLs.size === 1 ? "" : "s"} had an uneven top of cut — the boundary on the daylighted side is a straight-line approximation`);
+  statusEl.textContent = `Built ${levelRows.length} lift row${levelRows.length === 1 ? "" : "s"} across ${matchedRLs} of ${count} RLs from ${triangles.length} triangles${
     notes.length ? ` (${notes.join("; ")})` : ""
   }. This replaced every existing lift row.`;
   statusEl.className = "cutplan-status is-ok";
@@ -2121,14 +2087,7 @@ cutPlanList.addEventListener("click", (e) => {
   if (!btn) return;
   const row = window.__geogridRowsById.get(btn.dataset.rowId);
   if (!row) return;
-  if (Number.isInteger(row._faceChainIndex)) {
-    // Multi-wall pit row (see buildPitLiftRows) — cycle to the next wall instead of a plain
-    // face/back binary swap, in case auto-detection picked the wrong edge for this row.
-    const chainCount = chainEdges(ensureCCW(row._extentsPoints)).length;
-    row._faceChainIndex = (row._faceChainIndex + 1) % chainCount;
-  } else {
-    row._extentsSwapped = !row._extentsSwapped;
-  }
+  row._extentsSwapped = !row._extentsSwapped;
   computeAndRender();
 });
 
@@ -2156,9 +2115,7 @@ function renderCutPlan(results, w) {
       <div class="cutplan-card__head">
         <span class="cutplan-card__rl">RL ${escapeHtml(r.rl) || "—"}</span>
         <span class="cutplan-card__meta">${metaParts.join(" · ")}</span>
-        <button type="button" class="btn btn--ghost cutplan-card__swap" data-row-id="${id}">${
-          Number.isInteger(r.row._faceChainIndex) ? "Use next wall as face" : "Swap face/back"
-        }</button>
+        <button type="button" class="btn btn--ghost cutplan-card__swap" data-row-id="${id}">Swap face/back</button>
       </div>
       <div class="cutplan-card__body">
         <svg class="cutplan-card__plan" viewBox="0 0 400 260" preserveAspectRatio="xMidYMid meet"></svg>
@@ -2347,24 +2304,9 @@ function render3D(results) {
   const W = view3DCanvas.width, H = view3DCanvas.height;
   ctx.clearRect(0, 0, W, H);
 
-  // A pit-wall row's footprint is the WHOLE level's cross-section (see absoluteFootprint) — every
-  // wall at a given RL draws the identical ring, so only the first is kept here rather than stacking
-  // 4 redundant overlapping outlines (and 4 redundant labels) on top of each other per level.
-  const seenPitRL = new Set();
   const lifts = results
     .filter((r) => r.footprint && r.footprint.length >= 3 && Number.isFinite(parseFloat(r.rl)))
-    .filter((r) => {
-      if (!Number.isInteger(r.row?._faceChainIndex)) return true;
-      const rlNum = parseFloat(r.rl);
-      if (seenPitRL.has(rlNum)) return false;
-      seenPitRL.add(rlNum);
-      return true;
-    })
-    .map((r) => ({
-      rl: parseFloat(r.rl),
-      rlLabel: Number.isInteger(r.row?._faceChainIndex) ? parseFloat(r.rl).toFixed(2) : r.rl,
-      footprint: r.footprint,
-    }))
+    .map((r) => ({ rl: parseFloat(r.rl), rlLabel: r.rl, footprint: r.footprint }))
     .sort((a, b) => a.rl - b.rl);
 
   view3DEmpty.hidden = lifts.length > 0;
