@@ -129,6 +129,8 @@
         <dd>The minimum-strip overlap is then spread evenly across every seam: o = (n·w − L) / (n − 1) — always ≥ the spec minimum, never a trimmed strip.</dd>
         <dt>Roll off-cut</dt>
         <dd>Strips are pooled across all lifts that share the same embedment length, then packed into 1×roll-length pieces (floor(roll length ÷ embedment)) to minimise leftover per roll.</dd>
+        <dt>Pit surface walls</dt>
+        <dd>Each target RL slices the surface into a closed cross-section; the slice is split into its straight-ish runs (a direction change under 20° stays part of the same run), and any run shorter than the roll width is treated as a corner return rather than a wall of its own. Remaining runs become one lift row per wall, numbered by angle around the slice's centroid so "Wall 1" is the same physical side at every level.</dd>
       </dl>
     </details>
   </section>
@@ -206,6 +208,33 @@
           </label>
         </div>
         <span id="dxfMeshStatus" class="cutplan-status"></span>
+
+        <p>Or upload a full excavation/pit surface — already dug, all sides — and skip building lift rows entirely: the tool slices the surface at every RL below, splits each slice into its walls, and builds one row per wall itself. For a box-shaped pit that's four rows per level, not one.</p>
+        <div class="cutplan-upload">
+          <label class="field field--compact">
+            <span>Start RL</span>
+            <input type="number" id="pitStartRL" step="0.01" placeholder="e.g. 75" />
+          </label>
+          <label class="field field--compact">
+            <span>Spacing</span>
+            <div class="field__unit"><input type="number" id="pitSpacing" value="600" min="1" step="10" /><em>mm</em></div>
+          </label>
+          <label class="field field--compact">
+            <span>Count</span>
+            <input type="number" id="pitCount" min="1" step="1" placeholder="e.g. 12" />
+          </label>
+        </div>
+        <div class="cutplan-upload">
+          <label class="btn btn--primary btn--upload">
+            Upload pit surface DXF (mesh)
+            <input type="file" id="dxfPitInput" accept=".dxf" hidden />
+          </label>
+          <label class="btn btn--primary btn--upload">
+            Upload pit surface LandXML
+            <input type="file" id="landxmlPitInput" accept=".xml,.landxml" hidden />
+          </label>
+        </div>
+        <span id="pitSurfaceStatus" class="cutplan-status"></span>
       </div>
       <div class="cutplan-list-head">
         <p id="cutPlanEmpty" class="empty-state">No extents loaded yet — upload a DXF to see per-strip cut lengths.</p>

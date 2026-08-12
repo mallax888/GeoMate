@@ -279,12 +279,20 @@ function roundUpToStep(value, step) {
  * area beyond a gap that a strip's single straight cut can't reach in one piece, that pocket is
  * reported as a "stitch" — a small supplementary patch strip — rather than distorting the main strip.
  */
-function computeCutPlan(rawPoints, w, oMin, swapped) {
+function computeCutPlan(rawPoints, w, oMin, swapped, forcedFaceIndex) {
   const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
   const chains = chainEdges(poly);
   if (chains.length < 2) return null;
-  let { face, back } = pickFaceAndBack(chains);
-  if (swapped && back) { const t = face; face = back; back = t; }
+  let face, back;
+  if (Number.isInteger(forcedFaceIndex) && chains[forcedFaceIndex]) {
+    // Multi-wall pit lift: which chain is "the face" was already decided when the row was built
+    // (one row per wall, see buildPitLiftRows), not auto-picked by length here.
+    face = chains[forcedFaceIndex];
+    back = null;
+  } else {
+    ({ face, back } = pickFaceAndBack(chains));
+    if (swapped && back) { const t = face; face = back; back = t; }
+  }
 
   const result = calcLift(face.length, w, oMin);
   if (!result) return null;
@@ -502,6 +510,67 @@ function benchBoundaryAt(triangles, z0, tol) {
     if (loop.length >= 3) loops.push(loop);
   });
   return loops.sort((a, b) => Math.abs(signedArea(b)) - Math.abs(signedArea(a)));
+}
+
+/**
+ * Horizontal cross-section of a triangulated surface at elevation z0 — for a battered pit/excavation
+ * (walls sloping down to a base, no overhangs), this is the plan-view outline of the dig at that
+ * level. Every triangle the z0 plane actually crosses contributes one segment (interpolated along its
+ * two crossing edges); segments are then chained end-to-end into loops. Returns every loop found,
+ * closed or not — closed loops are what a real enclosed excavation gives at a level fully inside its
+ * depth range; an open chain means that level clips the edge of the modelled surface rather than
+ * being fully enclosed by it.
+ */
+function sliceMeshAt(triangles, z0, eps = 1e-9) {
+  const segments = [];
+  triangles.forEach((tri) => {
+    const above = tri.some((p) => p.z > z0 + eps);
+    const below = tri.some((p) => p.z < z0 - eps);
+    if (!above || !below) return; // entirely on one side (or exactly on the plane) — no crossing
+    const crossings = [];
+    for (let i = 0; i < 3; i++) {
+      const a = tri[i], b = tri[(i + 1) % 3];
+      const az = a.z - z0, bz = b.z - z0;
+      if ((az > 0 && bz < 0) || (az < 0 && bz > 0)) {
+        const t = az / (az - bz);
+        crossings.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+      }
+    }
+    if (crossings.length === 2) segments.push(crossings);
+  });
+  if (!segments.length) return [];
+
+  const keyOf = (p) => `${p.x.toFixed(6)},${p.y.toFixed(6)}`;
+  const adj = new Map();
+  segments.forEach(([p, q]) => {
+    const kp = keyOf(p), kq = keyOf(q);
+    if (!adj.has(kp)) adj.set(kp, []);
+    if (!adj.has(kq)) adj.set(kq, []);
+    adj.get(kp).push({ to: kq, point: q });
+    adj.get(kq).push({ to: kp, point: p });
+  });
+
+  const edgeKey = (k1, k2) => (k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`);
+  const visited = new Set();
+  const loops = [];
+  segments.forEach(([p, q]) => {
+    const startKey = keyOf(p);
+    const startEdge = edgeKey(startKey, keyOf(q));
+    if (visited.has(startEdge)) return;
+    visited.add(startEdge);
+    const points = [p, q];
+    let currentKey = keyOf(q);
+    let guard = 0;
+    while (guard++ < 100000 && currentKey !== startKey) {
+      const next = (adj.get(currentKey) || []).find((o) => !visited.has(edgeKey(currentKey, keyOf(o.point))));
+      if (!next) break;
+      visited.add(edgeKey(currentKey, keyOf(next.point)));
+      points.push(next.point);
+      currentKey = keyOf(next.point);
+    }
+    loops.push({ closed: currentKey === startKey && points.length > 2, points });
+  });
+  return loops;
 }
 
 /** A LandXML TIN surface (<Surfaces><Surface><Definition><Pnts>/<Faces>) — same triangle shape as parseDXF3DFaces. */
@@ -1095,7 +1164,7 @@ function computeAndRender() {
   const cutPlanByRow = new Map();
   rows.forEach((row) => {
     if (row.dataset.mode === "extents" && row._extentsPoints) {
-      const cp = oMin < w ? computeCutPlan(row._extentsPoints, w, oMin, row._extentsSwapped) : null;
+      const cp = oMin < w ? computeCutPlan(row._extentsPoints, w, oMin, row._extentsSwapped, row._faceChainIndex) : null;
       if (cp) cutPlanByRow.set(row, cp);
     }
   });
@@ -1847,12 +1916,125 @@ function wireMeshUpload(inputId, parseFn, noTrianglesMessage) {
 wireMeshUpload("dxfMeshInput", parseDXF3DFaces, "No 3DFACE triangles found in that file.");
 wireMeshUpload("landxmlMeshInput", parseLandXMLSurface, "No TIN surface (Pnts/Faces) found in that LandXML file.");
 
+/**
+ * From a full excavation/pit surface (all walls, already dug), builds one extents-mode lift row per
+ * wall at each target RL — no pre-existing rows or hand-drawn extents needed. Each RL is sliced
+ * horizontally (sliceMeshAt) into the pit's outline at that depth, which is then split into its
+ * straight-ish runs (chainEdges) — anything shorter than minWallLength is a corner return, not a wall
+ * of its own. Walls are numbered by angle around the slice's centroid rather than by where the slice
+ * loop happened to start walking, so "Wall 1" is the same physical side at every level.
+ */
+function buildPitLiftRows(triangles, targetRLs, minWallLength) {
+  const rows = [];
+  const skippedRLs = [];
+  targetRLs.forEach((rl) => {
+    const closedLoops = sliceMeshAt(triangles, rl).filter((l) => l.closed);
+    if (!closedLoops.length) {
+      skippedRLs.push(rl);
+      return;
+    }
+    // The largest closed loop by area is the real pit outline; a stray smaller one is noise/artifact.
+    const loop = closedLoops.reduce((a, b) => (Math.abs(signedArea(a.points)) >= Math.abs(signedArea(b.points)) ? a : b));
+    const poly = ensureCCW(loop.points.slice(0, -1)); // drop the repeated closing point
+    const chains = chainEdges(poly);
+    const cx = poly.reduce((s, p) => s + p.x, 0) / poly.length;
+    const cy = poly.reduce((s, p) => s + p.y, 0) / poly.length;
+
+    const walls = chains
+      .map((chain, chainIndex) => ({ chain, chainIndex }))
+      .filter(({ chain }) => chain.length >= minWallLength)
+      .map(({ chain, chainIndex }) => {
+        const mid = chain.edges[Math.floor(chain.edges.length / 2)];
+        const angle = Math.atan2((mid.from.y + mid.to.y) / 2 - cy, (mid.from.x + mid.to.x) / 2 - cx);
+        return { chainIndex, angle };
+      })
+      .sort((a, b) => a.angle - b.angle);
+
+    walls.forEach((wallInfo, i) => {
+      rows.push({ rl, wallNumber: i + 1, totalWalls: walls.length, points: poly, faceChainIndex: wallInfo.chainIndex });
+    });
+  });
+  return { rows, skippedRLs };
+}
+
+function wirePitSurfaceUpload(inputId, parseFn, noTrianglesMessage) {
+  document.getElementById(inputId).addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    const statusEl = document.getElementById("pitSurfaceStatus");
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const triangles = parseFn(text);
+      if (!triangles.length) {
+        statusEl.textContent = noTrianglesMessage;
+        statusEl.className = "cutplan-status is-error";
+        return;
+      }
+
+      const startRaw = document.getElementById("pitStartRL").value;
+      const countRaw = document.getElementById("pitCount").value;
+      const start = parseFloat(startRaw);
+      const spacingMm = parseFloat(document.getElementById("pitSpacing").value) || 0;
+      const count = Math.round(parseFloat(countRaw));
+      if (!Number.isFinite(start) || startRaw.trim() === "" || !Number.isFinite(count) || count < 1 || !(spacingMm > 0)) {
+        statusEl.textContent = "Enter a Start RL, Spacing and Count first.";
+        statusEl.className = "cutplan-status is-error";
+        return;
+      }
+
+      const spacing = spacingMm / 1000;
+      const targetRLs = Array.from({ length: count }, (_, i) => +(start + i * spacing).toFixed(2));
+      const { w } = readSettings();
+      const { rows: wallRows, skippedRLs } = buildPitLiftRows(triangles, targetRLs, w);
+
+      if (!wallRows.length) {
+        const zs = triangles.flat().map((p) => p.z);
+        statusEl.textContent = `No closed section found at any of the ${count} target RLs — the surface only covers ${Math.min(...zs).toFixed(2)} to ${Math.max(...zs).toFixed(2)}, check the Start RL/Count are within that range.`;
+        statusEl.className = "cutplan-status is-error";
+        return;
+      }
+
+      tbody.innerHTML = "";
+      wallRows.forEach(({ rl, wallNumber, totalWalls, points, faceChainIndex }) => {
+        const label = totalWalls > 1 ? `${rl.toFixed(2)} · Wall ${wallNumber}` : rl.toFixed(2);
+        const row = addLiftRow(label, "", "");
+        applyExtents(row, points);
+        row._faceChainIndex = faceChainIndex;
+      });
+
+      const matchedRLs = count - skippedRLs.length;
+      statusEl.textContent = `Built ${wallRows.length} lift row${wallRows.length === 1 ? "" : "s"} across ${matchedRLs} of ${count} RLs from ${triangles.length} triangles${
+        skippedRLs.length ? ` (${skippedRLs.length} RL${skippedRLs.length === 1 ? "" : "s"} outside the surface, skipped)` : ""
+      }. This replaced every existing lift row.`;
+      statusEl.className = "cutplan-status is-ok";
+      switchTab("cutplan");
+      computeAndRender();
+    } catch (err) {
+      statusEl.textContent = `Couldn't read that file: ${err.message}`;
+      statusEl.className = "cutplan-status is-error";
+    } finally {
+      e.target.value = "";
+    }
+  });
+}
+
+wirePitSurfaceUpload("dxfPitInput", parseDXF3DFaces, "No 3DFACE triangles found in that file.");
+wirePitSurfaceUpload("landxmlPitInput", parseLandXMLSurface, "No TIN surface (Pnts/Faces) found in that LandXML file.");
+
 cutPlanList.addEventListener("click", (e) => {
   const btn = e.target.closest(".cutplan-card__swap");
   if (!btn) return;
   const row = window.__geogridRowsById.get(btn.dataset.rowId);
   if (!row) return;
-  row._extentsSwapped = !row._extentsSwapped;
+  if (Number.isInteger(row._faceChainIndex)) {
+    // Multi-wall pit row (see buildPitLiftRows) — cycle to the next wall instead of a plain
+    // face/back binary swap, in case auto-detection picked the wrong edge for this row.
+    const chainCount = chainEdges(ensureCCW(row._extentsPoints)).length;
+    row._faceChainIndex = (row._faceChainIndex + 1) % chainCount;
+  } else {
+    row._extentsSwapped = !row._extentsSwapped;
+  }
   computeAndRender();
 });
 
@@ -1880,7 +2062,9 @@ function renderCutPlan(results, w) {
       <div class="cutplan-card__head">
         <span class="cutplan-card__rl">RL ${escapeHtml(r.rl) || "—"}</span>
         <span class="cutplan-card__meta">${metaParts.join(" · ")}</span>
-        <button type="button" class="btn btn--ghost cutplan-card__swap" data-row-id="${id}">Swap face/back</button>
+        <button type="button" class="btn btn--ghost cutplan-card__swap" data-row-id="${id}">${
+          Number.isInteger(r.row._faceChainIndex) ? "Use next wall as face" : "Swap face/back"
+        }</button>
       </div>
       <div class="cutplan-card__body">
         <svg class="cutplan-card__plan" viewBox="0 0 400 260" preserveAspectRatio="xMidYMid meet"></svg>
