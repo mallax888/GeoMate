@@ -139,6 +139,32 @@ function parseCoordsLength(text) {
   return total;
 }
 
+/**
+ * One lift per line, comma/tab/space separated — RL, face length, and an optional third column for
+ * embedment. Keeps each value as the raw token the user pasted (not a reformatted number) so a
+ * spreadsheet's own precision carries straight through, same as manual entry. A line whose first two
+ * tokens aren't both numbers (a header row, a blank line, stray text) is silently skipped and counted,
+ * not rejected outright — one bad line in an otherwise-good paste shouldn't lose the rest.
+ */
+function parseBulkLiftData(text) {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const entries = [];
+  let skipped = 0;
+  lines.forEach((line) => {
+    const parts = line.split(/[,\s]+/).filter(Boolean);
+    if (parts.length < 2 || !Number.isFinite(parseFloat(parts[0])) || !Number.isFinite(parseFloat(parts[1]))) {
+      skipped++;
+      return;
+    }
+    entries.push({ rl: parts[0], face: parts[1], embed: parts.length >= 3 && Number.isFinite(parseFloat(parts[2])) ? parts[2] : "" });
+  });
+  return { entries, skipped };
+}
+
 /* ============================================================
    Cut-plan geometry — clip square-cut strips against a curved/
    tapering plan-view boundary (the "extents") to find where each
@@ -980,6 +1006,27 @@ document.getElementById("genBtn").addEventListener("click", () => {
     const rl = (start + i * spacing).toFixed(2);
     addLiftRow(rl, "", "");
   }
+  computeAndRender();
+});
+
+document.getElementById("bulkPasteBtn").addEventListener("click", () => {
+  const statusEl = document.getElementById("bulkPasteStatus");
+  const raw = document.getElementById("bulkPasteInput").value;
+  const { entries, skipped } = parseBulkLiftData(raw);
+
+  if (!entries.length) {
+    statusEl.textContent = "No valid rows found — expected one lift per line: RL, face length[, embedment].";
+    statusEl.className = "cutplan-status is-error";
+    return;
+  }
+
+  tbody.innerHTML = "";
+  entries.forEach((entry) => addLiftRow(entry.rl, entry.face, entry.embed));
+
+  statusEl.textContent = `Imported ${entries.length} lift row${entries.length === 1 ? "" : "s"}${
+    skipped ? ` (${skipped} line${skipped === 1 ? "" : "s"} skipped — couldn't read an RL and face length)` : ""
+  }. This replaced every existing lift row.`;
+  statusEl.className = "cutplan-status is-ok";
   computeAndRender();
 });
 

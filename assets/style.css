@@ -413,7 +413,7 @@ input[type="number"]::-webkit-outer-spin-button {
   color: var(--accent);
   cursor: pointer;
 }
-.face-coords {
+.face-coords, .bulk-paste-textarea {
   width: 100%;
   min-height: 2.2rem;
   font-family: var(--font-mono);
@@ -424,6 +424,7 @@ input[type="number"]::-webkit-outer-spin-button {
   padding: 0.35rem 0.5rem;
   resize: vertical;
 }
+.bulk-paste-textarea { margin-bottom: 0.6rem; }
 .row-remove {
   background: transparent;
   border: none;

@@ -99,6 +99,14 @@
     </div>
 
     <div class="generator">
+      <h3 class="panel__subheading">Paste lift data</h3>
+      <p class="generator__hint">Paste rows straight from a spreadsheet — one lift per line, comma/tab/space separated: RL, face length, and an optional third column for embedment. Replaces every existing lift row.</p>
+      <textarea id="bulkPasteInput" class="bulk-paste-textarea" rows="4" placeholder="49.70, 18.4&#10;50.30, 17.9&#10;50.90, 20.5"></textarea>
+      <button id="bulkPasteBtn" class="btn btn--primary" type="button">Import pasted rows</button>
+      <p id="bulkPasteStatus" class="cutplan-status"></p>
+    </div>
+
+    <div class="generator">
       <h3 class="panel__subheading">Add intermediate grids</h3>
       <p class="generator__hint">Inserts one grid midway between every consecutive pair of lifts whose RLs fall inside this range.</p>
       <div class="generator__row generator__row--pair">
