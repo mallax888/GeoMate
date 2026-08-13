@@ -152,6 +152,7 @@
         <button type="button" class="tab" id="tabCutPlan" role="tab" aria-selected="false">Cut plan</button>
         <button type="button" class="tab" id="tab3D" role="tab" aria-selected="false">3D view</button>
         <button type="button" class="tab" id="tabRolls" role="tab" aria-selected="false">Roll schedule</button>
+        <button type="button" class="tab" id="tabLiner" role="tab" aria-selected="false">Landfill liner</button>
       </div>
       <button id="addLiftBtn" class="btn btn--ghost" type="button">+ Add lift</button>
     </div>
@@ -337,6 +338,48 @@
       <div id="rollScheduleList" class="roll-schedule-list"></div>
       <div id="rollSchedulePrintView" class="roll-schedule-print-view"></div>
       <div id="rollLabelsPrintView" class="roll-labels-print-view"></div>
+    </div>
+
+    <div id="linerView" class="liner-view" hidden>
+      <p class="liner-intro">A separate calculator: lines a dug excavation — floor and battered sides — with a continuous layer to stop leachate reaching the natural ground, and works out how the rolls best lay across it. Assumes a rectangular floor with the same side slope on all four sides (a truncated-pyramid cell). Uses the roll width, minimum overlap and roll length from the spec panel on the left — this isn't part of the lift takeoff above, so it doesn't touch the Material schedule sidebar.</p>
+      <div class="liner-inputs">
+        <label class="field field--compact">
+          <span>Floor length</span>
+          <div class="field__unit"><input type="number" id="linerFloorLength" min="0" step="0.1" placeholder="e.g. 40" /><em>m</em></div>
+        </label>
+        <label class="field field--compact">
+          <span>Floor width</span>
+          <div class="field__unit"><input type="number" id="linerFloorWidth" min="0" step="0.1" placeholder="e.g. 25" /><em>m</em></div>
+        </label>
+        <label class="field field--compact">
+          <span>Depth</span>
+          <div class="field__unit"><input type="number" id="linerDepth" min="0" step="0.1" placeholder="e.g. 6" /><em>m</em></div>
+        </label>
+        <label class="field field--compact">
+          <span>Side slope</span>
+          <div class="field__unit"><input type="number" id="linerSlope" min="0" step="0.1" placeholder="e.g. 3" /><em>H : 1V</em></div>
+        </label>
+      </div>
+      <p id="linerEmpty" class="empty-state">Enter the excavation's floor dimensions, depth and side slope above to see the liner takeoff.</p>
+      <div id="linerResults" hidden>
+        <div class="stat-grid liner-stat-grid">
+          <div class="stat"><span class="stat__label">Floor area</span><span class="stat__value" id="linerStatFloor">0<small> m²</small></span></div>
+          <div class="stat"><span class="stat__label">Wall area</span><span class="stat__value" id="linerStatWalls">0<small> m²</small></span></div>
+          <div class="stat"><span class="stat__label">Total liner area</span><span class="stat__value" id="linerStatTotal">0<small> m²</small></span></div>
+          <div class="stat"><span class="stat__label">Slope length</span><span class="stat__value" id="linerStatSlope">0<small> m</small></span></div>
+          <div class="stat"><span class="stat__label">Panels</span><span class="stat__value" id="linerStatPanels">0</span></div>
+          <div class="stat"><span class="stat__label">Rolls to order</span><span class="stat__value" id="linerStatRolls">0</span></div>
+        </div>
+        <p class="liner-corner-note">Corner boots and folds aren't modelled — allow roughly 5–10% extra material at the corners on top of the figures above.</p>
+
+        <h3 class="panel__subheading">Main run — down one long wall, across the floor, up the other</h3>
+        <p class="liner-run-desc" id="linerMainDesc"></p>
+        <svg class="strip-diagram liner-diagram" id="linerMainDiagram" viewBox="0 0 240 34" preserveAspectRatio="none"></svg>
+
+        <h3 class="panel__subheading">End walls — the two shorter sides</h3>
+        <p class="liner-run-desc" id="linerEndDesc"></p>
+        <svg class="strip-diagram liner-diagram" id="linerEndDiagram" viewBox="0 0 240 34" preserveAspectRatio="none"></svg>
+      </div>
     </div>
   </section>
 

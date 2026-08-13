@@ -1273,6 +1273,7 @@ function computeAndRender() {
   renderCutPlan(liftResults, w);
   render3D(liftResults);
   renderRollSchedule(window.__geogridRolls || [], rollLength, rollGroupSize);
+  renderLiner(w, oMin, rollLength);
   saveAutosave();
 }
 
@@ -1434,11 +1435,13 @@ const tabSequence = document.getElementById("tabSequence");
 const tabCutPlan = document.getElementById("tabCutPlan");
 const tab3D = document.getElementById("tab3D");
 const tabRolls = document.getElementById("tabRolls");
+const tabLiner = document.getElementById("tabLiner");
 const takeoffView = document.getElementById("takeoffView");
 const sequenceView = document.getElementById("sequenceView");
 const cutPlanView = document.getElementById("cutPlanView");
 const view3DPanel = document.getElementById("view3DPanel");
 const rollScheduleView = document.getElementById("rollScheduleView");
+const linerView = document.getElementById("linerView");
 const staggerToggle = document.getElementById("staggerToggle");
 const sequenceList = document.getElementById("sequenceList");
 const cutPlanList = document.getElementById("cutPlanList");
@@ -1449,6 +1452,7 @@ tabSequence.addEventListener("click", () => switchTab("sequence"));
 tabCutPlan.addEventListener("click", () => switchTab("cutplan"));
 tab3D.addEventListener("click", () => switchTab("view3d"));
 tabRolls.addEventListener("click", () => switchTab("rolls"));
+tabLiner.addEventListener("click", () => switchTab("liner"));
 staggerToggle.addEventListener("change", computeAndRender);
 document.getElementById("printSequenceBtn").addEventListener("click", () => window.print());
 
@@ -1693,6 +1697,7 @@ const TABS = {
   cutplan: { tab: tabCutPlan, view: cutPlanView },
   view3d: { tab: tab3D, view: view3DPanel },
   rolls: { tab: tabRolls, view: rollScheduleView },
+  liner: { tab: tabLiner, view: linerView },
 };
 
 function switchTab(which) {
@@ -2767,6 +2772,100 @@ function escapeHtml(str) {
 }
 
 /* ============================================================
+   Landfill liner — a separate, self-contained calculator: lining a dug excavation (floor +
+   battered sides) to stop leachate reaching natural ground, not stacked lift-by-lift fill like
+   the rest of this app. Shares the roll width/overlap/length spec and the strip-diagram/roll-
+   packing helpers above, but has its own geometry inputs and its own small results panel — it
+   doesn't touch the lift table or the main Material schedule sidebar, which is a different job.
+   ============================================================ */
+
+const linerInputs = {
+  floorLength: document.getElementById("linerFloorLength"),
+  floorWidth: document.getElementById("linerFloorWidth"),
+  depth: document.getElementById("linerDepth"),
+  slope: document.getElementById("linerSlope"),
+};
+
+/**
+ * Models the excavation as a rectangular-floor truncated pyramid: a flat floor rising on a
+ * uniform side slope on all four sides to its crest. Both wall pairs share the same slope
+ * length (Pythagoras on depth + slope ratio doesn't depend on which floor edge it rises from);
+ * only their trapezoid base widths differ, matching the floor's own length vs width.
+ */
+function computeLinerPlan(Lf, Wf, D, slopeRatio, w, oMin) {
+  if (!(Lf > 0) || !(Wf > 0) || !(D > 0) || !(slopeRatio >= 0) || !(w > 0) || oMin < 0 || oMin >= w) return null;
+
+  const S = D * Math.sqrt(1 + slopeRatio * slopeRatio); // slope length, same up every wall
+  const horizRun = D * slopeRatio; // crest set-back from the floor edge, per side
+
+  const floorArea = Lf * Wf;
+  const longWallArea = ((Lf + (Lf + 2 * horizRun)) / 2) * S * 2; // both long walls
+  const endWallArea = ((Wf + (Wf + 2 * horizRun)) / 2) * S * 2; // both end walls
+  const wallArea = longWallArea + endWallArea;
+  const totalArea = floorArea + wallArea;
+
+  // Main run: down one long wall, across the floor, up the other — one continuous panel per
+  // strip, tiled across the floor length. Minimises seams crossing a slope (a real leachate-risk
+  // point), matching how liner panels are actually laid out on site.
+  const mainPanelLength = 2 * S + Wf;
+  const mainResult = calcLift(Lf, w, oMin);
+
+  // End walls: the two shorter sides, each its own panel run tiled across the floor width — same
+  // strip-count math, idealised the same way the rest of this app treats a tapering face (strip
+  // count comes from the baseline length; only the CUT length reflects the slope).
+  const endResult = calcLift(Wf, w, oMin);
+
+  return { S, horizRun, floorArea, wallArea, totalArea, mainPanelLength, mainResult, endResult };
+}
+
+function renderLiner(w, oMin, rollLength) {
+  const Lf = parseFloat(linerInputs.floorLength.value) || 0;
+  const Wf = parseFloat(linerInputs.floorWidth.value) || 0;
+  const D = parseFloat(linerInputs.depth.value) || 0;
+  const slopeRaw = parseFloat(linerInputs.slope.value);
+  const plan = computeLinerPlan(Lf, Wf, D, Number.isFinite(slopeRaw) ? slopeRaw : 0, w, oMin);
+
+  const emptyEl = document.getElementById("linerEmpty");
+  const resultsEl = document.getElementById("linerResults");
+  if (!plan) {
+    emptyEl.hidden = false;
+    resultsEl.hidden = true;
+    window.__geogridLinerRolls = [];
+    return;
+  }
+  emptyEl.hidden = true;
+  resultsEl.hidden = false;
+
+  document.getElementById("linerStatFloor").innerHTML = `${fmt.m(plan.floorArea)}<small> m²</small>`;
+  document.getElementById("linerStatWalls").innerHTML = `${fmt.m(plan.wallArea)}<small> m²</small>`;
+  document.getElementById("linerStatTotal").innerHTML = `${fmt.m(plan.totalArea)}<small> m²</small>`;
+  document.getElementById("linerStatSlope").innerHTML = `${fmt.m(plan.S)}<small> m</small>`;
+  document.getElementById("linerStatPanels").textContent = plan.mainResult.n + plan.endResult.n * 2;
+
+  // Pooled across the main run and both end walls, same bin-packing the main roll schedule uses —
+  // a short end-wall panel can fill out what a long main-run panel leaves on a roll.
+  const pieces = [];
+  for (let i = 0; i < plan.mainResult.n; i++) pieces.push({ label: `Main run · panel ${i + 1}`, length: plan.mainPanelLength, seq: i });
+  for (let i = 0; i < plan.endResult.n; i++) {
+    pieces.push({ label: `End wall A · panel ${i + 1}`, length: plan.S, seq: 1000 + i });
+    pieces.push({ label: `End wall B · panel ${i + 1}`, length: plan.S, seq: 2000 + i });
+  }
+  const rolls = rollLength > 0 ? packRollsDetailed(pieces, rollLength) : [];
+  window.__geogridLinerRolls = rolls;
+  document.getElementById("linerStatRolls").textContent = rolls.length;
+
+  document.getElementById("linerMainDesc").textContent =
+    `${plan.mainResult.n} panel${plan.mainResult.n === 1 ? "" : "s"} × ${fmt.m(plan.mainPanelLength)} m long (down ${fmt.m(plan.S)} m of slope, ${fmt.m(Wf)} m across the floor, up ${fmt.m(plan.S)} m of the far slope), tiled across the ${fmt.m(Lf)} m floor length.`;
+  renderDiagram(document.getElementById("linerMainDiagram"), Lf, plan.mainResult, w);
+
+  document.getElementById("linerEndDesc").textContent =
+    `${plan.endResult.n} panel${plan.endResult.n === 1 ? "" : "s"} × ${fmt.m(plan.S)} m long, per end wall (×2), tiled across the ${fmt.m(Wf)} m floor width.`;
+  renderDiagram(document.getElementById("linerEndDiagram"), Wf, plan.endResult, w);
+}
+
+Object.values(linerInputs).forEach((el) => el.addEventListener("input", computeAndRender));
+
+/* ============================================================
    Autosave — the whole project (spec, settings, every lift row, including DXF/mesh-derived
    extents) persists to localStorage on every recompute, and is restored on load. A refresh or
    an accidentally-closed tab shouldn't cost a foreman their afternoon's data entry. This is one
@@ -2800,6 +2899,12 @@ function saveAutosave() {
         installRate: settingsInputs.installRate.value,
       },
       rows,
+      liner: {
+        floorLength: linerInputs.floorLength.value,
+        floorWidth: linerInputs.floorWidth.value,
+        depth: linerInputs.depth.value,
+        slope: linerInputs.slope.value,
+      },
     };
     localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(state));
   } catch {
@@ -2807,7 +2912,7 @@ function saveAutosave() {
   }
 }
 
-/** Rebuilds the settings panel and lift table from the last autosave. Returns true if anything was restored. */
+/** Rebuilds the settings panel, lift table, and liner inputs from the last autosave. Returns true if anything was restored. */
 function restoreAutosave() {
   let state;
   try {
@@ -2815,7 +2920,10 @@ function restoreAutosave() {
   } catch {
     return false;
   }
-  if (!state || !Array.isArray(state.rows) || !state.rows.length) return false;
+  const hasRows = state && Array.isArray(state.rows) && state.rows.length;
+  const l = state && state.liner;
+  const hasLiner = l && (l.floorLength || l.floorWidth || l.depth || l.slope);
+  if (!state || (!hasRows && !hasLiner)) return false;
 
   if (state.projectName != null) document.getElementById("projectName").value = state.projectName;
   const s = state.settings || {};
@@ -2826,7 +2934,14 @@ function restoreAutosave() {
   if (s.costPerRoll != null) settingsInputs.costPerRoll.value = s.costPerRoll;
   if (s.installRate != null) settingsInputs.installRate.value = s.installRate;
 
-  state.rows.forEach((r) => {
+  if (l) {
+    if (l.floorLength != null) linerInputs.floorLength.value = l.floorLength;
+    if (l.floorWidth != null) linerInputs.floorWidth.value = l.floorWidth;
+    if (l.depth != null) linerInputs.depth.value = l.depth;
+    if (l.slope != null) linerInputs.slope.value = l.slope;
+  }
+
+  (state.rows || []).forEach((r) => {
     const row = addLiftRow(r.rl || "", r.mode === "length" ? r.faceLength || "" : "", r.embed || "", null, !!r.isIntermediate);
     if (r.mode === "coords") {
       row.dataset.mode = "coords";

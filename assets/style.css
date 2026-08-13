@@ -817,6 +817,17 @@ input[type="number"]::-webkit-outer-spin-button {
 .roll-schedule-print-view { display: none; }
 .roll-labels-print-view { display: none; }
 
+/* ---------- Landfill liner ---------- */
+.liner-intro { font-size: 0.82rem; color: var(--ink-muted); max-width: 72ch; margin: 0 0 1rem; }
+.liner-inputs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.7rem; margin-bottom: 1rem; }
+.liner-stat-grid { grid-template-columns: repeat(3, 1fr); margin-bottom: 0.8rem; }
+.liner-corner-note {
+  font-size: 0.78rem; color: var(--warn); background: var(--warn-tint);
+  border-radius: 4px; padding: 0.5rem 0.6rem; margin: 0 0 1.3rem;
+}
+.liner-run-desc { font-size: 0.8rem; color: var(--ink-muted); margin: 0 0 0.5rem; max-width: 68ch; }
+.liner-diagram { width: 100%; height: 34px; display: block; margin-bottom: 1.3rem; }
+
 @media print {
   /* Chrome/Edge/Firefox all default to stripping background colours and (for Chrome/Edge, at least)
      dimming everything else unless a page explicitly opts in — otherwise every fill/background here
@@ -948,4 +959,5 @@ input[type="number"]::-webkit-outer-spin-button {
 
   .stat-grid { grid-template-columns: 1fr 1fr; }
   .roll-card__pieces { grid-template-columns: 1fr; }
+  .liner-inputs, .liner-stat-grid { grid-template-columns: 1fr 1fr; }
 }
