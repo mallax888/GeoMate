@@ -1193,6 +1193,61 @@ function wasteLevel(pct) {
   return "critical";
 }
 
+/**
+ * Cheap sanity checks across the whole table that no single row's own math can catch on its own —
+ * nothing here blocks the plan from computing, it's purely a heads-up to double-check before
+ * ordering material.
+ */
+function validateRows(results, rollLength) {
+  const issues = [];
+
+  // Install-tracking keys the "Installed" checkbox by RL text (see isLiftInstalled) — two rows
+  // with the same RL would silently share one checkbox between two different physical lifts.
+  const firstSeenAt = new Map();
+  results.forEach((r, i) => {
+    if (!r.rl) return;
+    if (firstSeenAt.has(r.rl)) {
+      issues.push(`Duplicate RL ${r.rl} (rows ${firstSeenAt.get(r.rl) + 1} and ${i + 1}) — they'll share one "Installed" checkbox.`);
+    } else {
+      firstSeenAt.set(r.rl, i);
+    }
+  });
+
+  // Installation sequence, the CSV/PDF export, and the "fill to RL X" instruction all assume each
+  // row is built on top of the one before it — the actual physical sequence on site.
+  for (let i = 1; i < results.length; i++) {
+    const prev = parseFloat(results[i - 1].rl), cur = parseFloat(results[i].rl);
+    if (Number.isFinite(prev) && Number.isFinite(cur) && cur <= prev) {
+      issues.push(`RL ${results[i].rl} (row ${i + 1}) isn't higher than the lift before it (RL ${results[i - 1].rl}) — check the build order.`);
+    }
+  }
+
+  // A single embedment length longer than one roll needs a splice this app doesn't plan a joint
+  // for — extents-mode rows are cut to fit the boundary already and aren't a fixed embedment.
+  if (rollLength > 0) {
+    results.forEach((r, i) => {
+      if (r.mode !== "extents" && r.embed > rollLength) {
+        issues.push(`RL ${r.rl || `row ${i + 1}`}: embedment (${fmt.m(r.embed)} m) is longer than the roll length (${fmt.m(rollLength)} m) — will need a splice.`);
+      }
+    });
+  }
+
+  return issues;
+}
+
+function renderRowWarnings(issues) {
+  const el = document.getElementById("rowWarnings");
+  if (!issues.length) {
+    el.hidden = true;
+    el.innerHTML = "";
+    return;
+  }
+  el.hidden = false;
+  el.innerHTML = `<strong>${issues.length} thing${issues.length === 1 ? "" : "s"} worth checking:</strong><ul>${issues
+    .map((m) => `<li>${escapeHtml(m)}</li>`)
+    .join("")}</ul>`;
+}
+
 function computeAndRender() {
   const { w, oMin, rollLength, rollGroupSize, costPerRoll, installRate } = readSettings();
   const specWarning = document.getElementById("specWarning");
@@ -1318,6 +1373,7 @@ function computeAndRender() {
   });
 
   window.__geogridResults = liftResults; // exposed for CSV export + progress tracking, set before renderSummary needs it
+  renderRowWarnings(validateRows(liftResults, rollLength));
   renderSummary(liftResults, rollLength, rollGroupSize, costPerRoll, installRate);
   renderSequence(liftResults, w);
   renderCutPlan(liftResults, w);

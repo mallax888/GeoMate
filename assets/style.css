@@ -366,6 +366,22 @@ input[type="number"]::-webkit-outer-spin-button {
 .methodology dt { font-family: var(--font-mono); color: var(--accent); font-size: 0.75rem; margin-top: 0.6rem; }
 .methodology dd { margin: 0.2rem 0 0; color: var(--ink-muted); }
 
+/* ---------- Row warnings ---------- */
+/* Softer than .warning-text (which is --critical, reserved for the spec panel's blocking oMin>=w
+   case) — these are worth a second look, not something stopping the plan from computing. */
+.row-warnings {
+  margin: 0 0 0.9rem;
+  font-size: 0.8rem;
+  color: var(--warn);
+  background: var(--warn-tint);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.75rem;
+}
+.row-warnings strong { display: block; margin-bottom: 0.3rem; }
+.row-warnings ul { margin: 0; padding-left: 1.1rem; }
+.row-warnings li { margin-bottom: 0.2rem; }
+.row-warnings li:last-child { margin-bottom: 0; }
+
 /* ---------- Lift table ---------- */
 .table-scroll { overflow-x: auto; }
 .lift-table { width: 100%; border-collapse: collapse; min-width: 690px; }
