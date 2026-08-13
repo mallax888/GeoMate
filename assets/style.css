@@ -36,10 +36,11 @@
 }
 
 /* ---------- Tokens ----------
-   "Hi-Vis": the safety-lime-against-charcoal palette real site PPE and plant already use.
-   --accent-pop/--ink-on-accent are the one loud lime fill + its dark text, constant in both
-   themes (a hazard chip reads the same whether the page around it is light or dark); --accent
-   itself is tuned per theme since raw lime text has poor contrast on white. */
+   "Exit Green": charcoal chassis with the confident, slightly muted green of emergency-exit
+   signage and fire-safety equipment — a colour everyone already reads as "safety," swapped in for
+   the earlier Hi-Vis lime. --accent-pop/--ink-on-accent are the one loud fill + its (white, this
+   green is too mid-toned for dark text to read on it) text, constant in both themes; --accent
+   itself is tuned per theme for legible text/border contrast on each background. */
 :root {
   --bg: #f2f3ee;
   --surface: #ffffff;
@@ -48,12 +49,12 @@
   --ink-muted: #63695f;
   --line: #dde1d3;
   --line-strong: #c4cab8;
-  --accent: #6b8f00;
-  --accent-strong: #4f6b00;
-  --accent-tint: #eef8c9;
-  --accent-pop: #d7fb00;
-  --accent-pop-deep: #a6c400;
-  --ink-on-accent: #14170f;
+  --accent: #1f7a44;
+  --accent-strong: #145c33;
+  --accent-tint: #e3f3e8;
+  --accent-pop: #1f8a4c;
+  --accent-pop-deep: #156b3a;
+  --ink-on-accent: #ffffff;
   --clay: #b4600a;
   --clay-tint: #fdead2;
   --graphite: #3c433f;
@@ -79,9 +80,9 @@
     --ink-muted: #8d938a;
     --line: #34383a;
     --line-strong: #454b4d;
-    --accent: #d7fb00;
-    --accent-strong: #eeff5c;
-    --accent-tint: #2b3306;
+    --accent: #2fa863;
+    --accent-strong: #6ecf95;
+    --accent-tint: #0f261a;
     --clay: #ffb238;
     --clay-tint: #3a2a0a;
     --graphite: #a3aca6;
@@ -102,9 +103,9 @@
   --ink-muted: #8d938a;
   --line: #34383a;
   --line-strong: #454b4d;
-  --accent: #d7fb00;
-  --accent-strong: #eeff5c;
-  --accent-tint: #2b3306;
+  --accent: #2fa863;
+  --accent-strong: #6ecf95;
+  --accent-tint: #0f261a;
   --clay: #ffb238;
   --clay-tint: #3a2a0a;
   --graphite: #a3aca6;
