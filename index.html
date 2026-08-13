@@ -136,6 +136,21 @@
       <p id="dxfLengthsStatus" class="cutplan-status"></p>
     </div>
 
+    <div class="generator">
+      <h3 class="panel__subheading">Projects</h3>
+      <p class="generator__hint">Autosave always keeps whatever's currently open, but only one job at a time. Save this one under the Project name above to keep it, and switch between saved jobs here without losing either.</p>
+      <label class="field field--compact">
+        <span>Saved projects</span>
+        <select id="projectSelect"><option value="">— none saved yet —</option></select>
+      </label>
+      <div class="generator__btnrow">
+        <button id="saveProjectBtn" class="btn btn--primary" type="button">Save as project</button>
+        <button id="loadProjectBtn" class="btn btn--ghost" type="button" disabled>Load</button>
+        <button id="deleteProjectBtn" class="btn btn--ghost btn--danger" type="button" disabled>Delete</button>
+      </div>
+      <p id="projectStatus" class="cutplan-status"></p>
+    </div>
+
     <details class="methodology">
       <summary>How the numbers are calculated</summary>
       <dl>
@@ -185,7 +200,10 @@
           <tbody id="liftTableBody"></tbody>
         </table>
       </div>
-      <p id="emptyState" class="empty-state">No lifts yet — generate a run above or add one manually.</p>
+      <div id="emptyState" class="empty-state">
+        <p>No lifts yet — generate a run above, paste your own data, or add one manually.</p>
+        <button id="loadSampleBtn" class="btn btn--ghost" type="button">Load sample project</button>
+      </div>
     </div>
 
     <div id="sequenceView" class="sequence-view" hidden>

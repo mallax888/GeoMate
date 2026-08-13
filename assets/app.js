@@ -1030,6 +1030,31 @@ document.getElementById("bulkPasteBtn").addEventListener("click", () => {
   computeAndRender();
 });
 
+// A small, realistic dataset so a first-time user sees the tool actually working — every stat tile
+// populated, not just an empty table — instead of guessing what to type in before anything renders.
+const SAMPLE_PROJECT = {
+  projectName: "Sample project — north batter reinforcement",
+  costPerRoll: "250",
+  installRate: "150",
+  rows: [
+    { rl: "49.70", face: "18.4", embed: "4.2" },
+    { rl: "50.30", face: "17.9", embed: "4.0" },
+    { rl: "50.90", face: "20.5", embed: "4.5" },
+    { rl: "51.50", face: "19.2", embed: "4.0" },
+    { rl: "52.10", face: "21.0", embed: "4.5" },
+  ],
+};
+
+document.getElementById("loadSampleBtn").addEventListener("click", () => {
+  document.getElementById("projectName").value = SAMPLE_PROJECT.projectName;
+  settingsInputs.costPerRoll.value = SAMPLE_PROJECT.costPerRoll;
+  settingsInputs.installRate.value = SAMPLE_PROJECT.installRate;
+  tbody.innerHTML = "";
+  SAMPLE_PROJECT.rows.forEach((r) => addLiftRow(r.rl, r.face, r.embed));
+  refreshProjectList();
+  computeAndRender();
+});
+
 document.getElementById("interBtn").addEventListener("click", () => {
   const from = parseFloat(document.getElementById("interFromRL").value);
   const to = parseFloat(document.getElementById("interToRL").value);
@@ -2976,60 +3001,48 @@ function renderLiner(w, oMin, rollLength) {
 Object.values(linerInputs).forEach((el) => el.addEventListener("input", computeAndRender));
 
 /* ============================================================
-   Autosave — the whole project (spec, settings, every lift row, including DXF/mesh-derived
-   extents) persists to localStorage on every recompute, and is restored on load. A refresh or
-   an accidentally-closed tab shouldn't cost a foreman their afternoon's data entry. This is one
-   fixed slot (not per-project — renaming the project just relabels what's already there), unlike
-   the install-tracking progress above, which is deliberately keyed by project name.
+   State snapshot — serialize/restore everything a project is (spec, settings, every lift row
+   including DXF/mesh-derived extents, and the liner inputs). Shared by Autosave below (one fixed
+   slot, always tracking whatever's currently open) and the named-project Save/Load/Delete further
+   down (explicit snapshots the foreman picks a name for) — same shape either way, just a different
+   localStorage key.
    ============================================================ */
-const AUTOSAVE_KEY = "geogrid-autosave";
 
-function saveAutosave() {
-  try {
-    const rows = Array.from(tbody.querySelectorAll(".lift-row")).map((row) => ({
-      rl: row.querySelector(".rl-input").value,
-      isIntermediate: !row.querySelector(".intermediate-badge").hidden,
-      mode: row.dataset.mode,
-      faceLength: row.querySelector(".face-length").value,
-      coords: row.querySelector(".face-coords").value,
-      embed: row.querySelector(".embed-length").value,
-      extentsPoints: row._extentsPoints || null,
-      extentsSwapped: !!row._extentsSwapped,
-      batteredLevel: !!row._batteredLevel,
-    }));
-    const state = {
-      version: 1,
-      projectName: document.getElementById("projectName").value,
-      settings: {
-        rollWidth: settingsInputs.rollWidth.value,
-        minOverlap: settingsInputs.minOverlapMm.value,
-        rollLength: settingsInputs.rollLength.value,
-        rollGroupSize: settingsInputs.rollGroupSize.value,
-        costPerRoll: settingsInputs.costPerRoll.value,
-        installRate: settingsInputs.installRate.value,
-      },
-      rows,
-      liner: {
-        floorLength: linerInputs.floorLength.value,
-        floorWidth: linerInputs.floorWidth.value,
-        depth: linerInputs.depth.value,
-        slope: linerInputs.slope.value,
-      },
-    };
-    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(state));
-  } catch {
-    /* storage full or unavailable — autosave just won't persist across reloads */
-  }
+function buildStateSnapshot() {
+  const rows = Array.from(tbody.querySelectorAll(".lift-row")).map((row) => ({
+    rl: row.querySelector(".rl-input").value,
+    isIntermediate: !row.querySelector(".intermediate-badge").hidden,
+    mode: row.dataset.mode,
+    faceLength: row.querySelector(".face-length").value,
+    coords: row.querySelector(".face-coords").value,
+    embed: row.querySelector(".embed-length").value,
+    extentsPoints: row._extentsPoints || null,
+    extentsSwapped: !!row._extentsSwapped,
+    batteredLevel: !!row._batteredLevel,
+  }));
+  return {
+    version: 1,
+    projectName: document.getElementById("projectName").value,
+    settings: {
+      rollWidth: settingsInputs.rollWidth.value,
+      minOverlap: settingsInputs.minOverlapMm.value,
+      rollLength: settingsInputs.rollLength.value,
+      rollGroupSize: settingsInputs.rollGroupSize.value,
+      costPerRoll: settingsInputs.costPerRoll.value,
+      installRate: settingsInputs.installRate.value,
+    },
+    rows,
+    liner: {
+      floorLength: linerInputs.floorLength.value,
+      floorWidth: linerInputs.floorWidth.value,
+      depth: linerInputs.depth.value,
+      slope: linerInputs.slope.value,
+    },
+  };
 }
 
-/** Rebuilds the settings panel, lift table, and liner inputs from the last autosave. Returns true if anything was restored. */
-function restoreAutosave() {
-  let state;
-  try {
-    state = JSON.parse(localStorage.getItem(AUTOSAVE_KEY));
-  } catch {
-    return false;
-  }
+/** Rebuilds the settings panel, lift table, and liner inputs from a saved state. Returns true if anything was restored. */
+function applyStateSnapshot(state) {
   const hasRows = state && Array.isArray(state.rows) && state.rows.length;
   const l = state && state.liner;
   const hasLiner = l && (l.floorLength || l.floorWidth || l.depth || l.slope);
@@ -3051,6 +3064,10 @@ function restoreAutosave() {
     if (l.slope != null) linerInputs.slope.value = l.slope;
   }
 
+  // Loading a named project needs to fully replace whatever's currently in the table — unlike the
+  // boot-time autosave restore (the only other caller), which always runs against an empty table.
+  tbody.innerHTML = "";
+
   (state.rows || []).forEach((r) => {
     const row = addLiftRow(r.rl || "", r.mode === "length" ? r.faceLength || "" : "", r.embed || "", null, !!r.isIntermediate);
     if (r.mode === "coords") {
@@ -3071,11 +3088,127 @@ function restoreAutosave() {
   return true;
 }
 
+/* ============================================================
+   Autosave — one fixed slot (not per-project), always tracking whatever's currently open, saved on
+   every recompute and restored on load. A refresh or an accidentally-closed tab shouldn't cost a
+   foreman their afternoon's data entry. Separate from the named-project Save/Load below, and from
+   the install-tracking progress above (which IS deliberately keyed by project name).
+   ============================================================ */
+const AUTOSAVE_KEY = "geogrid-autosave";
+
+function saveAutosave() {
+  try {
+    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(buildStateSnapshot()));
+  } catch {
+    /* storage full or unavailable — autosave just won't persist across reloads */
+  }
+}
+
+function restoreAutosave() {
+  try {
+    return applyStateSnapshot(JSON.parse(localStorage.getItem(AUTOSAVE_KEY)));
+  } catch {
+    return false;
+  }
+}
+
+/* ============================================================
+   Named projects — explicit snapshots under a name the foreman picks (the Project field), separate
+   from the single always-on autosave slot above. Save/Load/Delete only ever run when a button is
+   clicked, never automatically, so switching jobs never silently overwrites anything.
+   ============================================================ */
+const PROJECT_INDEX_KEY = "geogrid-project-names";
+const PROJECT_KEY_PREFIX = "geogrid-project::";
+
+function listSavedProjects() {
+  try {
+    const names = JSON.parse(localStorage.getItem(PROJECT_INDEX_KEY));
+    return Array.isArray(names) ? names.filter((n) => typeof n === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function refreshProjectList() {
+  const select = document.getElementById("projectSelect");
+  const loadBtn = document.getElementById("loadProjectBtn");
+  const deleteBtn = document.getElementById("deleteProjectBtn");
+  const names = listSavedProjects().sort((a, b) => a.localeCompare(b));
+  const current = document.getElementById("projectName").value.trim();
+
+  select.innerHTML = names.length
+    ? names.map((n) => `<option value="${escapeHtml(n)}"${n === current ? " selected" : ""}>${escapeHtml(n)}</option>`).join("")
+    : `<option value="">— none saved yet —</option>`;
+  select.disabled = !names.length;
+  loadBtn.disabled = !names.length;
+  deleteBtn.disabled = !names.length;
+}
+
+document.getElementById("saveProjectBtn").addEventListener("click", () => {
+  const statusEl = document.getElementById("projectStatus");
+  const name = document.getElementById("projectName").value.trim();
+  if (!name) {
+    statusEl.textContent = "Enter a project name first.";
+    statusEl.className = "cutplan-status is-error";
+    return;
+  }
+  try {
+    localStorage.setItem(PROJECT_KEY_PREFIX + name, JSON.stringify(buildStateSnapshot()));
+    const names = listSavedProjects();
+    if (!names.includes(name)) {
+      names.push(name);
+      localStorage.setItem(PROJECT_INDEX_KEY, JSON.stringify(names));
+    }
+    refreshProjectList();
+    statusEl.textContent = `Saved as "${name}".`;
+    statusEl.className = "cutplan-status is-ok";
+  } catch {
+    statusEl.textContent = "Couldn't save — local storage may be full.";
+    statusEl.className = "cutplan-status is-error";
+  }
+});
+
+document.getElementById("loadProjectBtn").addEventListener("click", () => {
+  const statusEl = document.getElementById("projectStatus");
+  const name = document.getElementById("projectSelect").value;
+  if (!name) return;
+
+  let state;
+  try {
+    state = JSON.parse(localStorage.getItem(PROJECT_KEY_PREFIX + name));
+  } catch {
+    state = null;
+  }
+  if (!applyStateSnapshot(state)) {
+    statusEl.textContent = `Couldn't load "${name}" — it may be corrupted.`;
+    statusEl.className = "cutplan-status is-error";
+    return;
+  }
+  computeAndRender();
+  statusEl.textContent = `Loaded "${name}".`;
+  statusEl.className = "cutplan-status is-ok";
+});
+
+document.getElementById("deleteProjectBtn").addEventListener("click", () => {
+  const statusEl = document.getElementById("projectStatus");
+  const name = document.getElementById("projectSelect").value;
+  if (!name) return;
+  if (!window.confirm(`Delete the saved project "${name}"? This can't be undone.`)) return;
+
+  localStorage.removeItem(PROJECT_KEY_PREFIX + name);
+  localStorage.setItem(PROJECT_INDEX_KEY, JSON.stringify(listSavedProjects().filter((n) => n !== name)));
+  refreshProjectList();
+  statusEl.textContent = `Deleted "${name}".`;
+  statusEl.className = "cutplan-status is-ok";
+});
+
 document.getElementById("projectName").addEventListener("input", saveAutosave);
+document.getElementById("projectName").addEventListener("input", refreshProjectList);
 
 /* ============================================================
    Boot — restore the last autosaved project, if any; otherwise start empty
    and use "Generate lift rows" or "Add lift" to begin.
    ============================================================ */
 restoreAutosave();
+refreshProjectList();
 computeAndRender();

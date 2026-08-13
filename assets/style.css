@@ -272,7 +272,7 @@ h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
   display: flex;
   align-items: center;
 }
-input[type="text"], input[type="number"] {
+input[type="text"], input[type="number"], select {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   font-size: 0.85rem;
@@ -283,13 +283,14 @@ input[type="text"], input[type="number"] {
   padding: 0.4rem 0.55rem;
   width: 100%;
 }
-input:focus { border-color: var(--accent); }
+input:focus, select:focus { border-color: var(--accent); }
 input[type="number"] { appearance: textfield; }
 input[type="number"]::-webkit-inner-spin-button,
 input[type="number"]::-webkit-outer-spin-button {
   -webkit-appearance: none;
   margin: 0;
 }
+select:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .settings-grid {
   display: grid;
@@ -309,6 +310,7 @@ input[type="number"]::-webkit-outer-spin-button {
 .generator__row--pair { grid-template-columns: 1fr 1fr; }
 .generator__row .field__unit input { min-width: 0; }
 .generator__hint { font-size: 0.76rem; color: var(--ink-muted); margin: 0 0 0.7rem; }
+.generator > .field { margin-bottom: 0.7rem; }
 .generator__btnrow { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 .btn--danger { color: var(--critical); border-color: var(--critical); }
 .btn--danger:hover { background: var(--critical-tint); }
@@ -334,6 +336,7 @@ input[type="number"]::-webkit-outer-spin-button {
   cursor: pointer;
   border: 1px solid transparent;
 }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn--primary { background: var(--accent-pop); color: var(--ink-on-accent); }
 .btn--primary:hover { background: var(--accent-pop-deep); }
 .btn--ghost {
@@ -459,6 +462,7 @@ input[type="number"]::-webkit-outer-spin-button {
   text-align: center;
   padding: 1.5rem 0 0.5rem;
 }
+.empty-state p { margin: 0 0 0.8rem; }
 
 /* ---------- Summary ---------- */
 .stat-grid {
@@ -959,7 +963,7 @@ input[type="number"]::-webkit-outer-spin-button {
   /* 16px stops Safari auto-zooming in on focus — but not inside the lift table, which is a
      deliberately compact, horizontally-scrollable data grid (min-width: 690px, see .table-scroll);
      widening those inputs to fit a bigger font would just make cell values clip instead. */
-  input[type="text"]:not(.lift-table input), input[type="number"]:not(.lift-table input) { font-size: 16px; padding: 0.55rem 0.65rem; }
+  input[type="text"]:not(.lift-table input), input[type="number"]:not(.lift-table input), select { font-size: 16px; padding: 0.55rem 0.65rem; }
   .btn { padding: 0.65rem 1rem; font-size: 0.85rem; }
   .checkbox { gap: 0.6rem; }
   .checkbox input { width: 1.3rem; height: 1.3rem; }
