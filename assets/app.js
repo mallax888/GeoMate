@@ -2533,18 +2533,21 @@ function render3D(results) {
   // tabs' own tracking) pick up the same --good green used for "done" everywhere else in the app.
   // Pending lifts get a plain neutral grey rather than --accent: in this app's Exit Green theme
   // --accent is ALSO green, close enough to --good to be hard to tell apart at a glance — exactly
-  // the distinction this colour-coding exists to make.
+  // the distinction this colour-coding exists to make. Within each colour, alternating opacity/
+  // weight (not a third hue, which would blur the installed/pending read) still bands neighbouring
+  // layers apart the way the old alternating accent/clay colours did.
   const anchors = projectedLifts.map((lift) => {
+    const alt = lift.colorIndex % 2 === 1;
     const screenPts = lift.pts.map(toScreen);
     ctx.beginPath();
     screenPts.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
     ctx.closePath();
     ctx.fillStyle = lift.installed ? goodTint : lineStrong;
-    ctx.globalAlpha = 0.82;
+    ctx.globalAlpha = alt ? 0.62 : 0.88;
     ctx.fill();
     ctx.globalAlpha = 1;
     ctx.strokeStyle = lift.installed ? good : graphite;
-    ctx.lineWidth = 1.1;
+    ctx.lineWidth = alt ? 1.5 : 1;
     ctx.stroke();
     return { lift, anchorX: screenPts[0].x, anchorY: screenPts[0].y };
   });
