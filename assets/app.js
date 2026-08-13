@@ -2131,7 +2131,11 @@ function renderCutPlan(results, w) {
   document.getElementById("printCutPlanBtn").hidden = extentsResults.length === 0;
   cutPlanList.innerHTML = "";
   window.__geogridCutPlanResults = extentsResults;
-  window.__geogridRowsById = window.__geogridRowsById || new Map();
+  // Rebuilt fresh every render, not preserved across calls — the swap-face/back handler below only
+  // ever needs to resolve an id from the CURRENTLY rendered cards, so keeping old entries around was
+  // a pure leak: this ran on every recompute (every keystroke), growing by one entry per extents row
+  // forever for the life of the tab.
+  window.__geogridRowsById = new Map();
   const rollLookup = buildRollLookup(window.__geogridRolls || []);
 
   extentsResults.forEach((r) => {
