@@ -3205,6 +3205,41 @@ document.getElementById("deleteProjectBtn").addEventListener("click", () => {
 document.getElementById("projectName").addEventListener("input", saveAutosave);
 document.getElementById("projectName").addEventListener("input", refreshProjectList);
 
+/** Clears the table, settings, and liner inputs back to their defaults — the working autosave slot
+ *  reflects that empty state again too (computeAndRender saves it), so reopening this same page
+ *  later won't bring the old data back either. Anything not explicitly Saved as a project is lost —
+ *  hence the confirm, same as the named-project Delete button. */
+document.getElementById("newProjectBtn").addEventListener("click", () => {
+  if (!window.confirm("Clear everything and start a new blank project? Anything not saved under a project name will be lost.")) return;
+
+  document.getElementById("projectName").value = "Untitled cut-face reinforcement";
+  settingsInputs.rollWidth.value = "1.3";
+  settingsInputs.minOverlapMm.value = "300";
+  settingsInputs.rollLength.value = "50";
+  settingsInputs.rollGroupSize.value = "";
+  settingsInputs.costPerRoll.value = "";
+  settingsInputs.installRate.value = "";
+
+  Object.values(linerInputs).forEach((el) => (el.value = ""));
+
+  ["genStartRL", "genSpacing", "genCount", "interFromRL", "interToRL", "bulkPasteInput"].forEach((id) => {
+    document.getElementById(id).value = "";
+  });
+  ["genStatus", "interStatus", "dxfLengthsStatus", "benchedStatus", "batteredStatus", "dxfExtentsStatus", "bulkPasteStatus", "projectStatus"].forEach((id) => {
+    const el = document.getElementById(id);
+    el.textContent = "";
+    el.className = "cutplan-status";
+  });
+
+  lastBatteredTriangles = null;
+  document.getElementById("rebuildBatteredBtn").hidden = true;
+
+  tbody.innerHTML = "";
+  switchTab("takeoff");
+  computeAndRender();
+  refreshProjectList();
+});
+
 /* ============================================================
    Boot — restore the last autosaved project, if any; otherwise start empty
    and use "Generate lift rows" or "Add lift" to begin.
