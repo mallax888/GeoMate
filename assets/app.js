@@ -26,6 +26,12 @@ if ("serviceWorker" in navigator) {
     document.documentElement.setAttribute("data-theme", next);
     localStorage.setItem("geogrid-theme", next);
     updateThemeIcons();
+    // Everything else on the page re-themes itself via CSS custom properties, but the 3D view is
+    // drawn to a <canvas> imperatively — it only reads the new theme's colours (getComputedStyle,
+    // inside render3D) the next time something explicitly redraws it. Without this, staying on
+    // that tab and toggling theme leaves it showing the OLD theme's colours until an unrelated
+    // redraw happens to come along (switching tabs away and back, editing a lift, etc).
+    if (typeof render3D === "function" && window.__geogridResults) render3D(window.__geogridResults);
   });
 
   function updateThemeIcons() {
@@ -2472,7 +2478,7 @@ function render3D(results) {
 
   const lifts = results
     .filter((r) => r.footprint && r.footprint.length >= 3 && Number.isFinite(parseFloat(r.rl)))
-    .map((r) => ({ rl: parseFloat(r.rl), rlLabel: r.rl, footprint: r.footprint }))
+    .map((r) => ({ rl: parseFloat(r.rl), rlLabel: r.rl, footprint: r.footprint, installed: isLiftInstalled(r.rl) }))
     .sort((a, b) => a.rl - b.rl);
 
   view3DEmpty.hidden = lifts.length > 0;
@@ -2511,10 +2517,10 @@ function render3D(results) {
   projectedLifts.sort((a, b) => a.rl - b.rl);
 
   const style = getComputedStyle(document.documentElement);
-  const accent = style.getPropertyValue("--accent").trim();
-  const accentTint = style.getPropertyValue("--accent-tint").trim();
-  const clay = style.getPropertyValue("--clay").trim();
-  const clayTint = style.getPropertyValue("--clay-tint").trim();
+  const good = style.getPropertyValue("--good").trim();
+  const goodTint = style.getPropertyValue("--good-tint").trim();
+  const graphite = style.getPropertyValue("--graphite").trim();
+  const lineStrong = style.getPropertyValue("--line-strong").trim();
   const ink = style.getPropertyValue("--ink").trim();
   const inkMuted = style.getPropertyValue("--ink-muted").trim();
 
@@ -2523,17 +2529,21 @@ function render3D(results) {
   ctx.textAlign = "right";
 
   // Shapes first, in paint order, so every fill/stroke happens before any label is drawn over them.
+  // Colour now carries real meaning — installed lifts (per the Installation sequence / Roll schedule
+  // tabs' own tracking) pick up the same --good green used for "done" everywhere else in the app.
+  // Pending lifts get a plain neutral grey rather than --accent: in this app's Exit Green theme
+  // --accent is ALSO green, close enough to --good to be hard to tell apart at a glance — exactly
+  // the distinction this colour-coding exists to make.
   const anchors = projectedLifts.map((lift) => {
-    const alt = lift.colorIndex % 2 === 1;
     const screenPts = lift.pts.map(toScreen);
     ctx.beginPath();
     screenPts.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
     ctx.closePath();
-    ctx.fillStyle = alt ? clayTint : accentTint;
+    ctx.fillStyle = lift.installed ? goodTint : lineStrong;
     ctx.globalAlpha = 0.82;
     ctx.fill();
     ctx.globalAlpha = 1;
-    ctx.strokeStyle = alt ? clay : accent;
+    ctx.strokeStyle = lift.installed ? good : graphite;
     ctx.lineWidth = 1.1;
     ctx.stroke();
     return { lift, anchorX: screenPts[0].x, anchorY: screenPts[0].y };
@@ -2549,7 +2559,7 @@ function render3D(results) {
   const labelY = anchors.map((_, i) => topMargin + (anchors.length - 1 - i) * gap);
 
   anchors.forEach(({ lift, anchorX, anchorY }, i) => {
-    ctx.strokeStyle = inkMuted;
+    ctx.strokeStyle = lift.installed ? good : inkMuted;
     ctx.globalAlpha = 0.35;
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -2558,7 +2568,7 @@ function render3D(results) {
     ctx.stroke();
     ctx.globalAlpha = 1;
 
-    ctx.fillStyle = ink;
+    ctx.fillStyle = lift.installed ? good : ink;
     ctx.fillText(`RL ${lift.rlLabel}`, labelX, labelY[i]);
   });
 

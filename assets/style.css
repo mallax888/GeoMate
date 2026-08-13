@@ -743,6 +743,14 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   margin-bottom: 0.7rem;
 }
 .view3d-hint { font-size: 0.78rem; color: var(--ink-muted); max-width: 60ch; }
+.view3d-legend { display: flex; gap: 1rem; margin-bottom: 0.6rem; }
+.view3d-legend__item {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  font-size: 0.74rem; color: var(--ink-muted);
+}
+.view3d-legend__swatch { width: 0.7rem; height: 0.7rem; border-radius: 2px; flex: none; }
+.view3d-legend__swatch--installed { background: var(--good-tint); border: 1px solid var(--good); }
+.view3d-legend__swatch--pending { background: var(--line-strong); border: 1px solid var(--graphite); }
 .view3d-canvas {
   width: 100%;
   height: auto;

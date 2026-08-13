@@ -289,6 +289,10 @@
         <p class="view3d-hint">Drag to rotate, scroll to zoom, or use the wheel top-right (angle = rotation, distance from centre = tilt). All lifts share one frame (aligned to the longest face) so their true relative shape and position carries over from the DXF — it's rotated to face front-on, not in survey coordinates.</p>
         <button id="view3DReset" class="btn btn--ghost" type="button">Reset view</button>
       </div>
+      <div class="view3d-legend">
+        <span class="view3d-legend__item"><span class="view3d-legend__swatch view3d-legend__swatch--installed"></span>Installed</span>
+        <span class="view3d-legend__item"><span class="view3d-legend__swatch view3d-legend__swatch--pending"></span>Not yet</span>
+      </div>
       <div class="view3d-canvas-wrap">
         <canvas id="view3DCanvas" class="view3d-canvas" width="900" height="560"></canvas>
         <svg id="view3DCompass" class="view3d-compass" viewBox="0 0 90 90" role="slider" aria-label="Drag to rotate and tilt the view" tabindex="0">
