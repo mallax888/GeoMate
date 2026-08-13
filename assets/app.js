@@ -31,8 +31,11 @@ if ("serviceWorker" in navigator) {
   function updateThemeIcons() {
     const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
     const current = document.documentElement.getAttribute("data-theme") || (prefersDark ? "dark" : "light");
-    document.getElementById("themeIconDark").hidden = current === "dark";
-    document.getElementById("themeIconLight").hidden = current !== "dark";
+    // Plain `.hidden = ...` doesn't reliably reflect to the `hidden` attribute on an <svg> root
+    // element the way it does on ordinary HTML elements — toggleAttribute sets the attribute
+    // itself, so the global [hidden]{display:none} rule actually matches.
+    document.getElementById("themeIconDark").toggleAttribute("hidden", current === "dark");
+    document.getElementById("themeIconLight").toggleAttribute("hidden", current !== "dark");
   }
 })();
 
