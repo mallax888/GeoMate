@@ -1591,23 +1591,27 @@ tab3D.addEventListener("click", () => switchTab("view3d"));
 tabRolls.addEventListener("click", () => switchTab("rolls"));
 tabLiner.addEventListener("click", () => switchTab("liner"));
 
-/* On a narrow phone the tab strip doesn't all fit and has to scroll horizontally (see the mobile
- * media query) — without a visual cue for that, a tab like Cut plan sitting just past the edge is
- * invisible and easy to miss entirely. Fades the wrap's edges in/out based on actual scroll
- * position, so there's a hint only when there's really more to scroll to. */
-(function setupTabScrollFade() {
-  const wrap = document.querySelector(".tabs-wrap");
-  const tabsEl = document.querySelector(".tabs");
-  if (!wrap || !tabsEl) return;
+/* On a narrow phone several strips of content don't all fit and have to scroll horizontally — the
+ * lift-panel tabs, and the takeoff/roll tables (min-width: 690px, see .table-scroll) — without a
+ * visual cue for that, whatever sits just past the visible edge (the Cut plan tab, the table's
+ * Strips/Overlap/Area/Layout columns) is invisible and easy to miss entirely. Fades whichever edge
+ * still has more to scroll to, based on real scroll position (has-more-left/has-more-right,
+ * toggled on scroll+resize). `scrollEl` is the element that actually scrolls; `fadeEl` is what
+ * carries those classes for the CSS to read — usually the same element, but the tab strip needs a
+ * separate non-scrolling wrapper since the fade has to stay fixed while the tabs scroll under it. */
+function setupScrollFade(scrollEl, fadeEl) {
+  if (!scrollEl || !fadeEl) return;
   function update() {
-    const maxScroll = tabsEl.scrollWidth - tabsEl.clientWidth;
-    wrap.classList.toggle("has-more-left", tabsEl.scrollLeft > 4);
-    wrap.classList.toggle("has-more-right", tabsEl.scrollLeft < maxScroll - 4);
+    const maxScroll = scrollEl.scrollWidth - scrollEl.clientWidth;
+    fadeEl.classList.toggle("has-more-left", scrollEl.scrollLeft > 4);
+    fadeEl.classList.toggle("has-more-right", scrollEl.scrollLeft < maxScroll - 4);
   }
-  tabsEl.addEventListener("scroll", update, { passive: true });
+  scrollEl.addEventListener("scroll", update, { passive: true });
   window.addEventListener("resize", update);
   update();
-})();
+}
+setupScrollFade(document.querySelector(".tabs"), document.querySelector(".tabs-wrap"));
+document.querySelectorAll(".table-scroll").forEach((el) => setupScrollFade(el, el));
 staggerToggle.addEventListener("change", computeAndRender);
 document.getElementById("printSequenceBtn").addEventListener("click", () => window.print());
 

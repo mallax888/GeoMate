@@ -282,6 +282,8 @@ input[type="text"], input[type="number"], select {
   border-radius: 4px;
   padding: 0.4rem 0.55rem;
   width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 input:focus, select:focus { border-color: var(--accent); }
 input[type="number"] { appearance: textfield; }
@@ -405,7 +407,7 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 .lift-table tbody tr:hover { background: var(--surface-2); }
 .col-rl { width: 6.4rem; }
-.col-rl input { text-align: right; padding-right: 0.4rem; }
+.col-rl input { text-align: right; padding-right: 0.4rem; min-width: 4.2rem; }
 .col-face { min-width: 9.5rem; }
 .col-embed { width: 6.5rem; }
 .col-strips, .col-overlap, .col-area { width: 5rem; text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
@@ -553,7 +555,13 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 /* ---------- Tabs ---------- */
 .panel__headrow { flex-wrap: wrap; gap: 0.6rem; }
 .tabs-wrap { position: relative; min-width: 0; margin-right: auto; }
-.tabs-wrap::before, .tabs-wrap::after {
+.tabs-wrap, .table-scroll {
+  /* Edge fade for anything horizontally scrollable, so content sitting just past the visible edge
+     (later tabs, the takeoff table's Strips/Overlap/Area/Layout columns) doesn't go unnoticed. */
+  position: relative;
+}
+.tabs-wrap::before, .tabs-wrap::after,
+.table-scroll::before, .table-scroll::after {
   content: "";
   position: absolute;
   top: 0; bottom: 0;
@@ -562,10 +570,10 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   opacity: 0;
   transition: opacity 0.15s ease;
 }
-.tabs-wrap::before { left: 0; background: linear-gradient(to right, var(--surface), transparent); }
-.tabs-wrap::after { right: 0; background: linear-gradient(to left, var(--surface), transparent); }
-.tabs-wrap.has-more-left::before { opacity: 1; }
-.tabs-wrap.has-more-right::after { opacity: 1; }
+.tabs-wrap::before, .table-scroll::before { left: 0; background: linear-gradient(to right, var(--surface), transparent); }
+.tabs-wrap::after, .table-scroll::after { right: 0; background: linear-gradient(to left, var(--surface), transparent); }
+.tabs-wrap.has-more-left::before, .table-scroll.has-more-left::before { opacity: 1; }
+.tabs-wrap.has-more-right::after, .table-scroll.has-more-right::after { opacity: 1; }
 .tabs { display: flex; gap: 0.3rem; }
 .tab {
   font-family: var(--font-body);
