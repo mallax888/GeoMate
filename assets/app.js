@@ -1544,9 +1544,13 @@ function renderSummary(results, rollLength, rollGroupSize, costPerRoll, installR
 
   // Both blank/zero by default (see readSettings) — a project with no cost or rate entered shows
   // "—", not a $0/instant estimate that would misread as a real answer rather than missing input.
+  // The hint span (separate from the value itself, so it never leaks into the CSV/PDF exports that
+  // read statCost/statInstallTime's own textContent) explains why, instead of just looking blank.
   document.getElementById("statCost").textContent = costPerRoll > 0 ? fmt.cost(rolls.length * costPerRoll) : "—";
+  document.getElementById("statCostHint").hidden = costPerRoll > 0;
   const installDays = installRate > 0 ? Math.ceil((totalArea / installRate) * 2) / 2 : 0;
   document.getElementById("statInstallTime").textContent = installDays > 0 ? `${fmt.m(installDays)} day${installDays === 1 ? "" : "s"}` : "—";
+  document.getElementById("statInstallTimeHint").hidden = installDays > 0;
 
   const purchased = rolls.length * rollLength;
   const extraTotal = rolls.reduce((s, roll) => s + roll.pieces.reduce((s2, p) => s2 + p.extra, 0), 0);

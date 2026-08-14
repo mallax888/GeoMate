@@ -501,6 +501,8 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   color: var(--accent-strong);
 }
 .stat__value small { font-size: 0.65rem; font-weight: 400; color: var(--ink-muted); }
+.stat__hint { font-size: 0.62rem; color: var(--ink-muted); margin-top: 0.1rem; }
+.stat--highlight .stat__hint { color: var(--accent-strong); opacity: 0.7; }
 
 .waste-block { margin-top: 0.9rem; display: flex; flex-direction: column; gap: 0.4rem; }
 .waste-row {
