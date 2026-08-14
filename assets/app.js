@@ -2543,11 +2543,11 @@ function render3D(results) {
     screenPts.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
     ctx.closePath();
     ctx.fillStyle = lift.installed ? goodTint : lineStrong;
-    ctx.globalAlpha = alt ? 0.62 : 0.88;
+    ctx.globalAlpha = alt ? 0.32 : 0.96;
     ctx.fill();
     ctx.globalAlpha = 1;
     ctx.strokeStyle = lift.installed ? good : graphite;
-    ctx.lineWidth = alt ? 1.5 : 1;
+    ctx.lineWidth = alt ? 1 : 2.25;
     ctx.stroke();
     return { lift, anchorX: screenPts[0].x, anchorY: screenPts[0].y };
   });
