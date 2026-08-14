@@ -1590,6 +1590,24 @@ tabCutPlan.addEventListener("click", () => switchTab("cutplan"));
 tab3D.addEventListener("click", () => switchTab("view3d"));
 tabRolls.addEventListener("click", () => switchTab("rolls"));
 tabLiner.addEventListener("click", () => switchTab("liner"));
+
+/* On a narrow phone the tab strip doesn't all fit and has to scroll horizontally (see the mobile
+ * media query) — without a visual cue for that, a tab like Cut plan sitting just past the edge is
+ * invisible and easy to miss entirely. Fades the wrap's edges in/out based on actual scroll
+ * position, so there's a hint only when there's really more to scroll to. */
+(function setupTabScrollFade() {
+  const wrap = document.querySelector(".tabs-wrap");
+  const tabsEl = document.querySelector(".tabs");
+  if (!wrap || !tabsEl) return;
+  function update() {
+    const maxScroll = tabsEl.scrollWidth - tabsEl.clientWidth;
+    wrap.classList.toggle("has-more-left", tabsEl.scrollLeft > 4);
+    wrap.classList.toggle("has-more-right", tabsEl.scrollLeft < maxScroll - 4);
+  }
+  tabsEl.addEventListener("scroll", update, { passive: true });
+  window.addEventListener("resize", update);
+  update();
+})();
 staggerToggle.addEventListener("change", computeAndRender);
 document.getElementById("printSequenceBtn").addEventListener("click", () => window.print());
 
