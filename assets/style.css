@@ -1012,6 +1012,13 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   .checkbox { gap: 0.6rem; }
   .checkbox input { width: 1.3rem; height: 1.3rem; }
 
+  /* row-remove/mode-toggle sit well under the ~32px a thumb can reliably hit — widened just their
+     tap area (padding, not the glyph itself) so the table stays visually as compact as the desktop
+     version while still being tappable. */
+  .col-remove { width: 2.3rem; }
+  .row-remove { padding: 0.5rem 0.55rem; font-size: 0.9rem; }
+  .mode-toggle { width: 1.9rem; height: 1.9rem; font-size: 0.72rem; }
+
   .sequence-card__head, .roll-card__head, .cutplan-print-page__head { flex-wrap: wrap; row-gap: 0.4rem; }
   .sequence-card__installed, .roll-card__cut { margin-left: 0; }
   .roll-card__meta { margin-right: 0; flex-basis: 100%; }
