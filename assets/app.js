@@ -2872,7 +2872,7 @@ function buildRollCardHtml(roll, index, rollLength) {
   const pieceRows = roll.pieces
     .map((p) => {
       const detail = p.extra > 1e-6 ? `${fmt.m(p.length + p.extra)} m (+${fmt.m(p.extra)} m to fill roll)` : `${fmt.m(p.length)} m`;
-      return `<li><span>${escapeHtml(p.label)}</span><span>${detail}</span></li>`;
+      return `<li><span class="roll-piece__label">${escapeHtml(p.label)}</span><span class="roll-piece__value">${detail}</span></li>`;
     })
     .join("");
   const cut = isRollCut(index + 1);

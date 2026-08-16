@@ -882,10 +882,21 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   font-size: 0.76rem;
   font-variant-numeric: tabular-nums;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
   gap: 0.15rem 1rem;
 }
-.roll-card__pieces li { display: flex; justify-content: space-between; gap: 0.5rem; padding: 0.15rem 0; border-bottom: 1px solid var(--line); }
+/* Every row must stay exactly one line tall, or its border-bottom drops below its neighbours'
+   in the next column over and the whole grid reads as misaligned — the "(+X m to fill roll)"
+   note is the one piece of text long enough to wrap at the old column width, so the label (which
+   can afford to lose characters — the length figure next to it is what actually matters on a cut
+   sheet) truncates with an ellipsis instead, and the value never wraps. */
+/* min-width: 0 on the grid item itself, not just the label inside it — a CSS grid item's automatic
+   minimum size is still driven by its content's min-content width (the nowrap value span) unless
+   this is set directly on the item, which silently overrides the 1fr track and pushes the whole
+   grid (and page, on a narrow phone) wider than intended. */
+.roll-card__pieces li { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; padding: 0.15rem 0; border-bottom: 1px solid var(--line); min-width: 0; }
+.roll-piece__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.roll-piece__value { flex: none; white-space: nowrap; }
 .roll-schedule-print-view { display: none; }
 .roll-labels-print-view { display: none; }
 
