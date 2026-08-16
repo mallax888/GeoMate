@@ -316,25 +316,46 @@
       <div class="view3d-canvas-wrap">
         <canvas id="view3DCanvas" class="view3d-canvas" width="900" height="560"></canvas>
         <svg id="view3DCompass" class="view3d-compass" viewBox="0 0 90 90" role="slider" aria-label="Drag to rotate and tilt the view" tabindex="0">
+          <defs>
+            <linearGradient id="view3DCubeTop" x1="15%" y1="0%" x2="85%" y2="100%">
+              <stop offset="0%" class="view3d-cube-grad-top-a"></stop>
+              <stop offset="100%" class="view3d-cube-grad-top-b"></stop>
+            </linearGradient>
+            <linearGradient id="view3DCubeLeft" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" class="view3d-cube-grad-left-a"></stop>
+              <stop offset="100%" class="view3d-cube-grad-left-b"></stop>
+            </linearGradient>
+            <linearGradient id="view3DCubeRight" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" class="view3d-cube-grad-right-a"></stop>
+              <stop offset="100%" class="view3d-cube-grad-right-b"></stop>
+            </linearGradient>
+            <filter id="view3DCubeShadow" x="-60%" y="-60%" width="220%" height="220%">
+              <feDropShadow dx="0" dy="1" stdDeviation="1.1" flood-opacity="0.38"></feDropShadow>
+            </filter>
+          </defs>
           <circle class="view3d-compass__bg" cx="45" cy="45" r="38"></circle>
           <circle class="view3d-compass__ring" cx="45" cy="45" r="36"></circle>
           <line id="view3DCompassSpoke" class="view3d-compass__spoke" x1="45" y1="45" x2="45" y2="14"></line>
           <circle id="view3DCompassHandle" class="view3d-compass__handle" cx="45" cy="14" r="6"></circle>
 
           <!-- The cube itself — a real ViewCube: click any face to snap to that view, same as the
-               ring's snap dots (left = SW corner, right = SE corner, top = straight down). -->
-          <g class="view3d-compass__cube">
+               ring's snap dots (left = SW corner, right = SE corner, top = straight down). Scaled up
+               1.35x around its own centre (rather than hand-edited point-by-point) so it reads as a
+               solid object instead of a tiny flat icon, with a gradient per face for a proper
+               lit-from-above bevel (top lightest, left mid, right darkest) and a soft drop shadow to
+               lift it off the ring behind it. -->
+          <g class="view3d-compass__cube" transform="translate(45,45) scale(1.35) translate(-45,-45)" filter="url(#view3DCubeShadow)">
             <g class="view3d-compass__snap" data-yaw="-2.356194490192345" data-pitch="corner">
               <title>Southwest view</title>
-              <polygon class="view3d-compass__cube-face view3d-compass__cube-face--left" points="33,38 45,45 45,61 33,54"></polygon>
+              <polygon class="view3d-compass__cube-face view3d-compass__cube-face--left" points="33,38 45,45 45,61 33,54" fill="url(#view3DCubeLeft)"></polygon>
             </g>
             <g class="view3d-compass__snap" data-yaw="2.356194490192345" data-pitch="corner">
               <title>Southeast view</title>
-              <polygon class="view3d-compass__cube-face view3d-compass__cube-face--right" points="45,45 57,38 57,54 45,61"></polygon>
+              <polygon class="view3d-compass__cube-face view3d-compass__cube-face--right" points="45,45 57,38 57,54 45,61" fill="url(#view3DCubeRight)"></polygon>
             </g>
             <g class="view3d-compass__snap" data-pitch="top">
               <title>Top view</title>
-              <polygon class="view3d-compass__cube-face view3d-compass__cube-face--top" points="45,31 57,38 45,45 33,38"></polygon>
+              <polygon class="view3d-compass__cube-face view3d-compass__cube-face--top" points="45,31 57,38 45,45 33,38" fill="url(#view3DCubeTop)"></polygon>
             </g>
           </g>
 

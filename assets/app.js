@@ -2486,6 +2486,58 @@ const view3DCanvas = document.getElementById("view3DCanvas");
 const view3DEmpty = document.getElementById("view3DEmpty");
 const view3DState = { yaw: -0.6, pitch: 0.5, zoom: 1, panX: 0, panY: 0 };
 
+// Which lift (by RL) is currently spotlit — hovering a label or the layer itself in the canvas, or
+// (on touch, where there's no hover) tapping one. With a couple dozen stacked lifts the leader lines
+// alone turn into an unreadable web, so instead of trying to make the static picture legible, picking
+// one lift makes ONLY it and its own leader line stand out while everything else recedes.
+let view3DHoveredRL = null;
+let view3DHoverLocked = false; // set by a click/tap (persists till clicked again); a live mouse hover isn't
+let view3DLastRender = null; // { anchors: [{rl, installed, screenPts, anchorX, anchorY}], labelY, labelX, rowHalf } for hit-testing
+
+function pointInPolygon(x, y, pts) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i].x, yi = pts[i].y, xj = pts[j].x, yj = pts[j].y;
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/** Canvas-internal pixel coords for a pointer event, accounting for the canvas's CSS-scaled size. */
+function view3DPointFromEvent(e) {
+  const rect = view3DCanvas.getBoundingClientRect();
+  return {
+    x: ((e.clientX - rect.left) / rect.width) * view3DCanvas.width,
+    y: ((e.clientY - rect.top) / rect.height) * view3DCanvas.height,
+  };
+}
+
+/** Which lift's RL sits under a canvas point — the label column (nearest row) takes priority since
+ * rows are only ~13px of canvas apart and easy to miss entirely, then falls back to the drawn shapes
+ * themselves, topmost (last-painted, i.e. highest RL) first since that's what actually occludes at
+ * that pixel. `generous` drops the vertical tolerance on the label column and widens it horizontally
+ * — those 13px rows are already tight in canvas-internal pixels, and scaled down to a phone's on-
+ * screen canvas size they're only a few CSS px tall, unhittable by a precise mouse-hover tolerance.
+ * Used for an actual tap/click (a deliberate, discrete action — "nearest row" is a safe guess even
+ * a little off-target) but not for live mouse hovering (where a stray pass-through shouldn't light
+ * up whatever row happens to be nearest). */
+function hitTestLift3D(x, y, generous) {
+  const info = view3DLastRender;
+  if (!info) return null;
+  if (x < info.labelX + (generous ? 40 : 15)) {
+    let best = null, bestDist = Infinity;
+    info.anchors.forEach((a, i) => {
+      const d = Math.abs(y - info.labelY[i]);
+      if (d < bestDist) { bestDist = d; best = a; }
+    });
+    if (best && (generous || bestDist <= info.rowHalf)) return best.rl;
+  }
+  for (let i = info.anchors.length - 1; i >= 0; i--) {
+    if (pointInPolygon(x, y, info.anchors[i].screenPts)) return info.anchors[i].rl;
+  }
+  return null;
+}
+
 function project3D(x, y, z, yaw, pitch) {
   const cosY = Math.cos(yaw), sinY = Math.sin(yaw);
   const x1 = x * cosY - y * sinY;
@@ -2549,6 +2601,8 @@ function render3D(results) {
   const lineStrong = style.getPropertyValue("--line-strong").trim();
   const ink = style.getPropertyValue("--ink").trim();
   const inkMuted = style.getPropertyValue("--ink-muted").trim();
+  const accentPop = style.getPropertyValue("--accent-pop").trim();
+  const accentTint = style.getPropertyValue("--accent-tint").trim();
 
   ctx.font = "11px " + (style.getPropertyValue("--font-mono").trim() || "monospace");
   ctx.textBaseline = "middle";
@@ -2562,20 +2616,35 @@ function render3D(results) {
   // the distinction this colour-coding exists to make. Within each colour, alternating opacity/
   // weight (not a third hue, which would blur the installed/pending read) still bands neighbouring
   // layers apart the way the old alternating accent/clay colours did.
+  //
+  // With more than a handful of lifts, tracing any ONE of those bands (or its leader line, below)
+  // by eye stops being realistic — so whichever lift is spotlit (view3DHoveredRL, set by hovering/
+  // tapping its label or its own shape) gets pulled forward at full strength while every other lift
+  // fades back, instead of everything competing for attention at once.
+  const spotlit = view3DHoveredRL !== null;
   const anchors = projectedLifts.map((lift) => {
     const alt = lift.colorIndex % 2 === 1;
+    const isHovered = spotlit && lift.rl === view3DHoveredRL;
+    const dim = spotlit && !isHovered;
     const screenPts = lift.pts.map(toScreen);
     ctx.beginPath();
     screenPts.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
     ctx.closePath();
     ctx.fillStyle = lift.installed ? goodTint : lineStrong;
-    ctx.globalAlpha = alt ? 0.32 : 0.96;
+    ctx.globalAlpha = (alt ? 0.32 : 0.96) * (dim ? 0.22 : 1);
     ctx.fill();
     ctx.globalAlpha = 1;
     ctx.strokeStyle = lift.installed ? good : graphite;
     ctx.lineWidth = alt ? 1 : 2.25;
+    ctx.globalAlpha = dim ? 0.3 : 1;
     ctx.stroke();
-    return { lift, anchorX: screenPts[0].x, anchorY: screenPts[0].y };
+    ctx.globalAlpha = 1;
+    if (isHovered) {
+      ctx.strokeStyle = accentPop;
+      ctx.lineWidth = 2.75;
+      ctx.stroke();
+    }
+    return { lift, rl: lift.rl, screenPts, anchorX: screenPts[0].x, anchorY: screenPts[0].y };
   });
 
   // Labels sit in a fixed, evenly-spaced column in RL order (highest at top) rather than at each
@@ -2586,25 +2655,45 @@ function render3D(results) {
   const maxGap = 13;
   const gap = anchors.length > 1 ? Math.min(maxGap, (H - topMargin * 2) / (anchors.length - 1)) : 0;
   const labelY = anchors.map((_, i) => topMargin + (anchors.length - 1 - i) * gap);
+  view3DLastRender = { anchors, labelY, labelX, rowHalf: gap / 2 + 2 };
 
   anchors.forEach(({ lift, anchorX, anchorY }, i) => {
-    ctx.strokeStyle = lift.installed ? good : inkMuted;
-    ctx.globalAlpha = 0.35;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(labelX + 4, labelY[i]);
-    ctx.lineTo(anchorX, anchorY);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
+    const isHovered = spotlit && lift.rl === view3DHoveredRL;
+    const dim = spotlit && !isHovered;
 
-    ctx.fillStyle = lift.installed ? good : ink;
-    ctx.fillText(`RL ${lift.rlLabel}`, labelX, labelY[i]);
+    // Spotlit: only the hovered lift's own leader line is drawn at all — with two or three dozen
+    // stacked lifts, dimming the rest still leaves a web of crossing lines competing with the one
+    // that actually matters, so the clearest read is to hide them outright rather than fade them.
+    if (!dim) {
+      ctx.strokeStyle = lift.installed ? good : inkMuted;
+      ctx.globalAlpha = isHovered ? 0.9 : 0.35;
+      ctx.lineWidth = isHovered ? 2 : 1;
+      ctx.beginPath();
+      ctx.moveTo(labelX + 4, labelY[i]);
+      ctx.lineTo(anchorX, anchorY);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    const label = `RL ${lift.rlLabel}`;
+    ctx.font = isHovered ? "bold 11px " + (style.getPropertyValue("--font-mono").trim() || "monospace") : "11px " + (style.getPropertyValue("--font-mono").trim() || "monospace");
+    if (isHovered) {
+      const w = ctx.measureText(label).width;
+      ctx.fillStyle = accentTint;
+      ctx.fillRect(labelX - w - 5, labelY[i] - 8, w + 9, 16);
+    }
+    ctx.globalAlpha = dim ? 0.45 : 1;
+    ctx.fillStyle = isHovered ? accentPop : lift.installed ? good : ink;
+    ctx.fillText(label, labelX, labelY[i]);
+    ctx.globalAlpha = 1;
   });
+  ctx.font = "11px " + (style.getPropertyValue("--font-mono").trim() || "monospace");
 
   ctx.fillStyle = inkMuted;
   ctx.textAlign = "left";
   ctx.font = "10px " + (style.getPropertyValue("--font-mono").trim() || "monospace");
-  ctx.fillText(`${lifts.length} lifts · RL ${lifts[0].rlLabel} → ${lifts[lifts.length - 1].rlLabel}`, 12, H - 14);
+  const hint = spotlit ? "" : lifts.length > 8 ? " · hover a level to isolate it" : "";
+  ctx.fillText(`${lifts.length} lifts · RL ${lifts[0].rlLabel} → ${lifts[lifts.length - 1].rlLabel}${hint}`, 12, H - 14);
 
   syncCompass();
 }
@@ -2630,26 +2719,68 @@ function syncCompass() {
 
 (function wire3DInteraction() {
   if (!view3DCanvas) return;
-  let dragging = false, lastX = 0, lastY = 0;
+  let dragging = false, lastX = 0, lastY = 0, moved = 0;
+
+  function setHover(rl) {
+    if (rl === view3DHoveredRL) return;
+    view3DHoveredRL = rl;
+    render3D(window.__geogridResults || []);
+  }
 
   view3DCanvas.addEventListener("pointerdown", (e) => {
     dragging = true;
     lastX = e.clientX;
     lastY = e.clientY;
+    moved = 0;
+    view3DCanvas.style.cursor = "grabbing";
     view3DCanvas.setPointerCapture(e.pointerId);
   });
   view3DCanvas.addEventListener("pointermove", (e) => {
-    if (!dragging) return;
-    const dx = e.clientX - lastX, dy = e.clientY - lastY;
-    lastX = e.clientX;
-    lastY = e.clientY;
-    view3DState.yaw += dx * 0.008;
-    view3DState.pitch = Math.max(VIEW3D_PITCH_MIN, Math.min(VIEW3D_PITCH_MAX, view3DState.pitch + dy * 0.006));
-    render3D(window.__geogridResults || []);
+    if (dragging) {
+      const dx = e.clientX - lastX, dy = e.clientY - lastY;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      moved += Math.abs(dx) + Math.abs(dy);
+      view3DState.yaw += dx * 0.008;
+      view3DState.pitch = Math.max(VIEW3D_PITCH_MIN, Math.min(VIEW3D_PITCH_MAX, view3DState.pitch + dy * 0.006));
+      render3D(window.__geogridResults || []);
+      return;
+    }
+    // Live hover (mouse only — touch has no hover concept and gets a tap-to-lock below instead).
+    // Skipped once something is locked in by a click so moving the mouse away doesn't clear it.
+    if (e.pointerType !== "mouse" || view3DHoverLocked) return;
+    const p = view3DPointFromEvent(e);
+    const hit = hitTestLift3D(p.x, p.y);
+    view3DCanvas.style.cursor = hit !== null ? "pointer" : "grab";
+    setHover(hit);
   });
-  ["pointerup", "pointercancel", "pointerleave"].forEach((evt) =>
-    view3DCanvas.addEventListener(evt, () => (dragging = false))
+  ["pointerup", "pointercancel"].forEach((evt) =>
+    view3DCanvas.addEventListener(evt, (e) => {
+      dragging = false;
+      view3DCanvas.style.cursor = view3DHoveredRL !== null ? "pointer" : "grab";
+      if (evt === "pointercancel" || moved >= 6) return; // a real drag-to-rotate, not a tap/click
+      // A tap or click toggles a LOCKED spotlight — the only way touch (no hover) can pick a lift,
+      // and on desktop it lets you move the mouse away afterwards without losing the highlight.
+      const p = view3DPointFromEvent(e);
+      const hit = hitTestLift3D(p.x, p.y, e.pointerType !== "mouse");
+      if (hit !== null && hit === view3DHoveredRL && view3DHoverLocked) {
+        view3DHoverLocked = false;
+        setHover(null);
+      } else if (hit !== null) {
+        view3DHoverLocked = true;
+        setHover(hit);
+      } else if (view3DHoverLocked) {
+        view3DHoverLocked = false;
+        setHover(null);
+      }
+    })
   );
+  view3DCanvas.addEventListener("pointerleave", () => {
+    dragging = false;
+    if (view3DHoverLocked) return;
+    view3DCanvas.style.cursor = "grab";
+    setHover(null);
+  });
   view3DCanvas.addEventListener(
     "wheel",
     (e) => {
@@ -2662,6 +2793,8 @@ function syncCompass() {
 
   document.getElementById("view3DReset").addEventListener("click", () => {
     Object.assign(view3DState, { yaw: -0.6, pitch: 0.5, zoom: 1, panX: 0, panY: 0 });
+    view3DHoverLocked = false;
+    view3DHoveredRL = null;
     render3D(window.__geogridResults || []);
   });
 })();

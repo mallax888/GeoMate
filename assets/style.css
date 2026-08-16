@@ -804,8 +804,8 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   position: absolute;
   top: 0.6rem;
   right: 0.6rem;
-  width: 5.4rem;
-  height: 5.4rem;
+  width: 6.2rem;
+  height: 6.2rem;
   touch-action: none;
   cursor: grab;
 }
@@ -818,12 +818,18 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .view3d-compass:focus-visible .view3d-compass__handle { fill: var(--accent-strong); }
 
 /* The cube icon at the centre — a real ViewCube: three shaded faces (top lightest, left mid, right
-   darkest) for a simple isometric read, and each face is its own snap target (see the HTML). */
-.view3d-compass__cube-face { stroke: var(--ink-muted); stroke-width: 0.75; stroke-linejoin: round; cursor: pointer; }
-.view3d-compass__cube-face--top { fill: var(--accent-tint); }
-.view3d-compass__cube-face--left { fill: var(--line); }
-.view3d-compass__cube-face--right { fill: var(--line-strong); }
-.view3d-compass__snap:hover .view3d-compass__cube-face { fill: var(--accent); }
+   darkest, each a gradient rather than a flat tone for an actual lit-from-above bevel) plus a soft
+   drop shadow (see the <filter> in the HTML) to lift it visually off the ring, and each face is its
+   own snap target. Resting fill comes from the gradients set as SVG fill="" attributes on each
+   polygon — nothing here sets fill at rest, only on hover, so the attribute shows through. */
+.view3d-compass__cube-face { stroke: var(--ink-muted); stroke-width: 0.6; stroke-linejoin: round; cursor: pointer; transition: filter 0.1s ease; }
+.view3d-cube-grad-top-a { stop-color: var(--surface); }
+.view3d-cube-grad-top-b { stop-color: var(--accent-tint); }
+.view3d-cube-grad-left-a { stop-color: var(--line); }
+.view3d-cube-grad-left-b { stop-color: var(--line-strong); }
+.view3d-cube-grad-right-a { stop-color: var(--line-strong); }
+.view3d-cube-grad-right-b { stop-color: var(--graphite); }
+.view3d-compass__snap:hover .view3d-compass__cube-face { fill: var(--accent); filter: brightness(1.08); }
 
 .view3d-compass__snap { cursor: pointer; }
 .view3d-compass__snap circle { fill: var(--surface); stroke: var(--line-strong); stroke-width: 1; }
