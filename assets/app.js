@@ -2492,7 +2492,7 @@ const view3DState = { yaw: -0.6, pitch: 0.5, zoom: 1, panX: 0, panY: 0 };
 // one lift makes ONLY it and its own leader line stand out while everything else recedes.
 let view3DHoveredRL = null;
 let view3DHoverLocked = false; // set by a click/tap (persists till clicked again); a live mouse hover isn't
-let view3DLastRender = null; // { anchors: [{rl, installed, screenPts, anchorX, anchorY}], labelY, labelX, rowHalf } for hit-testing
+let view3DLastRender = null; // { anchors: [{rl, installed, screenPts, anchorX, anchorY}] } for hit-testing
 
 function pointInPolygon(x, y, pts) {
   let inside = false;
@@ -2512,26 +2512,23 @@ function view3DPointFromEvent(e) {
   };
 }
 
-/** Which lift's RL sits under a canvas point — the label column (nearest row) takes priority since
- * rows are only ~13px of canvas apart and easy to miss entirely, then falls back to the drawn shapes
- * themselves, topmost (last-painted, i.e. highest RL) first since that's what actually occludes at
- * that pixel. `generous` drops the vertical tolerance on the label column and widens it horizontally
- * — those 13px rows are already tight in canvas-internal pixels, and scaled down to a phone's on-
- * screen canvas size they're only a few CSS px tall, unhittable by a precise mouse-hover tolerance.
- * Used for an actual tap/click (a deliberate, discrete action — "nearest row" is a safe guess even
- * a little off-target) but not for live mouse hovering (where a stray pass-through shouldn't light
- * up whatever row happens to be nearest). */
+/** Which lift's RL sits under a canvas point — each lift's own label (nearest one, since with many
+ * lifts stacked close together their labels can sit close enough to overlap) takes priority since a
+ * single-pixel corner is an easy miss, then falls back to the drawn shape itself, topmost (last-
+ * painted, i.e. highest RL) first since that's what actually occludes at that pixel. `generous`
+ * widens the label tolerance for an actual tap/click (a deliberate, discrete action — "nearest
+ * label" is a safe guess even a little off-target) but not for live mouse hovering (where a stray
+ * pass-through shouldn't light up whatever label happens to be nearest). */
 function hitTestLift3D(x, y, generous) {
   const info = view3DLastRender;
   if (!info) return null;
-  if (x < info.labelX + (generous ? 40 : 15)) {
-    let best = null, bestDist = Infinity;
-    info.anchors.forEach((a, i) => {
-      const d = Math.abs(y - info.labelY[i]);
-      if (d < bestDist) { bestDist = d; best = a; }
-    });
-    if (best && (generous || bestDist <= info.rowHalf)) return best.rl;
-  }
+  const tol = generous ? 26 : 14;
+  let best = null, bestDist = Infinity;
+  info.anchors.forEach((a) => {
+    const d = Math.hypot(x - (a.anchorX - 6), y - (a.anchorY - 6));
+    if (d < bestDist) { bestDist = d; best = a; }
+  });
+  if (best && bestDist <= tol) return best.rl;
   for (let i = info.anchors.length - 1; i >= 0; i--) {
     if (pointInPolygon(x, y, info.anchors[i].screenPts)) return info.anchors[i].rl;
   }
@@ -2587,7 +2584,6 @@ function render3D(results) {
   const cx = W / 2 + panX, cy = H / 2 + panY;
   const midSX = (minSX + maxSX) / 2, midSY = (minSY + maxSY) / 2;
   const toScreen = (p) => ({ x: cx + (p.sx - midSX) * scale, y: cy + (p.sy - midSY) * scale });
-  const labelX = cx + (minSX - midSX) * scale - 10; // one aligned column, left of the whole stack
 
   // Paint strictly in RL order (lowest first) so each higher lift is drawn over the ones below it —
   // matches build order and reads correctly regardless of camera angle. The computed camera "depth"
@@ -2647,47 +2643,36 @@ function render3D(results) {
     return { lift, rl: lift.rl, screenPts, anchorX: screenPts[0].x, anchorY: screenPts[0].y };
   });
 
-  // Labels sit in a fixed, evenly-spaced column in RL order (highest at top) rather than at each
-  // lift's raw projected position — once lifts have very different face lengths/shapes (normal for
-  // a real site), their true positions scatter unpredictably and sorting by that scrambles the RL
-  // sequence into something unreadable. A leader line still points each label at its true anchor.
-  const topMargin = 20;
-  const maxGap = 13;
-  const gap = anchors.length > 1 ? Math.min(maxGap, (H - topMargin * 2) / (anchors.length - 1)) : 0;
-  const labelY = anchors.map((_, i) => topMargin + (anchors.length - 1 - i) * gap);
-  view3DLastRender = { anchors, labelY, labelX, rowHalf: gap / 2 + 2 };
+  view3DLastRender = { anchors };
 
-  anchors.forEach(({ lift, anchorX, anchorY }, i) => {
-    const isHovered = spotlit && lift.rl === view3DHoveredRL;
-    const dim = spotlit && !isHovered;
-
-    // Spotlit: only the hovered lift's own leader line is drawn at all — with two or three dozen
-    // stacked lifts, dimming the rest still leaves a web of crossing lines competing with the one
-    // that actually matters, so the clearest read is to hide them outright rather than fade them.
-    if (!dim) {
-      ctx.strokeStyle = lift.installed ? good : inkMuted;
-      ctx.globalAlpha = isHovered ? 0.9 : 0.35;
-      ctx.lineWidth = isHovered ? 2 : 1;
-      ctx.beginPath();
-      ctx.moveTo(labelX + 4, labelY[i]);
-      ctx.lineTo(anchorX, anchorY);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-    }
-
+  // Each label sits right at its own lift's corner — no separate list, no leader line, so a label
+  // always visibly IS its grid rather than pointing at it from across the canvas. Drawn in two
+  // passes so the spotlit one (if any) always paints on top of its neighbours regardless of paint
+  // order — with lifts stacked close together their labels can sit close enough to overlap, and the
+  // one actually being looked at should never end up hidden behind a dim neighbour's text.
+  const monoFont = style.getPropertyValue("--font-mono").trim() || "monospace";
+  const drawLabel = (lift, anchorX, anchorY, isHovered, dim) => {
     const label = `RL ${lift.rlLabel}`;
-    ctx.font = isHovered ? "bold 11px " + (style.getPropertyValue("--font-mono").trim() || "monospace") : "11px " + (style.getPropertyValue("--font-mono").trim() || "monospace");
+    ctx.font = (isHovered ? "bold " : "") + "11px " + monoFont;
     if (isHovered) {
       const w = ctx.measureText(label).width;
       ctx.fillStyle = accentTint;
-      ctx.fillRect(labelX - w - 5, labelY[i] - 8, w + 9, 16);
+      ctx.fillRect(anchorX - w - 10, anchorY - 14, w + 9, 16);
     }
-    ctx.globalAlpha = dim ? 0.45 : 1;
+    ctx.globalAlpha = dim ? 0.4 : 1;
     ctx.fillStyle = isHovered ? accentPop : lift.installed ? good : ink;
-    ctx.fillText(label, labelX, labelY[i]);
+    ctx.fillText(label, anchorX - 6, anchorY - 6);
     ctx.globalAlpha = 1;
+  };
+  anchors.forEach(({ lift, anchorX, anchorY }) => {
+    const isHovered = spotlit && lift.rl === view3DHoveredRL;
+    if (!isHovered) drawLabel(lift, anchorX, anchorY, false, spotlit);
   });
-  ctx.font = "11px " + (style.getPropertyValue("--font-mono").trim() || "monospace");
+  if (spotlit) {
+    const hovered = anchors.find((a) => a.lift.rl === view3DHoveredRL);
+    if (hovered) drawLabel(hovered.lift, hovered.anchorX, hovered.anchorY, true, false);
+  }
+  ctx.font = "11px " + monoFont;
 
   ctx.fillStyle = inkMuted;
   ctx.textAlign = "left";
