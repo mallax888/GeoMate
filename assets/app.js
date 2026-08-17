@@ -2676,7 +2676,7 @@ function render3D(results) {
   const ink = style.getPropertyValue("--ink").trim();
   const inkMuted = style.getPropertyValue("--ink-muted").trim();
   const accentPop = style.getPropertyValue("--accent-pop").trim();
-  const accentTint = style.getPropertyValue("--accent-tint").trim();
+  const inkOnAccent = style.getPropertyValue("--ink-on-accent").trim();
 
   ctx.font = "11px " + (style.getPropertyValue("--font-mono").trim() || "monospace");
   ctx.textBaseline = "middle";
@@ -2704,20 +2704,19 @@ function render3D(results) {
     ctx.beginPath();
     screenPts.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
     ctx.closePath();
-    ctx.fillStyle = lift.installed ? goodTint : lineStrong;
-    ctx.globalAlpha = (alt ? 0.32 : 0.96) * (dim ? 0.22 : 1);
+    // The spotlit lift always gets the same solid, opaque highlight fill — deliberately ignoring the
+    // alternating-band alpha (0.32 on "alt" lifts) and the installed/pending tint below, both of which
+    // exist to tell neighbouring bland lifts apart from each other, not to compete with "this is the
+    // one you're looking at." One consistent loud colour, at full strength, every time.
+    ctx.fillStyle = isHovered ? accentPop : lift.installed ? goodTint : lineStrong;
+    ctx.globalAlpha = isHovered ? 0.82 : (alt ? 0.32 : 0.96) * (dim ? 0.22 : 1);
     ctx.fill();
     ctx.globalAlpha = 1;
-    ctx.strokeStyle = lift.installed ? good : graphite;
-    ctx.lineWidth = alt ? 1 : 2.25;
-    ctx.globalAlpha = dim ? 0.3 : 1;
+    ctx.strokeStyle = isHovered ? accentPop : lift.installed ? good : graphite;
+    ctx.lineWidth = isHovered ? 2.75 : alt ? 1 : 2.25;
+    ctx.globalAlpha = isHovered ? 1 : dim ? 0.3 : 1;
     ctx.stroke();
     ctx.globalAlpha = 1;
-    if (isHovered) {
-      ctx.strokeStyle = accentPop;
-      ctx.lineWidth = 2.75;
-      ctx.stroke();
-    }
     return { lift, rl: lift.rl, screenPts, anchorX: screenPts[0].x, anchorY: screenPts[0].y };
   });
 
@@ -2746,32 +2745,50 @@ function render3D(results) {
   }
   const showPermanentLabels = overlaps <= 2;
 
-  // Drawn in two passes so the spotlit one (if any) always paints on top of its neighbours
-  // regardless of paint order — with lifts stacked close together their labels can sit close enough
-  // to overlap, and the one actually being looked at should never end up hidden behind a dim
-  // neighbour's text.
-  const drawLabel = (lift, anchorX, anchorY, isHovered, dim) => {
-    const label = `RL ${lift.rlLabel}`;
-    ctx.font = (isHovered ? "bold " : "") + "11px " + monoFont;
-    if (isHovered) {
-      const w = ctx.measureText(label).width;
-      ctx.fillStyle = accentTint;
-      ctx.fillRect(anchorX - w - 10, anchorY - 14, w + 9, 16);
-    }
+  // Permanent (non-hovered) labels still sit right at their own lift's corner — that's fine for
+  // telling bland, similarly-toned neighbours apart. The spotlit one is a different job: whichever
+  // lift you're on, its label should be the one thing you don't have to hunt for, so it's pinned to
+  // a fixed spot (top-left) instead of wherever that lift's corner happens to have landed, and drawn
+  // as a solid badge instead of small text — same treatment as the shape's own solid highlight fill.
+  const drawLabel = (lift, anchorX, anchorY, dim) => {
+    ctx.font = "11px " + monoFont;
     ctx.globalAlpha = dim ? 0.4 : 1;
-    ctx.fillStyle = isHovered ? accentPop : lift.installed ? good : ink;
-    ctx.fillText(label, anchorX - 6, anchorY - 6);
+    ctx.fillStyle = lift.installed ? good : ink;
+    ctx.fillText(`RL ${lift.rlLabel}`, anchorX - 6, anchorY - 6);
     ctx.globalAlpha = 1;
   };
   if (showPermanentLabels) {
     anchors.forEach(({ lift, anchorX, anchorY }) => {
       const isHovered = spotlit && lift.rl === view3DHoveredRL;
-      if (!isHovered) drawLabel(lift, anchorX, anchorY, false, spotlit);
+      if (!isHovered) drawLabel(lift, anchorX, anchorY, spotlit);
     });
   }
   if (spotlit) {
     const hovered = anchors.find((a) => a.lift.rl === view3DHoveredRL);
-    if (hovered) drawLabel(hovered.lift, hovered.anchorX, hovered.anchorY, true, false);
+    if (hovered) {
+      const label = `RL ${hovered.lift.rlLabel}`;
+      const badgeFont = "bold 14px " + monoFont;
+      ctx.font = badgeFont;
+      const textW = ctx.measureText(label).width;
+      const padX = 12, boxH = 30, x = 14, y = 14;
+      const boxW = textW + padX * 2;
+      ctx.save();
+      ctx.shadowColor = "rgba(0, 0, 0, 0.35)";
+      ctx.shadowBlur = 12;
+      ctx.shadowOffsetY = 3;
+      ctx.fillStyle = accentPop;
+      ctx.beginPath();
+      ctx.roundRect(x, y, boxW, boxH, boxH / 2);
+      ctx.fill();
+      ctx.restore();
+      ctx.fillStyle = inkOnAccent;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.font = badgeFont;
+      ctx.fillText(label, x + padX, y + boxH / 2 + 1);
+      ctx.textBaseline = "middle";
+      ctx.textAlign = "right";
+    }
   }
   ctx.font = "11px " + monoFont;
 
