@@ -69,6 +69,10 @@
         <span>Install rate</span>
         <div class="field__unit"><input type="number" id="installRate" min="0" step="10" placeholder="0" /><em>m&sup2;/day</em></div>
       </label>
+      <label class="field">
+        <span>Base level</span>
+        <div class="field__unit"><input type="number" id="baseLevel" step="0.01" placeholder="optional" /><em>RL</em></div>
+      </label>
     </div>
     <p class="generator__hint">
       The Roll schedule packs strips onto the fewest possible rolls by pooling every lift together —
@@ -76,6 +80,12 @@
       Set a lift count here (e.g. 3) to only ever share a roll between that many <em>adjacent</em>
       lifts — a bit more offcut, but each roll stays close to where it's actually used. Leave blank to
       pool everything.
+    </p>
+    <p class="generator__hint">
+      Base level is the RL fill started from, below the lowest lift — needed to work out that lift's
+      own fill volume (every lift above it uses the RL gap to the lift below, so only the bottom one
+      needs this). Leave blank if you don't need fill volumes, or don't mind the bottom lift missing
+      from the total.
     </p>
     <p id="specWarning" class="warning-text" hidden></p>
 
@@ -223,6 +233,7 @@
               <th scope="col" class="col-strips">Strips</th>
               <th scope="col" class="col-overlap">Overlap</th>
               <th scope="col" class="col-area">Area</th>
+              <th scope="col" class="col-volume">Fill volume</th>
               <th scope="col" class="col-diagram">Layout</th>
               <th scope="col" class="col-remove"><span class="sr-only">Insert / remove</span></th>
             </tr>
@@ -516,6 +527,11 @@
         <span class="stat__label">Grid area</span>
         <span class="stat__value" id="statArea">0<small> m²</small></span>
       </div>
+      <div class="stat">
+        <span class="stat__label">Fill volume</span>
+        <span class="stat__value" id="statVolume">—</span>
+        <span class="stat__hint" id="statVolumeHint" hidden>enter base level</span>
+      </div>
       <div class="stat stat--highlight">
         <span class="stat__label">Rolls to order</span>
         <span class="stat__value" id="statRolls">0</span>
@@ -590,6 +606,7 @@
     <td class="col-strips result-cell strip-count">—</td>
     <td class="col-overlap result-cell overlap-value">—</td>
     <td class="col-area result-cell area-value">—</td>
+    <td class="col-volume result-cell volume-value">—</td>
     <td class="col-diagram"><svg class="strip-diagram" viewBox="0 0 240 34" preserveAspectRatio="none"></svg></td>
     <td class="col-remove">
       <button type="button" class="row-remove" aria-label="Remove lift">✕</button>

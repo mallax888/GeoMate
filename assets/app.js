@@ -904,10 +904,12 @@ const settingsInputs = {
   rollGroupSize: document.getElementById("rollGroupSize"),
   costPerRoll: document.getElementById("costPerRoll"),
   installRate: document.getElementById("installRate"),
+  baseLevel: document.getElementById("baseLevel"),
 };
 
 function readSettings() {
   const rollGroupSizeRaw = parseInt(settingsInputs.rollGroupSize.value, 10);
+  const baseLevelRaw = parseFloat(settingsInputs.baseLevel.value);
   return {
     w: parseFloat(settingsInputs.rollWidth.value) || 0,
     oMin: (parseFloat(settingsInputs.minOverlapMm.value) || 0) / 1000,
@@ -916,6 +918,9 @@ function readSettings() {
     rollGroupSize: rollGroupSizeRaw > 0 ? rollGroupSizeRaw : 0,
     costPerRoll: parseFloat(settingsInputs.costPerRoll.value) || 0,
     installRate: parseFloat(settingsInputs.installRate.value) || 0,
+    // The RL fill started from, below the lowest lift — null (not 0) when blank, since RL 0 is a
+    // perfectly real elevation and can't double as "not set".
+    baseLevel: Number.isFinite(baseLevelRaw) ? baseLevelRaw : null,
   };
 }
 
@@ -1290,7 +1295,7 @@ function renderRowWarnings(issues) {
 }
 
 function computeAndRender() {
-  const { w, oMin, rollLength, rollGroupSize, costPerRoll, installRate } = readSettings();
+  const { w, oMin, rollLength, rollGroupSize, costPerRoll, installRate, baseLevel } = readSettings();
   const specWarning = document.getElementById("specWarning");
   if (oMin < 0) {
     specWarning.hidden = false;
@@ -1429,9 +1434,32 @@ function computeAndRender() {
     });
   });
 
+  // Fill volume per lift = its own footprint (theoreticalArea — the net area, not counting overlap
+  // waste) times how much fill it took to reach it: the RL gap up from the lift below, or from
+  // Base level for the very bottom one. A separate pass over the finished liftResults, not folded
+  // into the loop above, because "the lift below" only exists once every row's already been through.
+  let prevRL = baseLevel;
+  liftResults.forEach((r) => {
+    const curRL = parseFloat(r.rl);
+    const thickness = Number.isFinite(curRL) && Number.isFinite(prevRL) ? curRL - prevRL : null;
+    r.liftThickness = thickness;
+    r.fillVolume = thickness > 0 && r.theoreticalArea > 0 ? r.theoreticalArea * thickness : null;
+    const volCell = r.row.querySelector(".volume-value");
+    if (volCell) {
+      if (r.fillVolume != null) {
+        volCell.innerHTML = `${fmt.m(r.fillVolume)}<small> m³</small>`;
+        volCell.classList.remove("is-empty");
+      } else {
+        volCell.textContent = "—";
+        volCell.classList.add("is-empty");
+      }
+    }
+    if (Number.isFinite(curRL)) prevRL = curRL;
+  });
+
   window.__geogridResults = liftResults; // exposed for CSV export + progress tracking, set before renderSummary needs it
   renderRowWarnings([...inputIssues, ...validateRows(liftResults, rollLength)]);
-  renderSummary(liftResults, rollLength, rollGroupSize, costPerRoll, installRate);
+  renderSummary(liftResults, rollLength, rollGroupSize, costPerRoll, installRate, baseLevel);
   renderSequence(liftResults, w);
   renderCutPlan(liftResults, w);
   render3D(liftResults);
@@ -1512,7 +1540,7 @@ function faceAlignedFootprint(cutPlan) {
   });
 }
 
-function renderSummary(results, rollLength, rollGroupSize, costPerRoll, installRate) {
+function renderSummary(results, rollLength, rollGroupSize, costPerRoll, installRate, baseLevel) {
   // Build-order position of each lift — used by buildRollPieces (below, and inside
   // packRollsWindowed) to number rolls in first-used-on-site order. Tagged once, here, so it's set
   // before EITHER caller reads it regardless of which one happens to run first.
@@ -1527,6 +1555,13 @@ function renderSummary(results, rollLength, rollGroupSize, costPerRoll, installR
   document.getElementById("statLifts").textContent = fmt.int(results.length);
   document.getElementById("statStrips").textContent = fmt.int(totalStrips);
   document.getElementById("statArea").innerHTML = `${fmt.m(totalArea)}<small> m²</small>`;
+
+  // baseLevel missing means the bottom lift's own volume never gets computed (see the pass in
+  // computeAndRender) — the hint fires on that alone, not on whether the total below is zero, so a
+  // partial total (every lift but the bottom one) doesn't quietly read as a complete one.
+  const totalFillVolume = results.reduce((s, r) => s + (r.fillVolume || 0), 0);
+  document.getElementById("statVolume").innerHTML = totalFillVolume > 0 ? `${fmt.m(totalFillVolume)}<small> m³</small>` : "—";
+  document.getElementById("statVolumeHint").hidden = baseLevel != null || results.length === 0;
 
   const wasteOverlapEl = document.getElementById("wasteOverlap");
   if (totalTheoreticalArea > 0) {
@@ -1809,6 +1844,7 @@ document.getElementById("exportFullPdfBtn").addEventListener("click", () => {
         <div><dt>Lifts</dt><dd>${fmt.int(document.querySelectorAll("#liftTableBody .lift-row").length)}</dd></div>
         <div><dt>Total strips</dt><dd>${document.getElementById("statStrips").textContent}</dd></div>
         <div><dt>Grid area</dt><dd>${document.getElementById("statArea").textContent}</dd></div>
+        <div><dt>Fill volume</dt><dd>${document.getElementById("statVolume").textContent}</dd></div>
         <div><dt>Rolls to order</dt><dd>${document.getElementById("statRolls").textContent}</dd></div>
         <div><dt>Overlap waste</dt><dd>${document.getElementById("wasteOverlap").textContent}</dd></div>
         <div><dt>Extra to fill rolls</dt><dd>${document.getElementById("wasteOffcut").textContent}</dd></div>
@@ -1827,6 +1863,7 @@ document.getElementById("exportFullPdfBtn").addEventListener("click", () => {
         <td>${r.n}</td>
         <td>${r.n > 1 ? fmt.mm(r.overlap) + " mm" : "—"}</td>
         <td>${fmt.m(r.area)}</td>
+        <td>${r.fillVolume != null ? fmt.m(r.fillVolume) : "—"}</td>
       </tr>`
     )
     .join("");
@@ -1834,7 +1871,7 @@ document.getElementById("exportFullPdfBtn").addEventListener("click", () => {
     <section class="export-sheet">
       <h2>Takeoff table</h2>
       <table class="export-table">
-        <thead><tr><th>RL</th><th>Face length (m)</th><th>Embedment (m)</th><th>Strips</th><th>Overlap</th><th>Area (m²)</th></tr></thead>
+        <thead><tr><th>RL</th><th>Face length (m)</th><th>Embedment (m)</th><th>Strips</th><th>Overlap</th><th>Area (m²)</th><th>Fill volume (m³)</th></tr></thead>
         <tbody>${takeoffRows}</tbody>
       </table>
     </section>
@@ -3062,7 +3099,7 @@ document.getElementById("printRollScheduleBtn").addEventListener("click", () => 
 
 document.getElementById("exportBtn").addEventListener("click", () => {
   const results = window.__geogridResults || [];
-  const { w, oMin, rollLength, rollGroupSize, costPerRoll, installRate } = readSettings();
+  const { w, oMin, rollLength, rollGroupSize, costPerRoll, installRate, baseLevel } = readSettings();
   const project = document.getElementById("projectName").value || "geogrid-takeoff";
 
   const lines = [
@@ -3073,8 +3110,10 @@ document.getElementById("exportBtn").addEventListener("click", () => {
     `Roll grouping,${rollGroupSize > 0 ? `${rollGroupSize} adjacent lifts` : "pooled across all lifts"}`,
     `Material cost,${csvEscape(document.getElementById("statCost").textContent)}`,
     `Est. install time,${csvEscape(document.getElementById("statInstallTime").textContent)}`,
+    `Base level (RL),${baseLevel != null ? baseLevel : ""}`,
+    `Total fill volume,${csvEscape(document.getElementById("statVolume").textContent)}`,
     "",
-    "RL,Face length (m),Embedment (m),Strips,Overlap (mm),Material width (m),Area (m2),Theoretical area (m2),Source",
+    "RL,Face length (m),Embedment (m),Strips,Overlap (mm),Material width (m),Area (m2),Theoretical area (m2),Lift thickness (m),Fill volume (m3),Source",
   ];
   results.forEach((r) => {
     lines.push(
@@ -3087,6 +3126,8 @@ document.getElementById("exportBtn").addEventListener("click", () => {
         r.materialWidth.toFixed(3),
         r.area.toFixed(3),
         r.theoreticalArea.toFixed(3),
+        r.liftThickness > 0 ? r.liftThickness.toFixed(3) : "",
+        r.fillVolume != null ? r.fillVolume.toFixed(3) : "",
         r.mode === "extents" ? "DXF extents" : "manual",
       ].join(",")
     );
@@ -3261,6 +3302,7 @@ function buildStateSnapshot() {
       rollGroupSize: settingsInputs.rollGroupSize.value,
       costPerRoll: settingsInputs.costPerRoll.value,
       installRate: settingsInputs.installRate.value,
+      baseLevel: settingsInputs.baseLevel.value,
     },
     rows,
     liner: {
@@ -3287,6 +3329,7 @@ function applyStateSnapshot(state) {
   if (s.rollGroupSize != null) settingsInputs.rollGroupSize.value = s.rollGroupSize;
   if (s.costPerRoll != null) settingsInputs.costPerRoll.value = s.costPerRoll;
   if (s.installRate != null) settingsInputs.installRate.value = s.installRate;
+  if (s.baseLevel != null) settingsInputs.baseLevel.value = s.baseLevel;
 
   if (l) {
     if (l.floorLength != null) linerInputs.floorLength.value = l.floorLength;
@@ -3488,6 +3531,7 @@ document.getElementById("newProjectBtn").addEventListener("click", () => {
   settingsInputs.rollGroupSize.value = "";
   settingsInputs.costPerRoll.value = "";
   settingsInputs.installRate.value = "";
+  settingsInputs.baseLevel.value = "";
 
   Object.values(linerInputs).forEach((el) => (el.value = ""));
 

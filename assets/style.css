@@ -392,7 +392,7 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 
 /* ---------- Lift table ---------- */
 .table-scroll { overflow-x: auto; }
-.lift-table { width: 100%; border-collapse: collapse; min-width: 690px; }
+.lift-table { width: 100%; border-collapse: collapse; min-width: 790px; }
 .lift-table th {
   text-align: left;
   font-size: 0.66rem;
@@ -413,10 +413,10 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .col-rl input { text-align: right; padding-right: 0.4rem; min-width: 4.2rem; }
 .col-face { min-width: 9.5rem; }
 .col-embed { width: 6.5rem; }
-.col-strips, .col-overlap, .col-area { width: 5rem; text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-.col-area { width: 6rem; white-space: nowrap; }
-.lift-table th.col-strips, .lift-table th.col-overlap, .lift-table th.col-area { text-align: right; }
-.area-value small { color: var(--ink-muted); font-weight: 400; margin-left: 0.15em; }
+.col-strips, .col-overlap, .col-area, .col-volume { width: 5rem; text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.col-area, .col-volume { width: 6rem; white-space: nowrap; }
+.lift-table th.col-strips, .lift-table th.col-overlap, .lift-table th.col-area, .lift-table th.col-volume { text-align: right; }
+.area-value small, .volume-value small { color: var(--ink-muted); font-weight: 400; margin-left: 0.15em; }
 .col-diagram { width: 12rem; }
 .col-remove { width: 2rem; }
 .result-cell { color: var(--ink); }
