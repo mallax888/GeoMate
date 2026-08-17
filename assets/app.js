@@ -919,6 +919,15 @@ function readSettings() {
   };
 }
 
+const MODE_ICON_LENGTH = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M2 8h12M4.5 5.5v2M8 4.5v3M11.5 5.5v2"/></svg>';
+const MODE_ICON_COORDS =
+  '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12 7 5 13 9" stroke-dasharray="1.6 1.6"/><circle cx="3" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="7" cy="5" r="1.3" fill="currentColor" stroke="none"/><circle cx="13" cy="9" r="1.3" fill="currentColor" stroke="none"/></svg>';
+/** Swaps the face-input mode-toggle's icon (straight length vs pasted coordinates) — a small icon
+ * instead of literal "L"/"XY" text, consistent with every other affordance in the app by now. */
+function setModeToggleIcon(btn, toCoords) {
+  btn.innerHTML = toCoords ? MODE_ICON_COORDS : MODE_ICON_LENGTH;
+}
+
 function addLiftRow(rl = "", faceLength = "", embed = "", insertBeforeNode = null, isIntermediate = false) {
   const frag = rowTemplate.content.cloneNode(true);
   const row = frag.querySelector(".lift-row");
@@ -929,13 +938,14 @@ function addLiftRow(rl = "", faceLength = "", embed = "", insertBeforeNode = nul
   row.dataset.mode = "length";
 
   const modeBtn = row.querySelector(".mode-toggle");
+  setModeToggleIcon(modeBtn, false);
   const lengthWrap = row.querySelector(".face-input__length");
   const coordsBox = row.querySelector(".face-coords");
 
   modeBtn.addEventListener("click", () => {
     const toCoords = row.dataset.mode === "length";
     row.dataset.mode = toCoords ? "coords" : "length";
-    modeBtn.textContent = toCoords ? "XY" : "L";
+    setModeToggleIcon(modeBtn, toCoords);
     modeBtn.title = toCoords
       ? "Pasted-coordinate arc length — click to switch to a straight length"
       : "Straight length — click to switch to pasted coordinates";
@@ -981,7 +991,7 @@ function releaseExtents(row) {
   row.querySelector(".embed-length").hidden = false;
   const modeBtn = row.querySelector(".mode-toggle");
   modeBtn.hidden = false;
-  modeBtn.textContent = "L";
+  setModeToggleIcon(modeBtn, false);
   modeBtn.title = "Straight length — click to switch to pasted coordinates";
 }
 
@@ -3233,7 +3243,7 @@ function applyStateSnapshot(state) {
       row.querySelector(".face-coords").hidden = false;
       row.querySelector(".face-coords").value = r.coords || "";
       const modeBtn = row.querySelector(".mode-toggle");
-      modeBtn.textContent = "XY";
+      setModeToggleIcon(modeBtn, true);
       modeBtn.title = "Pasted-coordinate arc length — click to switch to a straight length";
     } else if (r.mode === "extents" && Array.isArray(r.extentsPoints) && r.extentsPoints.length) {
       applyExtents(row, r.extentsPoints);

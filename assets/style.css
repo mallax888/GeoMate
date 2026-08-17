@@ -337,8 +337,11 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   padding: 0.5rem 0.85rem;
   cursor: pointer;
   border: 1px solid transparent;
+  transition: transform 0.1s ease, box-shadow 0.1s ease, background-color 0.1s ease, border-color 0.1s ease;
 }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn:not(:disabled):hover { transform: translateY(-1px); box-shadow: var(--shadow); }
+.btn:not(:disabled):active { transform: translateY(0); box-shadow: none; }
 .btn--primary { background: var(--accent-pop); color: var(--ink-on-accent); }
 .btn--primary:hover { background: var(--accent-pop-deep); }
 .btn--ghost {
@@ -428,12 +431,13 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   border-radius: 4px;
   border: 1px solid var(--line-strong);
   background: var(--surface-2);
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  font-weight: 700;
   color: var(--accent);
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
+.mode-toggle:hover { background: var(--accent-tint); border-color: var(--accent); }
 .face-coords, .bulk-paste-textarea {
   width: 100%;
   min-height: 2.2rem;
@@ -465,6 +469,7 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   padding: 1.5rem 0 0.5rem;
 }
 .empty-state p { margin: 0 0 0.8rem; }
+.empty-state__icon { display: block; margin: 0 auto 0.7rem; color: var(--line-strong); }
 
 /* ---------- Summary ---------- */
 .stat-grid {
@@ -668,6 +673,31 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   max-width: 68ch;
   margin: 0 0 0.8rem;
 }
+/* Three distinct upload methods, not five identical green buttons in a row — each gets its own
+   card so Extents/Benched/Battered read as separate choices, and within a card only the DXF path
+   (the common one) stays a loud primary button; LandXML is the same result via an alternate file
+   format, so it's a ghost button, not a second equally-weighted CTA. */
+.cutplan-methods { display: flex; flex-direction: column; gap: 0.9rem; }
+.cutplan-method {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.9rem 1rem 1rem;
+}
+.cutplan-method__title {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent-strong);
+  margin: 0 0 0.55rem;
+}
+.cutplan-method__title svg { flex: none; opacity: 0.85; }
+.cutplan-method p { margin: 0 0 0.8rem; }
+.cutplan-method .cutplan-upload:last-child { margin-bottom: 0; }
 .cutplan-upload { display: flex; align-items: flex-end; gap: 0.8rem; margin-bottom: 1rem; flex-wrap: wrap; }
 .cutplan-tolerance { flex: none; }
 .cutplan-tolerance .field__unit { width: 6rem; }
