@@ -1297,15 +1297,21 @@ function renderRowWarnings(issues) {
 function computeAndRender() {
   const { w, oMin, rollLength, rollGroupSize, costPerRoll, installRate, baseLevel } = readSettings();
   const specWarning = document.getElementById("specWarning");
+  const specIssues = [];
   if (oMin < 0) {
-    specWarning.hidden = false;
-    specWarning.textContent = `Minimum overlap can't be negative — every lift below will show as blank until it's fixed.`;
+    specIssues.push(`Minimum overlap can't be negative — every lift below will show as blank until it's fixed.`);
   } else if (oMin >= w) {
-    specWarning.hidden = false;
-    specWarning.textContent = `Minimum overlap (${fmt.mm(oMin)} mm) must be smaller than the roll width (${w} m).`;
-  } else {
-    specWarning.hidden = true;
+    specIssues.push(`Minimum overlap (${fmt.mm(oMin)} mm) must be smaller than the roll width (${w} m).`);
   }
+  // A blank Roll length just means "not filled in yet" (rollLength defaults to 0 the same way) —
+  // only an explicit non-positive value is actually wrong and worth a warning, otherwise every
+  // fresh project would show this before the user's had a chance to type anything.
+  const rollLengthRaw = settingsInputs.rollLength.value;
+  if (rollLengthRaw.trim() !== "" && parseFloat(rollLengthRaw) <= 0) {
+    specIssues.push(`Roll length must be greater than zero — "Rolls to order" and material cost will both show as 0 until it's fixed.`);
+  }
+  specWarning.hidden = specIssues.length === 0;
+  specWarning.innerHTML = specIssues.map((m) => `<span>${escapeHtml(m)}</span>`).join("<br>");
 
   const rows = Array.from(tbody.querySelectorAll(".lift-row"));
   emptyState.hidden = rows.length > 0;
@@ -3326,13 +3332,29 @@ function renderLiner() {
   const D = parseFloat(linerInputs.depth.value) || 0;
   const slopeRaw = parseFloat(linerInputs.slope.value);
 
-  const specWarningEl = document.getElementById("linerSpecWarning");
-  if (oMin >= w) {
-    specWarningEl.hidden = false;
-    specWarningEl.textContent = `Minimum overlap (${fmt.mm(oMin)} mm) must be smaller than the roll width (${w} m).`;
-  } else {
-    specWarningEl.hidden = true;
+  // Same "blank isn't an error, an explicit bad value is" distinction as the takeoff table's own
+  // spec warnings — a fresh, not-yet-filled-in liner shouldn't greet the user with a wall of red.
+  const specIssues = [];
+  if (oMin < 0) {
+    specIssues.push(`Minimum overlap can't be negative.`);
+  } else if (oMin >= w) {
+    specIssues.push(`Minimum overlap (${fmt.mm(oMin)} mm) must be smaller than the roll width (${w} m).`);
   }
+  const rollLengthRaw = linerInputs.rollLength.value;
+  if (rollLengthRaw.trim() !== "" && parseFloat(rollLengthRaw) <= 0) {
+    specIssues.push(`Roll length must be greater than zero — "Rolls to order" will show as 0 until it's fixed.`);
+  }
+  [
+    ["floorLength", "Floor length"],
+    ["floorWidth", "Floor width"],
+    ["depth", "Depth"],
+  ].forEach(([key, label]) => {
+    const raw = linerInputs[key].value;
+    if (raw.trim() !== "" && parseFloat(raw) <= 0) specIssues.push(`${label} must be greater than zero.`);
+  });
+  const specWarningEl = document.getElementById("linerSpecWarning");
+  specWarningEl.hidden = specIssues.length === 0;
+  specWarningEl.innerHTML = specIssues.map((m) => `<span>${escapeHtml(m)}</span>`).join("<br>");
 
   const plan = computeLinerPlan(Lf, Wf, D, Number.isFinite(slopeRaw) ? slopeRaw : 0, w, oMin);
 
