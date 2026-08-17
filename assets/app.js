@@ -1292,7 +1292,10 @@ function renderRowWarnings(issues) {
 function computeAndRender() {
   const { w, oMin, rollLength, rollGroupSize, costPerRoll, installRate } = readSettings();
   const specWarning = document.getElementById("specWarning");
-  if (oMin >= w) {
+  if (oMin < 0) {
+    specWarning.hidden = false;
+    specWarning.textContent = `Minimum overlap can't be negative — every lift below will show as blank until it's fixed.`;
+  } else if (oMin >= w) {
     specWarning.hidden = false;
     specWarning.textContent = `Minimum overlap (${fmt.mm(oMin)} mm) must be smaller than the roll width (${w} m).`;
   } else {
@@ -1301,6 +1304,10 @@ function computeAndRender() {
 
   const rows = Array.from(tbody.querySelectorAll(".lift-row"));
   emptyState.hidden = rows.length > 0;
+  // Collected alongside validateRows() below — these catch bad values on a single row's own inputs
+  // (negative face length/embedment), which validateRows can't see because a row that fails to
+  // produce a result is never added to liftResults in the first place.
+  const inputIssues = [];
 
   // Pre-pass: compute each extents-mode row's cut plan once, and pick a single shared frame (the
   // longest face) for the 3D view — a short return/starter bench isn't representative of the main
@@ -1353,14 +1360,23 @@ function computeAndRender() {
         }
       }
     } else {
-      L = mode === "coords" ? parseCoordsLength(row.querySelector(".face-coords").value) : parseFloat(row.querySelector(".face-length").value) || 0;
-      const embed = parseFloat(embedInput.value) || 0;
+      const faceLengthRaw = mode === "coords" ? "" : row.querySelector(".face-length").value;
+      L = mode === "coords" ? parseCoordsLength(row.querySelector(".face-coords").value) : parseFloat(faceLengthRaw) || 0;
+      const embedRaw = embedInput.value;
+      const embed = parseFloat(embedRaw) || 0;
       embedInput.hidden = false;
       embedRangeEl.textContent = "";
       result = oMin < w ? calcLift(L, w, oMin) : null;
       if (result && embed > 0) {
         stripLengths = new Array(result.n).fill(embed);
         theoreticalArea = L * embed;
+      }
+      const label = rl || `row ${rows.indexOf(row) + 1}`;
+      if (faceLengthRaw && parseFloat(faceLengthRaw) < 0) {
+        inputIssues.push(`${label}: face length can't be negative — this row will show as blank until it's fixed.`);
+      }
+      if (embedRaw && parseFloat(embedRaw) < 0) {
+        inputIssues.push(`${label}: embedment can't be negative — this row will show as blank until it's fixed.`);
       }
     }
 
@@ -1414,7 +1430,7 @@ function computeAndRender() {
   });
 
   window.__geogridResults = liftResults; // exposed for CSV export + progress tracking, set before renderSummary needs it
-  renderRowWarnings(validateRows(liftResults, rollLength));
+  renderRowWarnings([...inputIssues, ...validateRows(liftResults, rollLength)]);
   renderSummary(liftResults, rollLength, rollGroupSize, costPerRoll, installRate);
   renderSequence(liftResults, w);
   renderCutPlan(liftResults, w);
