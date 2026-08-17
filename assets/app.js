@@ -3423,6 +3423,44 @@ document.getElementById("deleteProjectBtn").addEventListener("click", () => {
   statusEl.className = "cutplan-status is-ok";
 });
 
+document.getElementById("exportProjectBtn").addEventListener("click", () => {
+  const name = document.getElementById("projectName").value.trim() || "untitled-project";
+  const blob = new Blob([JSON.stringify(buildStateSnapshot(), null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${name.replace(/[^a-z0-9-_]+/gi, "_")}.geogrid.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+});
+
+document.getElementById("importProjectInput").addEventListener("change", async (e) => {
+  const statusEl = document.getElementById("importProjectStatus");
+  const file = e.target.files[0];
+  e.target.value = ""; // same file re-selected twice in a row should still fire 'change'
+  if (!file) return;
+
+  let state;
+  try {
+    state = JSON.parse(await file.text());
+  } catch {
+    statusEl.textContent = `Couldn't read "${file.name}" — not a valid project file.`;
+    statusEl.className = "cutplan-status is-error";
+    return;
+  }
+  if (!applyStateSnapshot(state)) {
+    statusEl.textContent = `Couldn't read "${file.name}" — not a valid project file.`;
+    statusEl.className = "cutplan-status is-error";
+    return;
+  }
+  computeAndRender();
+  refreshProjectList();
+  statusEl.textContent = `Imported "${file.name}". Use Save as project above to keep it in this browser too.`;
+  statusEl.className = "cutplan-status is-ok";
+});
+
 document.getElementById("projectName").addEventListener("input", saveAutosave);
 document.getElementById("projectName").addEventListener("input", refreshProjectList);
 

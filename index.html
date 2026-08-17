@@ -150,6 +150,15 @@
         <button id="deleteProjectBtn" class="btn btn--ghost btn--danger" type="button" disabled>Delete</button>
       </div>
       <p id="projectStatus" class="cutplan-status"></p>
+      <p class="generator__hint">Saved projects only live in this browser. To hand this job to another device, another browser, or a colleague, export it as a file and import it there instead.</p>
+      <div class="generator__btnrow">
+        <button id="exportProjectBtn" class="btn btn--ghost" type="button">Export file</button>
+        <label class="btn btn--ghost btn--upload">
+          Import file
+          <input type="file" id="importProjectInput" accept="application/json,.json" hidden />
+        </label>
+      </div>
+      <p id="importProjectStatus" class="cutplan-status"></p>
     </div>
 
     <details class="methodology">
