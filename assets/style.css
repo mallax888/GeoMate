@@ -256,6 +256,13 @@ h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
   border-radius: 4px;
   overflow: hidden;
 }
+/* The input's own :focus-visible outline draws OUTSIDE its border box, so this wrapper's
+   overflow: hidden (needed to round off the unit suffix's corners) clips most of that ring away —
+   only a sliver survives on whichever edge happens to sit right at the wrapper boundary. Suppress
+   it and highlight the whole wrapper via :focus-within instead, so the full unit-labelled control
+   (number + "mm"/"m²"/etc) lights up as one clean ring instead of a clipped fragment of one. */
+.field__unit:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
+.field__unit input:focus-visible { outline: none; }
 .field__unit input {
   border: none;
   background: transparent;
@@ -285,7 +292,9 @@ input[type="text"], input[type="number"], select {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-input:focus, select:focus { border-color: var(--accent); }
+/* Focus is shown once, by the global :focus-visible outline above — this used to also swap the
+   border to --accent, stacking a second green ring just inside the outline on every click or tab
+   into a field, which read as a heavy-handed double box rather than one clear "you're here". */
 input[type="number"] { appearance: textfield; }
 input[type="number"]::-webkit-inner-spin-button,
 input[type="number"]::-webkit-outer-spin-button {
@@ -747,6 +756,12 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .cutplan-card__strips li.is-stitch { color: var(--accent-strong); background: var(--accent-tint); font-style: italic; }
 
 .cutplan-list-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 0.6rem; }
+/* #cutPlanEmpty and the print button are mutually exclusive (one hides exactly when the other
+   shows), so once extents are loaded this flex row often has only the button left in it —
+   space-between has nothing to space it FROM, so it collapses to the left edge instead of sitting
+   where an action button reads as intentional. margin-left: auto keeps it pinned to the right
+   whether or not the empty-state text beside it is showing. */
+.cutplan-list-head .btn { margin-left: auto; }
 .cutplan-list-head .empty-state { margin: 0; padding: 0; }
 .cutplan-print-view { display: none; }
 .cutplan-print-page { margin-bottom: 1.5rem; }
