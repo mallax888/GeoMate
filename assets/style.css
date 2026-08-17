@@ -950,6 +950,39 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
      destination settings of the print dialog, not in this app. */
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact; color-adjust: exact; }
 
+  /* Printed/exported output should always look like paper — light background, dark ink — no matter
+     what theme is on screen. Without this, a user whose OS prefers dark mode (the @media
+     (prefers-color-scheme:dark) block below still matches during print, toggle or no toggle) gets a
+     printout with near-white --ink text on the white page this file forces below: invisible, except
+     where an element happens to carry its own dark background (e.g. .roll-card's --surface-2 fill),
+     which stays legible purely by coincidence — exactly the "half the page is washed out" bug this
+     fixes. !important is deliberate: this has to beat both :root[data-theme="dark"] and the
+     prefers-color-scheme media query, which both out-specificity a plain :root override otherwise. */
+  :root {
+    --bg: #f2f3ee !important;
+    --surface: #ffffff !important;
+    --surface-2: #eef0e8 !important;
+    --ink: #1a1c1d !important;
+    --ink-muted: #63695f !important;
+    --line: #dde1d3 !important;
+    --line-strong: #c4cab8 !important;
+    --accent: #1f7a44 !important;
+    --accent-strong: #145c33 !important;
+    --accent-tint: #e3f3e8 !important;
+    --accent-pop: #1f8a4c !important;
+    --accent-pop-deep: #156b3a !important;
+    --ink-on-accent: #ffffff !important;
+    --clay: #b4600a !important;
+    --clay-tint: #fdead2 !important;
+    --graphite: #3c433f !important;
+    --good: #2f7a4a !important;
+    --good-tint: #e1efe6 !important;
+    --warn: #a5690a !important;
+    --warn-tint: #f5ead2 !important;
+    --critical: #b1483c !important;
+    --critical-tint: #f6dfdb !important;
+  }
+
   .titleblock, .panel--settings, .panel--summary, .panel__headrow, .sequence-controls, .foot, #takeoffView { display: none !important; }
   body { background: #fff; }
   .layout { grid-template-columns: 1fr; padding: 0; max-width: none; }
