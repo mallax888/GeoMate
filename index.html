@@ -348,7 +348,10 @@
     <div id="view3DPanel" class="view3d-panel" hidden>
       <div class="view3d-controls">
         <p class="view3d-hint">Drag to rotate, scroll to zoom, or use the wheel top-right (angle = rotation, distance from centre = tilt). All lifts share one frame (aligned to the longest face) so their true relative shape and position carries over from the DXF — it's rotated to face front-on, not in survey coordinates.</p>
-        <button id="view3DReset" class="btn btn--ghost" type="button">Reset view</button>
+        <div class="view3d-controls__actions">
+          <button id="view3DExportDxf" class="btn btn--ghost" type="button" disabled>Export DXF</button>
+          <button id="view3DReset" class="btn btn--ghost" type="button">Reset view</button>
+        </div>
       </div>
       <div class="view3d-legend">
         <span class="view3d-legend__item"><span class="view3d-legend__swatch view3d-legend__swatch--installed"></span>Installed</span>

@@ -2623,6 +2623,61 @@ function project3D(x, y, z, yaw, pitch) {
   return { sx: x1, sy: -z2, depth: y2 };
 }
 
+// A modest, visually-distinct cycle of DXF ACI colour indices — just enough that adjacent lifts'
+// layers don't default to the same colour, not an attempt to mean anything beyond "a different one".
+const DXF_LAYER_COLORS = [1, 2, 3, 4, 5, 6, 8, 9];
+
+/**
+ * DXF R12 (AC1009, the plainest ASCII dialect every CAD package reads) export of the current 3D
+ * view's stack: one closed 3D POLYLINE per lift, on its own layer, at its own RL. Deliberately reuses
+ * the exact same footprint geometry render3D() already draws — same shared frame, same simplifications
+ * for manually-typed lifts (which never had real survey coordinates to begin with, just a length and
+ * an embedment) — so the file matches what's on screen rather than re-deriving something new.
+ */
+function buildLiftsDxf(results) {
+  const lifts = results
+    .filter((r) => r.footprint && r.footprint.length >= 3 && Number.isFinite(parseFloat(r.rl)))
+    .map((r) => ({ rl: parseFloat(r.rl), rlLabel: r.rl, footprint: r.footprint }))
+    .sort((a, b) => a.rl - b.rl);
+  if (!lifts.length) return null;
+
+  const lines = [];
+  const put = (code, value) => lines.push(String(code), String(value));
+
+  put(0, "SECTION"); put(2, "HEADER");
+  put(9, "$ACADVER"); put(1, "AC1009");
+  put(0, "ENDSEC");
+
+  const layerNames = lifts.map((lift, i) => `GRID_RL_${String(lift.rlLabel).replace(/[^A-Za-z0-9_.-]+/g, "_")}`);
+
+  put(0, "SECTION"); put(2, "TABLES");
+  put(0, "TABLE"); put(2, "LAYER"); put(70, lifts.length);
+  layerNames.forEach((name, i) => {
+    put(0, "LAYER"); put(2, name); put(70, 0);
+    put(62, DXF_LAYER_COLORS[i % DXF_LAYER_COLORS.length]); put(6, "CONTINUOUS");
+  });
+  put(0, "ENDTAB"); put(0, "ENDSEC");
+
+  put(0, "SECTION"); put(2, "ENTITIES");
+  lifts.forEach((lift, i) => {
+    const layer = layerNames[i];
+    // Flag 70 = 9 (bit 0 "closed" + bit 3 "3D polyline"); each VERTEX carries the matching
+    // "3D polyline vertex" flag (32) — plain 2D-polyline flags here would silently flatten every
+    // vertex onto one plane in stricter readers instead of keeping each lift at its own RL.
+    put(0, "POLYLINE"); put(8, layer); put(66, 1); put(70, 9);
+    lift.footprint.forEach((p) => {
+      put(0, "VERTEX"); put(8, layer);
+      put(10, p.x.toFixed(4)); put(20, p.y.toFixed(4)); put(30, lift.rl.toFixed(4));
+      put(70, 32);
+    });
+    put(0, "SEQEND"); put(8, layer);
+  });
+  put(0, "ENDSEC");
+
+  put(0, "EOF");
+  return lines.join("\r\n") + "\r\n";
+}
+
 function render3D(results) {
   if (!view3DCanvas) return;
   const ctx = view3DCanvas.getContext("2d");
@@ -2635,6 +2690,8 @@ function render3D(results) {
     .sort((a, b) => a.rl - b.rl);
 
   view3DEmpty.hidden = lifts.length > 0;
+  const exportDxfBtn = document.getElementById("view3DExportDxf");
+  if (exportDxfBtn) exportDxfBtn.disabled = !lifts.length;
   if (!lifts.length) return;
 
   const baseRL = lifts[0].rl;
@@ -2909,6 +2966,21 @@ function syncCompass() {
     view3DHoverLocked = false;
     view3DHoveredRL = null;
     render3D(window.__geogridResults || []);
+  });
+
+  document.getElementById("view3DExportDxf").addEventListener("click", () => {
+    const dxf = buildLiftsDxf(window.__geogridResults || []);
+    if (!dxf) return;
+    const project = document.getElementById("projectName").value || "geogrid-takeoff";
+    const blob = new Blob([dxf], { type: "application/dxf" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${project.replace(/[^a-z0-9-_]+/gi, "_")}_lifts.dxf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   });
 })();
 

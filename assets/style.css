@@ -825,6 +825,7 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   margin-bottom: 0.7rem;
 }
 .view3d-hint { font-size: 0.78rem; color: var(--ink-muted); max-width: 60ch; }
+.view3d-controls__actions { display: flex; gap: 0.5rem; flex: none; }
 .view3d-legend { display: flex; gap: 1rem; margin-bottom: 0.6rem; }
 .view3d-legend__item {
   display: inline-flex; align-items: center; gap: 0.4rem;
@@ -1133,9 +1134,9 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   /* Header rows that pair intro text with action buttons default to a side-by-side flex row, which
      on a narrow phone squeezes the text into a single word-per-line column instead of wrapping
      normally, and can push buttons off the edge — stack them instead. */
-  .roll-schedule-head, .sequence-controls, .cutplan-upload { flex-direction: column; align-items: stretch; }
-  .roll-schedule-head__actions { justify-content: stretch; }
-  .roll-schedule-head__actions .btn, .sequence-controls .btn { width: 100%; justify-content: center; }
+  .roll-schedule-head, .sequence-controls, .cutplan-upload, .view3d-controls { flex-direction: column; align-items: stretch; }
+  .roll-schedule-head__actions, .view3d-controls__actions { justify-content: stretch; }
+  .roll-schedule-head__actions .btn, .sequence-controls .btn, .view3d-controls__actions .btn { width: 100%; justify-content: center; }
 
   .stat-grid { grid-template-columns: 1fr 1fr; }
   .roll-card__pieces { grid-template-columns: 1fr; }
