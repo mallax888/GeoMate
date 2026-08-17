@@ -1015,6 +1015,15 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
     border-bottom: 1px solid var(--line); padding-bottom: 0.5rem; margin: 0 0 1rem;
   }
   .roll-schedule-print-view .roll-card { break-inside: avoid; }
+  /* On screen, a roll piece's label truncates with an ellipsis so the row never wraps and every
+     column's border-bottom stays aligned with its neighbours (see .roll-piece__label above) — an
+     acceptable trade there since the length figure is what mainly matters glancing at a narrow
+     panel. On a printed cut sheet, though, that same truncation was cutting the RL and strip number
+     down to "RL 4…" — the one thing a piece can't be identified without. A printed page is much
+     wider than that panel column, so give it far more room per piece and let a label wrap onto a
+     second line in the rare case even that isn't enough, rather than ever hiding it. */
+  .roll-card__pieces { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+  .roll-piece__label { overflow: visible; text-overflow: clip; white-space: normal; }
 
   body.printing-roll-labels .roll-schedule-head,
   body.printing-roll-labels #rollScheduleEmpty,

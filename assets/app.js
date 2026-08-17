@@ -1848,7 +1848,22 @@ document.getElementById("exportFullPdfBtn").addEventListener("click", () => {
   const extentsResults = results.filter((r) => r.mode === "extents" && r.cutPlan);
   const cutPlanSheets = extentsResults.length ? buildCutPlanPrintPages(extentsResults, project, w, rollLength) : "";
 
-  const canvasDataUrl = view3DCanvas ? view3DCanvas.toDataURL("image/png") : null;
+  // toDataURL() snapshots whatever's currently painted — if the user is in dark mode (toggled or
+  // just their OS preference), that bakes dark-theme colours (near-white "ink" labels especially)
+  // into a static PNG that then gets pasted onto the print stylesheet's forced-white page, same as
+  // the washed-out-text bug the print CSS itself had — except this is a rasterised image, so no
+  // amount of @media print CSS can fix it after the fact. Force a light-theme repaint just for the
+  // snapshot, then restore whatever the canvas should actually look like on screen afterward.
+  let canvasDataUrl = null;
+  if (view3DCanvas) {
+    const prevTheme = document.documentElement.getAttribute("data-theme");
+    document.documentElement.setAttribute("data-theme", "light");
+    if (window.__geogridResults) render3D(window.__geogridResults);
+    canvasDataUrl = view3DCanvas.toDataURL("image/png");
+    if (prevTheme === null) document.documentElement.removeAttribute("data-theme");
+    else document.documentElement.setAttribute("data-theme", prevTheme);
+    if (window.__geogridResults) render3D(window.__geogridResults);
+  }
   const view3dSheet = canvasDataUrl
     ? `<section class="export-sheet export-sheet__3d"><h2>3D view</h2><img src="${canvasDataUrl}" alt="3D stacked view of all lifts" /></section>`
     : "";
