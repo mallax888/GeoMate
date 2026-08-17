@@ -1464,7 +1464,7 @@ function computeAndRender() {
   renderCutPlan(liftResults, w);
   render3D(liftResults);
   renderRollSchedule(window.__geogridRolls || [], rollLength, rollGroupSize);
-  renderLiner(w, oMin, rollLength);
+  renderLiner();
   saveAutosave();
 }
 
@@ -3276,6 +3276,9 @@ function escapeHtml(str) {
    ============================================================ */
 
 const linerInputs = {
+  rollWidth: document.getElementById("linerRollWidth"),
+  minOverlap: document.getElementById("linerMinOverlap"),
+  rollLength: document.getElementById("linerRollLength"),
   floorLength: document.getElementById("linerFloorLength"),
   floorWidth: document.getElementById("linerFloorWidth"),
   depth: document.getElementById("linerDepth"),
@@ -3314,11 +3317,23 @@ function computeLinerPlan(Lf, Wf, D, slopeRatio, w, oMin) {
   return { S, horizRun, floorArea, wallArea, totalArea, mainPanelLength, mainResult, endResult };
 }
 
-function renderLiner(w, oMin, rollLength) {
+function renderLiner() {
+  const w = parseFloat(linerInputs.rollWidth.value) || 0;
+  const oMin = (parseFloat(linerInputs.minOverlap.value) || 0) / 1000;
+  const rollLength = parseFloat(linerInputs.rollLength.value) || 0;
   const Lf = parseFloat(linerInputs.floorLength.value) || 0;
   const Wf = parseFloat(linerInputs.floorWidth.value) || 0;
   const D = parseFloat(linerInputs.depth.value) || 0;
   const slopeRaw = parseFloat(linerInputs.slope.value);
+
+  const specWarningEl = document.getElementById("linerSpecWarning");
+  if (oMin >= w) {
+    specWarningEl.hidden = false;
+    specWarningEl.textContent = `Minimum overlap (${fmt.mm(oMin)} mm) must be smaller than the roll width (${w} m).`;
+  } else {
+    specWarningEl.hidden = true;
+  }
+
   const plan = computeLinerPlan(Lf, Wf, D, Number.isFinite(slopeRaw) ? slopeRaw : 0, w, oMin);
 
   const emptyEl = document.getElementById("linerEmpty");
@@ -3395,6 +3410,9 @@ function buildStateSnapshot() {
     },
     rows,
     liner: {
+      rollWidth: linerInputs.rollWidth.value,
+      minOverlap: linerInputs.minOverlap.value,
+      rollLength: linerInputs.rollLength.value,
       floorLength: linerInputs.floorLength.value,
       floorWidth: linerInputs.floorWidth.value,
       depth: linerInputs.depth.value,
@@ -3421,6 +3439,9 @@ function applyStateSnapshot(state) {
   if (s.baseLevel != null) settingsInputs.baseLevel.value = s.baseLevel;
 
   if (l) {
+    if (l.rollWidth != null) linerInputs.rollWidth.value = l.rollWidth;
+    if (l.minOverlap != null) linerInputs.minOverlap.value = l.minOverlap;
+    if (l.rollLength != null) linerInputs.rollLength.value = l.rollLength;
     if (l.floorLength != null) linerInputs.floorLength.value = l.floorLength;
     if (l.floorWidth != null) linerInputs.floorWidth.value = l.floorWidth;
     if (l.depth != null) linerInputs.depth.value = l.depth;
@@ -3622,7 +3643,13 @@ document.getElementById("newProjectBtn").addEventListener("click", () => {
   settingsInputs.installRate.value = "";
   settingsInputs.baseLevel.value = "";
 
-  Object.values(linerInputs).forEach((el) => (el.value = ""));
+  linerInputs.rollWidth.value = "1.3";
+  linerInputs.minOverlap.value = "300";
+  linerInputs.rollLength.value = "50";
+  linerInputs.floorLength.value = "";
+  linerInputs.floorWidth.value = "";
+  linerInputs.depth.value = "";
+  linerInputs.slope.value = "";
 
   ["genStartRL", "genSpacing", "genCount", "interFromRL", "interToRL", "bulkPasteInput"].forEach((id) => {
     document.getElementById(id).value = "";

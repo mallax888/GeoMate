@@ -950,6 +950,7 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 /* ---------- Landfill liner ---------- */
 .liner-intro { font-size: 0.82rem; color: var(--ink-muted); max-width: 72ch; margin: 0 0 1rem; }
 .liner-inputs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.7rem; margin-bottom: 1rem; }
+.liner-inputs--specs { grid-template-columns: repeat(3, 1fr); }
 .liner-stat-grid { grid-template-columns: repeat(3, 1fr); margin-bottom: 0.8rem; }
 .liner-corner-note {
   font-size: 0.78rem; color: var(--warn); background: var(--warn-tint);
