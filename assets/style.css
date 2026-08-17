@@ -755,13 +755,14 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .cutplan-card__strips li:last-child { border-bottom: none; }
 .cutplan-card__strips li.is-stitch { color: var(--accent-strong); background: var(--accent-tint); font-style: italic; }
 
-.cutplan-list-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 0.6rem; }
+.cutplan-list-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin: 0.6rem 0; }
 /* #cutPlanEmpty and the print button are mutually exclusive (one hides exactly when the other
    shows), so once extents are loaded this flex row often has only the button left in it —
    space-between has nothing to space it FROM, so it collapses to the left edge instead of sitting
-   centred the way a lone action row reads as intentional. margin: 0 auto centres it in the row
-   whether or not the empty-state text beside it is showing. */
-.cutplan-list-head .btn { margin: 0 auto; }
+   on the right the way every other action button in this view does (Swap face/back on each card
+   below, the upload buttons' row above). margin-left: auto keeps it pinned there whether or not
+   the empty-state text beside it is showing. */
+.cutplan-list-head .btn { margin-left: auto; }
 .cutplan-list-head .empty-state { margin: 0; padding: 0; }
 .cutplan-print-view { display: none; }
 .cutplan-print-page { margin-bottom: 1.5rem; }

@@ -1847,7 +1847,7 @@ document.getElementById("exportFullPdfBtn").addEventListener("click", () => {
         <div><dt>Fill volume</dt><dd>${document.getElementById("statVolume").textContent}</dd></div>
         <div><dt>Rolls to order</dt><dd>${document.getElementById("statRolls").textContent}</dd></div>
         <div><dt>Overlap waste</dt><dd>${document.getElementById("wasteOverlap").textContent}</dd></div>
-        <div><dt>Unused roll length</dt><dd>${document.getElementById("wasteOffcut").textContent}</dd></div>
+        <div><dt>Roll off-cut</dt><dd>${document.getElementById("wasteOffcut").textContent}</dd></div>
         <div><dt>Material cost</dt><dd>${document.getElementById("statCost").textContent}</dd></div>
         <div><dt>Est. install time</dt><dd>${document.getElementById("statInstallTime").textContent}</dd></div>
       </dl>
@@ -3166,7 +3166,7 @@ document.getElementById("exportBtn").addEventListener("click", () => {
 
   const rolls = window.__geogridRolls || [];
   if (rolls.length) {
-    lines.push("", "Roll cutting schedule", "Roll #,Piece,Length (m),Unused roll length (m)");
+    lines.push("", "Roll cutting schedule", "Roll #,Piece,Length (m),Roll off-cut (m)");
     rolls.forEach((roll, i) => {
       roll.pieces.forEach((p) => {
         lines.push([i + 1, csvEscape(p.label), p.length.toFixed(3), p.extra > 1e-6 ? p.extra.toFixed(3) : ""].join(","));
