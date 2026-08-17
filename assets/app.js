@@ -2656,11 +2656,32 @@ function render3D(results) {
   view3DLastRender = { anchors };
 
   // Each label sits right at its own lift's corner — no separate list, no leader line, so a label
-  // always visibly IS its grid rather than pointing at it from across the canvas. Drawn in two
-  // passes so the spotlit one (if any) always paints on top of its neighbours regardless of paint
-  // order — with lifts stacked close together their labels can sit close enough to overlap, and the
-  // one actually being looked at should never end up hidden behind a dim neighbour's text.
+  // always visibly IS its grid rather than pointing at it from across the canvas. That works great
+  // when lifts are all roughly the same shape (corners line up in a predictable column) but real
+  // sites have lifts of genuinely different face lengths/shapes, whose corners scatter unpredictably
+  // — showing every label at once then just piles them into an unreadable mess. So: actually measure
+  // whether the resting-state labels would overlap each other, and if enough of them would, stop
+  // showing permanent labels altogether and rely purely on the hover/tap spotlight below — one label
+  // at a time is never ambiguous, no matter how scattered the shapes are.
   const monoFont = style.getPropertyValue("--font-mono").trim() || "monospace";
+  ctx.font = "11px " + monoFont;
+  const labelBoxes = anchors.map(({ lift, anchorX, anchorY }) => {
+    const w = ctx.measureText(`RL ${lift.rlLabel}`).width;
+    return { left: anchorX - 6 - w, right: anchorX - 6, top: anchorY - 15, bottom: anchorY - 2 };
+  });
+  let overlaps = 0;
+  for (let i = 0; i < labelBoxes.length && overlaps <= 2; i++) {
+    for (let j = i + 1; j < labelBoxes.length; j++) {
+      const a = labelBoxes[i], b = labelBoxes[j];
+      if (a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top) overlaps++;
+    }
+  }
+  const showPermanentLabels = overlaps <= 2;
+
+  // Drawn in two passes so the spotlit one (if any) always paints on top of its neighbours
+  // regardless of paint order — with lifts stacked close together their labels can sit close enough
+  // to overlap, and the one actually being looked at should never end up hidden behind a dim
+  // neighbour's text.
   const drawLabel = (lift, anchorX, anchorY, isHovered, dim) => {
     const label = `RL ${lift.rlLabel}`;
     ctx.font = (isHovered ? "bold " : "") + "11px " + monoFont;
@@ -2674,10 +2695,12 @@ function render3D(results) {
     ctx.fillText(label, anchorX - 6, anchorY - 6);
     ctx.globalAlpha = 1;
   };
-  anchors.forEach(({ lift, anchorX, anchorY }) => {
-    const isHovered = spotlit && lift.rl === view3DHoveredRL;
-    if (!isHovered) drawLabel(lift, anchorX, anchorY, false, spotlit);
-  });
+  if (showPermanentLabels) {
+    anchors.forEach(({ lift, anchorX, anchorY }) => {
+      const isHovered = spotlit && lift.rl === view3DHoveredRL;
+      if (!isHovered) drawLabel(lift, anchorX, anchorY, false, spotlit);
+    });
+  }
   if (spotlit) {
     const hovered = anchors.find((a) => a.lift.rl === view3DHoveredRL);
     if (hovered) drawLabel(hovered.lift, hovered.anchorX, hovered.anchorY, true, false);
@@ -2686,8 +2709,8 @@ function render3D(results) {
 
   ctx.fillStyle = inkMuted;
   ctx.textAlign = "left";
-  ctx.font = "10px " + (style.getPropertyValue("--font-mono").trim() || "monospace");
-  const hint = spotlit ? "" : lifts.length > 8 ? " · hover a level to isolate it" : "";
+  ctx.font = "10px " + monoFont;
+  const hint = spotlit ? "" : !showPermanentLabels ? " · hover a level to see its RL" : lifts.length > 8 ? " · hover a level to isolate it" : "";
   ctx.fillText(`${lifts.length} lifts · RL ${lifts[0].rlLabel} → ${lifts[lifts.length - 1].rlLabel}${hint}`, 12, H - 14);
 
   syncCompass();
