@@ -2752,18 +2752,28 @@ const VIEW3D_PITCH_MIN = 0.05, VIEW3D_PITCH_MAX = 1.5;
 /** Positions the compass handle to match view3DState — called after any interaction changes yaw/pitch,
  * from any source (canvas drag, the compass itself, the reset button), so it never drifts out of sync. */
 function syncCompass() {
+  const compass = document.getElementById("view3DCompass");
   const spoke = document.getElementById("view3DCompassSpoke");
   const handle = document.getElementById("view3DCompassHandle");
-  if (!spoke || !handle) return;
+  if (!compass || !spoke || !handle) return;
   const cx = 45, cy = 45, minR = 8, maxR = 34;
-  const t = (view3DState.pitch - VIEW3D_PITCH_MIN) / (VIEW3D_PITCH_MAX - VIEW3D_PITCH_MIN);
-  const r = maxR - Math.max(0, Math.min(1, t)) * (maxR - minR);
+  const t = Math.max(0, Math.min(1, (view3DState.pitch - VIEW3D_PITCH_MIN) / (VIEW3D_PITCH_MAX - VIEW3D_PITCH_MIN)));
+  const r = maxR - t * (maxR - minR);
   const hx = cx + r * Math.sin(view3DState.yaw);
   const hy = cy - r * Math.cos(view3DState.yaw);
   spoke.setAttribute("x2", hx.toFixed(2));
   spoke.setAttribute("y2", hy.toFixed(2));
   handle.setAttribute("cx", hx.toFixed(2));
   handle.setAttribute("cy", hy.toFixed(2));
+
+  // role="slider" requires a numeric value — this is inherently a 2-axis control (rotation + tilt),
+  // so yaw drives the required aria-valuenow (what ArrowLeft/Right change) while aria-valuetext spells
+  // out both axes in words, since a screen reader announces valuetext instead of the bare number when
+  // it's present.
+  const yawDeg = Math.round((((view3DState.yaw * 180) / Math.PI) % 360 + 360) % 360);
+  const tiltPct = Math.round(t * 100);
+  compass.setAttribute("aria-valuenow", yawDeg);
+  compass.setAttribute("aria-valuetext", `Rotated ${yawDeg} degrees, tilt ${tiltPct}% from top-down toward side-on`);
 }
 
 (function wire3DInteraction() {

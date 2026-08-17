@@ -52,17 +52,17 @@
   --accent: #1f7a44;
   --accent-strong: #145c33;
   --accent-tint: #e3f3e8;
-  --accent-pop: #1f8a4c;
+  --accent-pop: #187a40;
   --accent-pop-deep: #156b3a;
   --ink-on-accent: #ffffff;
-  --clay: #b4600a;
+  --clay: #8f4a07;
   --clay-tint: #fdead2;
   --graphite: #3c433f;
-  --good: #2f7a4a;
+  --good: #256040;
   --good-tint: #e1efe6;
-  --warn: #a5690a;
+  --warn: #8a5808;
   --warn-tint: #f5ead2;
-  --critical: #b1483c;
+  --critical: #953a2f;
   --critical-tint: #f6dfdb;
   --shadow: 0 1px 2px rgba(26, 28, 29, 0.06), 0 4px 14px rgba(26, 28, 29, 0.05);
   --radius: 5px;
@@ -77,7 +77,7 @@
     --surface: #232628;
     --surface-2: #2b2f30;
     --ink: #f4f5f0;
-    --ink-muted: #8d938a;
+    --ink-muted: #a0a69c;
     --line: #34383a;
     --line-strong: #454b4d;
     --accent: #2fa863;
@@ -490,8 +490,8 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   background: var(--accent-tint);
   border-color: var(--accent-tint);
 }
-.stat--highlight .stat__label { color: var(--accent-strong); opacity: 0.75; }
-.stat--highlight .stat__value { color: var(--accent-pop); font-size: 1.4rem; }
+.stat--highlight .stat__label { color: var(--accent-strong); opacity: 0.85; }
+.stat--highlight .stat__value { color: var(--accent-strong); font-size: 1.4rem; }
 .stat__label {
   font-size: 0.64rem;
   text-transform: uppercase;
@@ -507,7 +507,7 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 .stat__value small { font-size: 0.65rem; font-weight: 400; color: var(--ink-muted); }
 .stat__hint { font-size: 0.62rem; color: var(--ink-muted); margin-top: 0.1rem; }
-.stat--highlight .stat__hint { color: var(--accent-strong); opacity: 0.7; }
+.stat--highlight .stat__hint { color: var(--accent-strong); opacity: 0.85; }
 
 .waste-block { margin-top: 0.9rem; display: flex; flex-direction: column; gap: 0.4rem; }
 .waste-row {
@@ -969,17 +969,17 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
     --accent: #1f7a44 !important;
     --accent-strong: #145c33 !important;
     --accent-tint: #e3f3e8 !important;
-    --accent-pop: #1f8a4c !important;
+    --accent-pop: #187a40 !important;
     --accent-pop-deep: #156b3a !important;
     --ink-on-accent: #ffffff !important;
-    --clay: #b4600a !important;
+    --clay: #8f4a07 !important;
     --clay-tint: #fdead2 !important;
     --graphite: #3c433f !important;
-    --good: #2f7a4a !important;
+    --good: #256040 !important;
     --good-tint: #e1efe6 !important;
-    --warn: #a5690a !important;
+    --warn: #8a5808 !important;
     --warn-tint: #f5ead2 !important;
-    --critical: #b1483c !important;
+    --critical: #953a2f !important;
     --critical-tint: #f6dfdb !important;
   }
 
