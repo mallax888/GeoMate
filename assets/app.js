@@ -1364,10 +1364,17 @@ function computeAndRender() {
         stripLengths = cutPlan.cutLengths;
         theoreticalArea = cutPlan.polygonArea;
         row.querySelector(".face-length").value = L.toFixed(2);
-        embedInput.hidden = true;
+        // Hiding the input alone leaves its .field__unit wrapper (border, background, the "m" unit
+        // label) rendered as an empty box — the wrapper isn't hidden, just its child. Extents mode
+        // has no single embedment to show (every strip cuts to a different length against the
+        // boundary), so hide the whole control, not just the number inside it.
+        embedInput.parentElement.hidden = true;
         if (stripLengths.length) {
           const lo = Math.min(...stripLengths), hi = Math.max(...stripLengths);
-          embedRangeEl.textContent = `${fmt.m(lo)}–${fmt.m(hi)} m cut`;
+          const loStr = fmt.m(lo), hiStr = fmt.m(hi);
+          // lo and hi are rarely bit-identical but often round to the same displayed figure — "8–8 m
+          // cut" reads like a typo/duplicate, not "every strip cuts to about the same length".
+          embedRangeEl.textContent = loStr === hiStr ? `${loStr} m cut` : `${loStr}–${hiStr} m cut`;
         }
       }
     } else {
@@ -1375,7 +1382,7 @@ function computeAndRender() {
       L = mode === "coords" ? parseCoordsLength(row.querySelector(".face-coords").value) : parseFloat(faceLengthRaw) || 0;
       const embedRaw = embedInput.value;
       const embed = parseFloat(embedRaw) || 0;
-      embedInput.hidden = false;
+      embedInput.parentElement.hidden = false;
       embedRangeEl.textContent = "";
       result = oMin < w ? calcLift(L, w, oMin) : null;
       if (result && embed > 0) {
@@ -3291,6 +3298,26 @@ const linerInputs = {
   slope: document.getElementById("linerSlope"),
 };
 
+/** Back to the same defaults a fresh project starts with — a blank roll width would break the
+ *  liner calculation entirely, so the roll spec resets to real numbers, not blank like the floor
+ *  dimensions (which have no sensible default of their own). Shared by New Project and the liner's
+ *  own Reset button, so the "starting point" stays defined in exactly one place. */
+function resetLinerInputs() {
+  linerInputs.rollWidth.value = "1.3";
+  linerInputs.minOverlap.value = "300";
+  linerInputs.rollLength.value = "50";
+  linerInputs.floorLength.value = "";
+  linerInputs.floorWidth.value = "";
+  linerInputs.depth.value = "";
+  linerInputs.slope.value = "";
+}
+
+document.getElementById("linerResetBtn").addEventListener("click", () => {
+  if (!window.confirm("Reset the Landfill liner's roll spec and floor dimensions back to their defaults?")) return;
+  resetLinerInputs();
+  computeAndRender();
+});
+
 /**
  * Models the excavation as a rectangular-floor truncated pyramid: a flat floor rising on a
  * uniform side slope on all four sides to its crest. Both wall pairs share the same slope
@@ -3665,13 +3692,7 @@ document.getElementById("newProjectBtn").addEventListener("click", () => {
   settingsInputs.installRate.value = "";
   settingsInputs.baseLevel.value = "";
 
-  linerInputs.rollWidth.value = "1.3";
-  linerInputs.minOverlap.value = "300";
-  linerInputs.rollLength.value = "50";
-  linerInputs.floorLength.value = "";
-  linerInputs.floorWidth.value = "";
-  linerInputs.depth.value = "";
-  linerInputs.slope.value = "";
+  resetLinerInputs();
 
   ["genStartRL", "genSpacing", "genCount", "interFromRL", "interToRL", "bulkPasteInput"].forEach((id) => {
     document.getElementById(id).value = "";
