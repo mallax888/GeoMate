@@ -1108,9 +1108,20 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   border-right: 1px solid var(--surface-2);
   background: var(--accent-tint);
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .roll-bar__piece:nth-child(odd) { background: var(--clay-tint); }
 .roll-bar__piece:last-child { border-right: none; }
+.roll-bar__piece-num {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--ink-muted);
+  pointer-events: none;
+}
+.roll-piece__num { color: var(--ink-muted); font-weight: 700; }
 .roll-bar__offcut {
   height: 100%;
   background: repeating-linear-gradient(45deg, var(--line), var(--line) 4px, transparent 4px, transparent 8px);

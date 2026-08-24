@@ -3840,16 +3840,19 @@ function buildRollCardHtml(roll, index) {
   const rollLength = roll.rollLength;
   const used = roll.pieces.reduce((s, p) => s + p.length + p.extra, 0);
   const barPieces = roll.pieces
-    .map((p) => {
+    .map((p, i) => {
       const total = p.length + p.extra;
       const title = p.extra > 1e-6 ? `${escapeHtml(p.label)} — ${fmt.m(p.length)} m + ${fmt.m(p.extra)} m to fill roll` : `${escapeHtml(p.label)} — ${fmt.m(p.length)} m`;
-      return `<div class="roll-bar__piece" style="width:${((total / rollLength) * 100).toFixed(2)}%" title="${title}"></div>`;
+      return `<div class="roll-bar__piece" style="width:${((total / rollLength) * 100).toFixed(2)}%" title="${title}"><span class="roll-bar__piece-num">${i + 1}</span></div>`;
     })
     .join("");
+  // Piece order within a roll is its physical cut order off that roll, so numbering it 1, 2, 3…
+  // per roll (rather than reusing the RL/Strip label, which is the strip's position on its own lift)
+  // gives the crew a simple cut sequence to follow roll by roll.
   const pieceRows = roll.pieces
-    .map((p) => {
+    .map((p, i) => {
       const detail = p.extra > 1e-6 ? `${fmt.m(p.length + p.extra)} m (+${fmt.m(p.extra)} m to fill roll)` : `${fmt.m(p.length)} m`;
-      return `<li><span class="roll-piece__label">${escapeHtml(p.label)}</span><span class="roll-piece__value">${detail}</span></li>`;
+      return `<li><span class="roll-piece__label"><span class="roll-piece__num">${i + 1}.</span> ${escapeHtml(p.label)}</span><span class="roll-piece__value">${detail}</span></li>`;
     })
     .join("");
   const cut = isRollCut(index + 1);
@@ -3924,7 +3927,7 @@ function buildRollLabelsHtml(rolls, project) {
   const cards = rolls
     .map((roll, i) => {
       const pieces = roll.pieces
-        .map((p) => `<li><span>${escapeHtml(p.label)}</span><span>${fmt.m(p.length + p.extra)} m</span></li>`)
+        .map((p, i) => `<li><span>${i + 1}. ${escapeHtml(p.label)}</span><span>${fmt.m(p.length + p.extra)} m</span></li>`)
         .join("");
       const productBit = roll.productLabel ? `${escapeHtml(roll.productLabel)} — ` : "";
       return `
