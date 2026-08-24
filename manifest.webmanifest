@@ -1,6 +1,6 @@
 {
-  "name": "Geogrid Takeoff",
-  "short_name": "Geogrid Takeoff",
+  "name": "GeoMate",
+  "short_name": "GeoMate",
   "description": "Strip layout and roll quantity calculator for lift-by-lift geogrid reinforced fill installation.",
   "start_url": "./index.html",
   "scope": "./",

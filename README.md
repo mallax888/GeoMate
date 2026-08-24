@@ -1,4 +1,4 @@
-# Geogrid Takeoff
+# GeoMate
 
 A browser-based calculator for planning lift-by-lift geogrid reinforced fill
 installations: strip layout across each lift's face, overlap spacing, and a

@@ -2339,7 +2339,7 @@ function buildCutPlanPrintPages(results, project) {
 
 document.getElementById("printCutPlanBtn").addEventListener("click", () => {
   const results = window.__geogridCutPlanResults || [];
-  const project = document.getElementById("projectName").value || "Geogrid takeoff";
+  const project = document.getElementById("projectName").value || "GeoMate";
   document.getElementById("cutPlanPrintView").innerHTML = buildCutPlanPrintPages(results, project);
   document.body.classList.add("printing-cutplan");
   window.print();
@@ -2354,7 +2354,7 @@ window.addEventListener("afterprint", () => {
 
 document.getElementById("exportFullPdfBtn").addEventListener("click", () => {
   const results = window.__geogridResults || [];
-  const project = document.getElementById("projectName").value || "Geogrid takeoff";
+  const project = document.getElementById("projectName").value || "GeoMate";
 
   const coverSheet = `
     <section class="export-sheet">
@@ -3752,7 +3752,7 @@ function syncCompass() {
   document.getElementById("view3DExportDxf").addEventListener("click", () => {
     const dxf = buildLiftsDxf(window.__geogridResults || []);
     if (!dxf) return;
-    const project = document.getElementById("projectName").value || "geogrid-takeoff";
+    const project = document.getElementById("projectName").value || "geomate";
     const blob = new Blob([dxf], { type: "application/dxf" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -3945,7 +3945,7 @@ function buildRollLabelsHtml(rolls, project) {
 }
 
 document.getElementById("printRollLabelsBtn").addEventListener("click", () => {
-  const project = document.getElementById("projectName").value || "Geogrid takeoff";
+  const project = document.getElementById("projectName").value || "GeoMate";
   const rolls = window.__geogridRolls || [];
   document.getElementById("rollLabelsPrintView").innerHTML = buildRollLabelsHtml(rolls, project);
   document.body.classList.add("printing-roll-labels");
@@ -3953,7 +3953,7 @@ document.getElementById("printRollLabelsBtn").addEventListener("click", () => {
 });
 
 document.getElementById("printRollScheduleBtn").addEventListener("click", () => {
-  const project = document.getElementById("projectName").value || "Geogrid takeoff";
+  const project = document.getElementById("projectName").value || "GeoMate";
   const rolls = window.__geogridRolls || [];
   const cards = rolls.map((roll, i) => buildRollCardHtml(roll, i)).join("");
   document.getElementById("rollSchedulePrintView").innerHTML = `
@@ -3972,7 +3972,7 @@ document.getElementById("exportBtn").addEventListener("click", () => {
   const results = window.__geogridResults || [];
   const { rollGroupSize, installRate, baseLevel } = readSettings();
   const productSpecs = readProductSpecs();
-  const project = document.getElementById("projectName").value || "geogrid-takeoff";
+  const project = document.getElementById("projectName").value || "geomate";
 
   const lines = [
     `Project,${csvEscape(project)}`,
