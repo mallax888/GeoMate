@@ -358,7 +358,26 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .product-name-input { width: 100%; min-width: 7rem; font-family: var(--font-display); font-weight: 600; border: none; background: none; color: var(--ink); padding: 0.4rem 0.1rem; }
 .product-name-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
 .product-swatch-col { width: 1.4rem; }
-.product-action-col { width: 2rem; }
+/* Pinned to the right edge of the table's own scroll container — a narrow sidebar can't fit every
+   column at once (see .table-scroll), and a delete button that only exists off-screen at some
+   scroll position a user has no reason to know about isn't discoverable. Sticky keeps it reachable
+   at any scroll position instead; the left border + shadow read as "more columns behind this". */
+.product-action-col {
+  width: 2rem;
+  position: sticky;
+  right: 0;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  box-shadow: -4px 0 6px -4px rgba(0, 0, 0, 0.25);
+}
+.spec-table tbody tr:hover .product-action-col { background: var(--surface-2); }
+.spec-table thead th:last-child {
+  position: sticky;
+  right: 0;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  box-shadow: -4px 0 6px -4px rgba(0, 0, 0, 0.25);
+}
 .swatch { width: 0.62rem; height: 0.62rem; border-radius: 50%; flex: none; display: inline-block; }
 .swatch--id-1 { background: var(--id-1); }
 .swatch--id-2 { background: var(--id-2); }
