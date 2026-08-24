@@ -209,7 +209,7 @@ h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
 /* ---------- Layout ---------- */
 .layout {
   display: grid;
-  grid-template-columns: 17rem minmax(0, 1fr) 19rem;
+  grid-template-columns: 15.5rem minmax(0, 1fr) 17.5rem;
   gap: 1.1rem;
   align-items: start;
   padding: 1.1rem 1.75rem 2.5rem;
@@ -538,7 +538,7 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 
 /* ---------- Lift table ---------- */
 .table-scroll { overflow-x: auto; }
-.lift-table { width: 100%; border-collapse: collapse; min-width: 980px; }
+.lift-table { width: 100%; border-collapse: collapse; }
 .lift-table th {
   text-align: left;
   font-size: 0.66rem;
@@ -555,19 +555,24 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   vertical-align: middle;
 }
 .lift-table tbody tr:hover { background: var(--surface-2); }
-.col-rl { width: 6.4rem; }
+/* min-width, not width — in auto table layout, `width` on a cell is only a preference the browser
+   is free to shrink below once the table's own content is tight, and it will do that silently,
+   truncating whatever text happens to be in that column (this is exactly how "RE580" quietly became
+   "RE_" once the Layout column was removed and the remaining columns had more room to fight over).
+   min-width is a real floor — the table simply grows past 100% and scrolls instead of squeezing a
+   column below what its content needs. */
+.col-rl { min-width: 6.4rem; }
 .col-rl input { text-align: right; padding-right: 0.4rem; min-width: 4.2rem; }
-.col-product { width: 11.6rem; white-space: nowrap; }
+.col-product { min-width: 11.6rem; white-space: nowrap; }
 .col-product .product-swatch { vertical-align: middle; }
 .col-product .product-select { width: calc(100% - 1.05rem); vertical-align: middle; padding: 0.4rem 1.3rem 0.4rem 0.35rem; }
 .col-face { min-width: 9.5rem; }
-.col-embed { width: 6.5rem; }
-.col-strips, .col-overlap, .col-area, .col-volume { width: 5rem; text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-.col-area, .col-volume { width: 6rem; white-space: nowrap; }
+.col-embed { min-width: 6.5rem; }
+.col-strips, .col-overlap, .col-area, .col-volume { min-width: 5rem; text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.col-area, .col-volume { min-width: 6rem; white-space: nowrap; }
 .lift-table th.col-strips, .lift-table th.col-overlap, .lift-table th.col-area, .lift-table th.col-volume { text-align: right; }
 .area-value small, .volume-value small { color: var(--ink-muted); font-weight: 400; margin-left: 0.15em; }
-.col-diagram { width: 12rem; }
-.col-remove { width: 2rem; }
+.col-remove { min-width: 2rem; }
 .result-cell { color: var(--ink); }
 .result-cell.is-empty { color: var(--ink-muted); }
 

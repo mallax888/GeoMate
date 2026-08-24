@@ -1753,7 +1753,6 @@ function computeAndRender() {
     const strips = row.querySelector(".strip-count");
     const overlapCell = row.querySelector(".overlap-value");
     const areaCell = row.querySelector(".area-value");
-    const diagram = row.querySelector(".strip-diagram");
 
     const p = productFor(row);
     const swatchEl = row.querySelector(".product-swatch");
@@ -1857,7 +1856,6 @@ function computeAndRender() {
       strips.classList.add("is-empty");
       overlapCell.classList.add("is-empty");
       areaCell.classList.add("is-empty");
-      diagram.innerHTML = "";
       // A manual-build row with nothing placed yet has nothing to report here, but its boundary and
       // first click-node still need to show up in the Cut Plan tab — push a minimal, empty result
       // rather than dropping the row from that tab entirely until its first strip exists.
@@ -1892,11 +1890,6 @@ function computeAndRender() {
       : 0;
     const area = stripLengths.reduce((s, len, i) => s + stripWidths[i] * len, 0) + stitchArea;
     areaCell.innerHTML = `${fmt.m(area)}<small> m²</small>`;
-    if (cutPlan && cutPlan.manual) {
-      renderDiagramManual(diagram, L, cutPlan, productSpecs);
-    } else {
-      renderDiagram(diagram, L, result, p.w);
-    }
 
     const footprint =
       mode === "extents" && cutPlan
