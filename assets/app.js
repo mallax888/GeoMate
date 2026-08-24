@@ -1798,9 +1798,11 @@ function computeAndRender() {
         if (stripLengths.length) {
           const lo = Math.min(...stripLengths), hi = Math.max(...stripLengths);
           const loStr = fmt.m(lo), hiStr = fmt.m(hi);
-          // lo and hi are rarely bit-identical but often round to the same displayed figure — "8–8 m
-          // cut" reads like a typo/duplicate, not "every strip cuts to about the same length".
-          embedRangeEl.textContent = loStr === hiStr ? `${loStr} m cut` : `${loStr}–${hiStr} m cut`;
+          // lo and hi are rarely bit-identical but often round to the same displayed figure — "8–8 m"
+          // reads like a typo/duplicate, not "every strip cuts to about the same length". "cut" is
+          // dropped from the text itself (not just this comment) to save column width — the
+          // Embedment header above it already says what these lengths are.
+          embedRangeEl.textContent = loStr === hiStr ? `${loStr} m` : `${loStr}–${hiStr} m`;
         }
       }
     } else {

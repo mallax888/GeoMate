@@ -550,7 +550,7 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   border-bottom: 1px solid var(--line-strong);
 }
 .lift-table td {
-  padding: 0.35rem 0.35rem;
+  padding: 0.35rem 0.3rem;
   border-bottom: 1px solid var(--line);
   vertical-align: middle;
 }
@@ -561,18 +561,18 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
    "RE_" once the Layout column was removed and the remaining columns had more room to fight over).
    min-width is a real floor — the table simply grows past 100% and scrolls instead of squeezing a
    column below what its content needs. */
-.col-rl { min-width: 6.4rem; }
-.col-rl input { text-align: right; padding-right: 0.4rem; min-width: 4.2rem; }
+.col-rl { min-width: 5.6rem; }
+.col-rl input { text-align: right; padding-right: 0.3rem; min-width: 3.6rem; }
 .col-product { min-width: 11.6rem; white-space: nowrap; }
 .col-product .product-swatch { vertical-align: middle; }
 .col-product .product-select { width: calc(100% - 1.05rem); vertical-align: middle; padding: 0.4rem 1.3rem 0.4rem 0.35rem; }
-.col-face { min-width: 9.5rem; }
-.col-embed { min-width: 6.5rem; }
+.col-face { min-width: 7.5rem; }
+.col-embed { min-width: 5.5rem; }
 /* Strips+overlap and area+fill-volume are each two related numbers sharing one column now (a
    primary figure and a smaller muted one underneath) instead of four separate columns — the same
    values, just denser, so the table needs meaningfully less width for them. */
 .col-strips, .col-area {
-  min-width: 6rem;
+  min-width: 5.5rem;
   text-align: right;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
