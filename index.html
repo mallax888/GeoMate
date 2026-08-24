@@ -228,10 +228,8 @@
               <th scope="col" class="col-product">Product</th>
               <th scope="col" class="col-face">Face length</th>
               <th scope="col" class="col-embed">Embedment</th>
-              <th scope="col" class="col-strips">Strips</th>
-              <th scope="col" class="col-overlap">Overlap</th>
-              <th scope="col" class="col-area">Area</th>
-              <th scope="col" class="col-volume">Fill volume</th>
+              <th scope="col" class="col-strips">Strips <span class="th-sub">/ overlap</span></th>
+              <th scope="col" class="col-area">Area <span class="th-sub">/ fill vol.</span></th>
               <th scope="col" class="col-remove"><span class="sr-only">Insert / remove</span></th>
             </tr>
           </thead>
@@ -675,10 +673,12 @@
       <div class="field__unit"><input type="number" class="embed-length" min="0" step="0.01" aria-label="Embedment (m)" /><em>m</em></div>
       <span class="embed-range"></span>
     </td>
-    <td class="col-strips result-cell strip-count">—</td>
-    <td class="col-overlap result-cell overlap-value">—</td>
-    <td class="col-area result-cell area-value">—</td>
-    <td class="col-volume result-cell volume-value">—</td>
+    <td class="col-strips">
+      <span class="strip-count result-cell">—</span><span class="overlap-value result-cell stat-sub">—</span>
+    </td>
+    <td class="col-area">
+      <span class="area-value result-cell">—</span><span class="volume-value result-cell stat-sub">—</span>
+    </td>
     <td class="col-remove">
       <button type="button" class="row-remove" aria-label="Remove lift">✕</button>
     </td>

@@ -213,7 +213,7 @@ h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
   gap: 1.1rem;
   align-items: start;
   padding: 1.1rem 1.75rem 2.5rem;
-  max-width: 1440px;
+  max-width: 1600px;
   margin: 0 auto;
 }
 @media (max-width: 1080px) {
@@ -568,9 +568,20 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .col-product .product-select { width: calc(100% - 1.05rem); vertical-align: middle; padding: 0.4rem 1.3rem 0.4rem 0.35rem; }
 .col-face { min-width: 9.5rem; }
 .col-embed { min-width: 6.5rem; }
-.col-strips, .col-overlap, .col-area, .col-volume { min-width: 5rem; text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-.col-area, .col-volume { min-width: 6rem; white-space: nowrap; }
-.lift-table th.col-strips, .lift-table th.col-overlap, .lift-table th.col-area, .lift-table th.col-volume { text-align: right; }
+/* Strips+overlap and area+fill-volume are each two related numbers sharing one column now (a
+   primary figure and a smaller muted one underneath) instead of four separate columns — the same
+   values, just denser, so the table needs meaningfully less width for them. */
+.col-strips, .col-area {
+  min-width: 6rem;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.lift-table th.col-strips, .lift-table th.col-area { text-align: right; }
+.th-sub { font-weight: 400; text-transform: none; letter-spacing: normal; color: var(--ink-muted); font-size: 0.95em; }
+.col-strips span, .col-area span { display: block; }
+.stat-sub { color: var(--ink-muted); font-weight: 400; font-size: 0.78em; }
 .area-value small, .volume-value small { color: var(--ink-muted); font-weight: 400; margin-left: 0.15em; }
 .col-remove { min-width: 2rem; }
 .result-cell { color: var(--ink); }
