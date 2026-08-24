@@ -898,64 +898,226 @@ const rowTemplate = document.getElementById("liftRowTemplate");
 const emptyState = document.getElementById("emptyState");
 
 const settingsInputs = {
-  rollWidth: document.getElementById("rollWidth"),
-  minOverlapMm: document.getElementById("minOverlap"),
-  rollLength: document.getElementById("rollLength"),
   rollGroupSize: document.getElementById("rollGroupSize"),
-  costPerRoll: document.getElementById("costPerRoll"),
   installRate: document.getElementById("installRate"),
   baseLevel: document.getElementById("baseLevel"),
   extendFace: document.getElementById("extendFaceToggle"),
 };
 
-const strataInputs = {
-  rollWidth: document.getElementById("strataRollWidth"),
-  minOverlapMm: document.getElementById("strataMinOverlap"),
-  rollLength: document.getElementById("strataRollLength"),
-  costPerRoll: document.getElementById("strataCostPerRoll"),
-  wrapAllowance: document.getElementById("strataWrapAllowance"),
-};
+/* ============================================================
+   Products — an open-ended, editable list of rolled products (RE580, Strata, or whatever a job
+   needs next), each with its own width/overlap/roll length/cost and an optional wrap+lap allowance.
+   `products` only tracks IDENTITY (which ids exist, in what order, which colour dot they get) — the
+   actual spec numbers live in the DOM inputs rendered inside #productSpecBody, read fresh by
+   readProductSpecs() the same way settingsInputs always has been. That keeps a single source of
+   truth per value and means adding/renaming/deleting a product never has to sync two copies of the
+   same number.
+   ============================================================ */
 
-/**
- * Two physically different rolled products can appear in the same job — RE580 (the original,
- * default spec above) and Strata (its own width/overlap/roll length, plus a wrap-around-the-face +
- * lap-under-the-next-lift allowance that RE580 doesn't need). Every lift row picks one via its own
- * Product toggle; this is the lookup the per-row loop and roll packing key off of. RE580 stays
- * exactly the plain global spec it always was — Strata is the only thing genuinely new here.
- */
-function readProductSpecs() {
-  return {
-    re580: {
-      id: "re580",
-      label: "RE580",
-      w: parseFloat(settingsInputs.rollWidth.value) || 0,
-      oMin: (parseFloat(settingsInputs.minOverlapMm.value) || 0) / 1000,
-      rollLength: parseFloat(settingsInputs.rollLength.value) || 0,
-      costPerRoll: parseFloat(settingsInputs.costPerRoll.value) || 0,
-      wrapAllowance: 0,
-    },
-    strata: {
-      id: "strata",
-      label: "Strata",
-      w: parseFloat(strataInputs.rollWidth.value) || 0,
-      oMin: (parseFloat(strataInputs.minOverlapMm.value) || 0) / 1000,
-      rollLength: parseFloat(strataInputs.rollLength.value) || 0,
-      costPerRoll: parseFloat(strataInputs.costPerRoll.value) || 0,
-      wrapAllowance: parseFloat(strataInputs.wrapAllowance.value) || 0,
-    },
-  };
+const PRODUCT_COLOR_SLOTS = ["id-1", "id-2", "id-3", "id-4"];
+const productSpecBody = document.getElementById("productSpecBody");
+
+let products = [];
+
+function defaultProductRows() {
+  return [
+    { id: "re580", colorSlot: "id-1", name: "RE580", w: "1.3", oMinMm: "300", rollLength: "50", costPerRoll: "", wrapAllowance: "0" },
+    { id: "strata", colorSlot: "id-2", name: "Strata", w: "5.8", oMinMm: "150", rollLength: "100", costPerRoll: "", wrapAllowance: "2.6" },
+  ];
 }
+
+/** Reconstructs the RE580/Strata products from a version-1 saved project or autosave (predating the
+ *  editable product list), which stored RE580's spec as fixed settings.* fields and Strata's as a
+ *  separate top-level `strata` block. Only synthesizes the ones that were actually saved, so an old
+ *  snapshot that never had Strata filled in doesn't invent it. */
+function legacyProductRowsFrom(state) {
+  const s = state.settings || {};
+  const st = state.strata || {};
+  const rows = [];
+  if (s.rollWidth != null) {
+    rows.push({
+      id: "re580",
+      colorSlot: "id-1",
+      name: "RE580",
+      w: s.rollWidth,
+      oMinMm: s.minOverlap ?? "300",
+      rollLength: s.rollLength ?? "50",
+      costPerRoll: s.costPerRoll ?? "",
+      wrapAllowance: "0",
+    });
+  }
+  if (st.rollWidth != null) {
+    rows.push({
+      id: "strata",
+      colorSlot: "id-2",
+      name: "Strata",
+      w: st.rollWidth,
+      oMinMm: st.minOverlap ?? "150",
+      rollLength: st.rollLength ?? "100",
+      costPerRoll: st.costPerRoll ?? "",
+      wrapAllowance: st.wrapAllowance ?? "2.6",
+    });
+  }
+  return rows.length ? rows : defaultProductRows();
+}
+
+function blankProductRow() {
+  const id = "product_" + Math.random().toString(36).slice(2, 9);
+  const colorSlot = PRODUCT_COLOR_SLOTS[products.length % PRODUCT_COLOR_SLOTS.length];
+  return { id, colorSlot, name: "", w: "1.3", oMinMm: "300", rollLength: "50", costPerRoll: "", wrapAllowance: "0" };
+}
+
+function productRowEl(id) {
+  return productSpecBody.querySelector(`tr[data-id="${CSS.escape(id)}"]`);
+}
+
+function productFieldEl(id, field) {
+  return productRowEl(id)?.querySelector(`[data-field="${field}"]`) || null;
+}
+
+function buildProductRowHtml(row) {
+  return `
+    <tr class="product-row" data-id="${row.id}">
+      <td class="product-swatch-col"><span class="swatch swatch--${row.colorSlot}"></span></td>
+      <td><input class="product-name-input" data-field="name" value="${escapeHtml(row.name)}" placeholder="Product name" aria-label="Product name" /></td>
+      <td class="num"><div class="field__unit"><input type="number" data-field="w" min="0.1" step="0.05" value="${escapeHtml(row.w)}" aria-label="Roll width" /><em>m</em></div></td>
+      <td class="num"><div class="field__unit"><input type="number" data-field="oMinMm" min="0" step="10" value="${escapeHtml(row.oMinMm)}" aria-label="Minimum overlap" /><em>mm</em></div></td>
+      <td class="num"><div class="field__unit"><input type="number" data-field="rollLength" min="1" step="1" value="${escapeHtml(row.rollLength)}" aria-label="Roll length" /><em>m</em></div></td>
+      <td class="num"><div class="field__unit"><input type="number" data-field="costPerRoll" min="0" step="1" placeholder="0" value="${escapeHtml(row.costPerRoll)}" aria-label="Cost per roll" /><em>$</em></div></td>
+      <td class="num"><div class="field__unit"><input type="number" data-field="wrapAllowance" min="0" step="0.1" value="${escapeHtml(row.wrapAllowance)}" aria-label="Wrap and lap allowance" /><em>m</em></div></td>
+      <td class="product-action-col"><button type="button" class="product-delete-btn" data-id="${row.id}" title="Delete ${escapeHtml(row.name || row.id)}"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4h10M6 4V2.6h4V4M4 4l.6 9.4h6.8L12 4"/></svg></button></td>
+    </tr>
+  `;
+}
+
+/** Full rebuild from a list of complete row specs — used at boot and when restoring a saved/
+ *  autosaved project. Everyday add/delete instead touch just the one row that changed (see
+ *  addProduct/deleteProduct below), so an in-progress edit elsewhere in the table is never disturbed. */
+function renderProductTable(rows) {
+  products = rows.map((r) => ({ id: r.id, colorSlot: r.colorSlot }));
+  productSpecBody.innerHTML = rows.map(buildProductRowHtml).join("");
+  populateProductSelects();
+}
+
+function addProduct() {
+  const row = blankProductRow();
+  products.push({ id: row.id, colorSlot: row.colorSlot });
+  productSpecBody.insertAdjacentHTML("beforeend", buildProductRowHtml(row));
+  populateProductSelects();
+  computeAndRender();
+  productFieldEl(row.id, "name")?.focus();
+}
+
+function deleteProduct(id) {
+  if (products.length <= 1) return; // at least one product must always exist
+  const inUse = Array.from(tbody.querySelectorAll(".lift-row .product-select")).some((sel) => sel.value === id);
+  if (inUse) return; // delete button is disabled in this case already — belt and braces
+  products = products.filter((p) => p.id !== id);
+  productRowEl(id)?.remove();
+  populateProductSelects();
+  computeAndRender();
+}
+
+/** Keeps every lift row's Product <select> in sync with the current product list (add/delete/
+ *  rename) — rebuilt from scratch each time since it's cheap and the list is short, preserving
+ *  whichever product a row already had selected where it still exists. */
+function populateProductSelects() {
+  const options = products.map((p) => ({
+    id: p.id,
+    name: productFieldEl(p.id, "name")?.value.trim() || p.id,
+    colorSlot: p.colorSlot,
+  }));
+  document.querySelectorAll("#liftTableBody .lift-row .product-select").forEach((sel) => {
+    const prevValue = sel.value;
+    sel.innerHTML = options.map((o) => `<option value="${o.id}">${escapeHtml(o.name)}</option>`).join("");
+    sel.value = options.some((o) => o.id === prevValue) ? prevValue : options[0]?.id || "";
+  });
+}
+
+/** Every product row's raw (unparsed) field values, in table order — the shape saved into a project
+ *  snapshot and restored verbatim via renderProductTable(), same convention as every other raw-input
+ *  field in buildStateSnapshot/applyStateSnapshot below. */
+function snapshotProductRows() {
+  return products.map((p) => {
+    const row = productRowEl(p.id);
+    return {
+      id: p.id,
+      colorSlot: p.colorSlot,
+      name: row.querySelector('[data-field="name"]').value,
+      w: row.querySelector('[data-field="w"]').value,
+      oMinMm: row.querySelector('[data-field="oMinMm"]').value,
+      rollLength: row.querySelector('[data-field="rollLength"]').value,
+      costPerRoll: row.querySelector('[data-field="costPerRoll"]').value,
+      wrapAllowance: row.querySelector('[data-field="wrapAllowance"]').value,
+    };
+  });
+}
+
+document.getElementById("addProductBtn").addEventListener("click", addProduct);
+productSpecBody.addEventListener("click", (e) => {
+  const btn = e.target.closest(".product-delete-btn");
+  if (btn) deleteProduct(btn.dataset.id);
+});
+productSpecBody.addEventListener("input", (e) => {
+  if (e.target.matches('[data-field="name"]')) populateProductSelects();
+  computeAndRender();
+});
+
+/** Parses every product's DOM row into the shape the rest of the app calculates against — unchanged
+ *  from the old fixed RE580/Strata version except the source is now however many rows are in the
+ *  table, in table order, instead of two hardcoded objects. */
+function readProductSpecs() {
+  const specs = {};
+  products.forEach((p) => {
+    const row = productRowEl(p.id);
+    if (!row) return;
+    const val = (field) => row.querySelector(`[data-field="${field}"]`).value;
+    const name = val("name").trim();
+    specs[p.id] = {
+      id: p.id,
+      label: name || p.id,
+      colorSlot: p.colorSlot,
+      w: parseFloat(val("w")) || 0,
+      oMin: (parseFloat(val("oMinMm")) || 0) / 1000,
+      rollLength: parseFloat(val("rollLength")) || 0,
+      costPerRoll: parseFloat(val("costPerRoll")) || 0,
+      wrapAllowance: parseFloat(val("wrapAllowance")) || 0,
+    };
+  });
+  return specs;
+}
+
+/** Disables/greys out a product's delete button while it's in use on any lift row, or while it's
+ *  the last product left — both would otherwise leave a row pointing at a product that no longer
+ *  exists. Cheap enough to just re-scan on every recompute rather than track usage incrementally. */
+function updateProductDeleteState() {
+  const usage = new Map();
+  document.querySelectorAll("#liftTableBody .lift-row .product-select").forEach((sel) => {
+    usage.set(sel.value, (usage.get(sel.value) || 0) + 1);
+  });
+  products.forEach((p) => {
+    const btn = productRowEl(p.id)?.querySelector(".product-delete-btn");
+    if (!btn) return;
+    const count = usage.get(p.id) || 0;
+    const isLast = products.length <= 1;
+    btn.disabled = count > 0 || isLast;
+    const name = productFieldEl(p.id, "name")?.value.trim() || p.id;
+    btn.title = isLast
+      ? "At least one product is required"
+      : count > 0
+      ? `Can't delete — used by ${count} lift${count === 1 ? "" : "s"}`
+      : `Delete ${name}`;
+  });
+}
+
+renderProductTable(defaultProductRows());
 
 function readSettings() {
   const rollGroupSizeRaw = parseInt(settingsInputs.rollGroupSize.value, 10);
   const baseLevelRaw = parseFloat(settingsInputs.baseLevel.value);
   return {
-    w: parseFloat(settingsInputs.rollWidth.value) || 0,
-    oMin: (parseFloat(settingsInputs.minOverlapMm.value) || 0) / 1000,
-    rollLength: parseFloat(settingsInputs.rollLength.value) || 0,
     // How many adjacent lifts may share a roll — 0/blank pools every lift together (lowest waste).
     rollGroupSize: rollGroupSizeRaw > 0 ? rollGroupSizeRaw : 0,
-    costPerRoll: parseFloat(settingsInputs.costPerRoll.value) || 0,
     installRate: parseFloat(settingsInputs.installRate.value) || 0,
     // The RL fill started from, below the lowest lift — null (not 0) when blank, since RL 0 is a
     // perfectly real elevation and can't double as "not set".
@@ -1015,6 +1177,7 @@ function addLiftRow(rl = "", faceLength = "", embed = "", insertBeforeNode = nul
   });
 
   tbody.insertBefore(frag, insertBeforeNode);
+  populateProductSelects();
   return row;
 }
 
@@ -1109,7 +1272,9 @@ const SAMPLE_PROJECT = {
 
 document.getElementById("loadSampleBtn").addEventListener("click", () => {
   document.getElementById("projectName").value = SAMPLE_PROJECT.projectName;
-  settingsInputs.costPerRoll.value = SAMPLE_PROJECT.costPerRoll;
+  renderProductTable(defaultProductRows());
+  const re580Cost = productFieldEl("re580", "costPerRoll");
+  if (re580Cost) re580Cost.value = SAMPLE_PROJECT.costPerRoll;
   settingsInputs.installRate.value = SAMPLE_PROJECT.installRate;
   tbody.innerHTML = "";
   SAMPLE_PROJECT.rows.forEach((r) => addLiftRow(r.rl, r.face, r.embed));
@@ -1192,7 +1357,6 @@ document.getElementById("interRemoveBtn").addEventListener("click", () => {
 });
 
 Object.values(settingsInputs).forEach((el) => el.addEventListener("input", computeAndRender));
-Object.values(strataInputs).forEach((el) => el.addEventListener("input", computeAndRender));
 
 /* ============================================================
    Strip-layout diagram
@@ -1315,7 +1479,7 @@ function validateRows(results, productSpecs) {
   // boundary already and aren't a fixed embedment. Each row's own product decides its roll length.
   results.forEach((r, i) => {
     if (r.mode === "extents") return;
-    const rollLength = (productSpecs[r.product] || productSpecs.re580).rollLength;
+    const rollLength = (productSpecs[r.product] || productSpecs[products[0]?.id]).rollLength;
     const cutLen = r.stripLengths && r.stripLengths.length ? Math.max(...r.stripLengths) : r.embed;
     if (rollLength > 0 && cutLen > rollLength) {
       issues.push(`RL ${r.rl || `row ${i + 1}`}: cut length (${fmt.m(cutLen)} m) is longer than the ${r.productLabel} roll length (${fmt.m(rollLength)} m) — will need a splice.`);
@@ -1341,7 +1505,7 @@ function renderRowWarnings(issues) {
 /** Same three checks (negative overlap, overlap >= width, non-positive roll length), run once per
  * product against its own inputs — RE580 and Strata each need their own spec to be internally valid
  * regardless of whether the other one is. */
-function validateProductSpec(p, inputsEl, rollLengthRawStr) {
+function validateProductSpec(p, rollLengthRawStr) {
   const issues = [];
   if (p.oMin < 0) {
     issues.push(`Minimum overlap can't be negative — every ${p.label} lift will show as blank until it's fixed.`);
@@ -1357,20 +1521,21 @@ function validateProductSpec(p, inputsEl, rollLengthRawStr) {
 function computeAndRender() {
   const { rollGroupSize, installRate, baseLevel, extendFace } = readSettings();
   const productSpecs = readProductSpecs();
+  const fallbackProduct = productSpecs[products[0]?.id];
   const productFor = (row) => {
     const sel = row.querySelector(".product-select");
-    return productSpecs[sel ? sel.value : "re580"] || productSpecs.re580;
+    return (sel && productSpecs[sel.value]) || fallbackProduct;
   };
 
-  const specWarning = document.getElementById("specWarning");
-  const specIssues = validateProductSpec(productSpecs.re580, settingsInputs, settingsInputs.rollLength.value);
-  specWarning.hidden = specIssues.length === 0;
-  specWarning.innerHTML = specIssues.map((m) => `<span>${escapeHtml(m)}</span>`).join("<br>");
-
-  const strataSpecWarning = document.getElementById("strataSpecWarning");
-  const strataSpecIssues = validateProductSpec(productSpecs.strata, strataInputs, strataInputs.rollLength.value);
-  strataSpecWarning.hidden = strataSpecIssues.length === 0;
-  strataSpecWarning.innerHTML = strataSpecIssues.map((m) => `<span>${escapeHtml(m)}</span>`).join("<br>");
+  const productSpecWarning = document.getElementById("productSpecWarning");
+  const productSpecIssues = products.flatMap((p) => {
+    const spec = productSpecs[p.id];
+    if (!spec) return [];
+    const rollLengthRaw = productFieldEl(p.id, "rollLength")?.value ?? "";
+    return validateProductSpec(spec, rollLengthRaw);
+  });
+  productSpecWarning.hidden = productSpecIssues.length === 0;
+  productSpecWarning.innerHTML = productSpecIssues.map((m) => `<span>${escapeHtml(m)}</span>`).join("<br>");
 
   const rows = Array.from(tbody.querySelectorAll(".lift-row"));
   emptyState.hidden = rows.length > 0;
@@ -1415,6 +1580,8 @@ function computeAndRender() {
     const diagram = row.querySelector(".strip-diagram");
 
     const p = productFor(row);
+    const swatchEl = row.querySelector(".product-swatch");
+    if (swatchEl) swatchEl.className = "product-swatch swatch" + (p.colorSlot ? ` swatch--${p.colorSlot}` : "");
     let L, result, stripLengths, theoreticalArea, cutPlan = null;
 
     if (mode === "extents" && row._extentsPoints) {
@@ -1566,6 +1733,7 @@ function computeAndRender() {
   });
 
   window.__geogridResults = liftResults; // exposed for CSV export + progress tracking, set before renderSummary needs it
+  updateProductDeleteState();
   renderRowWarnings([...inputIssues, ...validateRows(liftResults, productSpecs)]);
   renderSummary(liftResults, productSpecs, rollGroupSize, installRate, baseLevel);
   renderSequence(liftResults);
@@ -1720,14 +1888,11 @@ function renderSummary(results, productSpecs, rollGroupSize, installRate, baseLe
   // Pack every strip/stitch onto numbered rolls (see Roll schedule tab) — the same packing drives
   // both this summary and that tab, so they always agree. Pooled across every lift by default (fewest
   // rolls); optionally restricted to bands of `rollGroupSize` adjacent lifts so a roll never mixes
-  // pieces from opposite ends of the job (see packRollsWindowed). RE580 and Strata are packed
+  // pieces from opposite ends of the job (see packRollsWindowed). Every product is packed
   // separately (different physical roll, different length) then merged back into one on-site
   // numbering order by first-used sequence, same as packRollsWindowed does within a single product.
   const rollPieces = buildRollPieces(results);
-  const rolls = [
-    ...packRollsForProduct(results, "re580", productSpecs, rollGroupSize),
-    ...packRollsForProduct(results, "strata", productSpecs, rollGroupSize),
-  ];
+  const rolls = products.flatMap((p) => packRollsForProduct(results, p.id, productSpecs, rollGroupSize));
   rolls.sort((a, b) => Math.min(...a.pieces.map((p) => p.seq)) - Math.min(...b.pieces.map((p) => p.seq)));
   window.__geogridRolls = rolls;
   window.__geogridRollPieces = rollPieces;
@@ -3328,13 +3493,14 @@ document.getElementById("exportBtn").addEventListener("click", () => {
 
   const lines = [
     `Project,${csvEscape(project)}`,
-    `RE580 roll width (m),${productSpecs.re580.w}`,
-    `RE580 minimum overlap (mm),${Math.round(productSpecs.re580.oMin * 1000)}`,
-    `RE580 roll length (m),${productSpecs.re580.rollLength}`,
-    `Strata roll width (m),${productSpecs.strata.w}`,
-    `Strata minimum overlap (mm),${Math.round(productSpecs.strata.oMin * 1000)}`,
-    `Strata roll length (m),${productSpecs.strata.rollLength}`,
-    `Strata wrap/lap allowance (m),${productSpecs.strata.wrapAllowance}`,
+    "",
+    "Products",
+    "Name,Roll width (m),Min overlap (mm),Roll length (m),Cost per roll,Wrap/lap allowance (m)",
+    ...products.map((p) => {
+      const spec = productSpecs[p.id];
+      return [csvEscape(spec.label), spec.w, Math.round(spec.oMin * 1000), spec.rollLength, spec.costPerRoll, spec.wrapAllowance].join(",");
+    }),
+    "",
     `Roll grouping,${rollGroupSize > 0 ? `${rollGroupSize} adjacent lifts` : "pooled across all lifts"}`,
     `Material cost,${csvEscape(document.getElementById("statCost").textContent)}`,
     `Est. install time,${csvEscape(document.getElementById("statInstallTime").textContent)}`,
@@ -3585,25 +3751,15 @@ function buildStateSnapshot() {
     product: row.querySelector(".product-select").value,
   }));
   return {
-    version: 1,
+    version: 2,
     projectName: document.getElementById("projectName").value,
     settings: {
-      rollWidth: settingsInputs.rollWidth.value,
-      minOverlap: settingsInputs.minOverlapMm.value,
-      rollLength: settingsInputs.rollLength.value,
       rollGroupSize: settingsInputs.rollGroupSize.value,
-      costPerRoll: settingsInputs.costPerRoll.value,
       installRate: settingsInputs.installRate.value,
       baseLevel: settingsInputs.baseLevel.value,
       extendFace: settingsInputs.extendFace.checked,
     },
-    strata: {
-      rollWidth: strataInputs.rollWidth.value,
-      minOverlap: strataInputs.minOverlapMm.value,
-      rollLength: strataInputs.rollLength.value,
-      costPerRoll: strataInputs.costPerRoll.value,
-      wrapAllowance: strataInputs.wrapAllowance.value,
-    },
+    products: snapshotProductRows(),
     rows,
     liner: {
       rollWidth: linerInputs.rollWidth.value,
@@ -3627,22 +3783,18 @@ function applyStateSnapshot(state) {
 
   if (state.projectName != null) document.getElementById("projectName").value = state.projectName;
   const s = state.settings || {};
-  if (s.rollWidth != null) settingsInputs.rollWidth.value = s.rollWidth;
-  if (s.minOverlap != null) settingsInputs.minOverlapMm.value = s.minOverlap;
-  if (s.rollLength != null) settingsInputs.rollLength.value = s.rollLength;
   if (s.rollGroupSize != null) settingsInputs.rollGroupSize.value = s.rollGroupSize;
-  if (s.costPerRoll != null) settingsInputs.costPerRoll.value = s.costPerRoll;
   if (s.installRate != null) settingsInputs.installRate.value = s.installRate;
   if (s.baseLevel != null) settingsInputs.baseLevel.value = s.baseLevel;
   if (s.extendFace != null) settingsInputs.extendFace.checked = !!s.extendFace;
 
-  const st = state.strata;
-  if (st) {
-    if (st.rollWidth != null) strataInputs.rollWidth.value = st.rollWidth;
-    if (st.minOverlap != null) strataInputs.minOverlapMm.value = st.minOverlap;
-    if (st.rollLength != null) strataInputs.rollLength.value = st.rollLength;
-    if (st.costPerRoll != null) strataInputs.costPerRoll.value = st.costPerRoll;
-    if (st.wrapAllowance != null) strataInputs.wrapAllowance.value = st.wrapAllowance;
+  // A project saved before the product list became editable (version 1) stored RE580's spec as
+  // fixed settings.* fields and Strata's as a separate top-level strata block instead of a products
+  // array — synthesize the same two products from those old fields so nothing already saved is lost.
+  if (Array.isArray(state.products) && state.products.length) {
+    renderProductTable(state.products);
+  } else {
+    renderProductTable(legacyProductRowsFrom(state));
   }
 
   if (l) {
@@ -3844,21 +3996,12 @@ document.getElementById("newProjectBtn").addEventListener("click", () => {
   if (!window.confirm("Clear everything and start a new blank project? Anything not saved under a project name will be lost.")) return;
 
   document.getElementById("projectName").value = "Untitled cut-face reinforcement";
-  settingsInputs.rollWidth.value = "1.3";
-  settingsInputs.minOverlapMm.value = "300";
-  settingsInputs.rollLength.value = "50";
   settingsInputs.rollGroupSize.value = "";
-  settingsInputs.costPerRoll.value = "";
   settingsInputs.installRate.value = "";
   settingsInputs.baseLevel.value = "";
   settingsInputs.extendFace.checked = false;
 
-  strataInputs.rollWidth.value = "5.8";
-  strataInputs.minOverlapMm.value = "150";
-  strataInputs.rollLength.value = "100";
-  strataInputs.costPerRoll.value = "";
-  strataInputs.wrapAllowance.value = "2.6";
-
+  renderProductTable(defaultProductRows());
   resetLinerInputs();
 
   ["genStartRL", "genSpacing", "genCount", "interFromRL", "interToRL", "bulkPasteInput"].forEach((id) => {

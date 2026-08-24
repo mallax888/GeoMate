@@ -43,55 +43,34 @@
 <main class="layout">
 
   <section class="panel panel--settings" aria-labelledby="settingsHeading">
-    <h2 id="settingsHeading" class="panel__heading">Roll &amp; overlap spec — RE580</h2>
-    <div class="settings-grid">
-      <label class="field">
-        <span>Roll width</span>
-        <div class="field__unit"><input type="number" id="rollWidth" value="1.3" min="0.1" step="0.05" /><em>m</em></div>
-      </label>
-      <label class="field">
-        <span>Minimum overlap</span>
-        <div class="field__unit"><input type="number" id="minOverlap" value="300" min="0" step="10" /><em>mm</em></div>
-      </label>
-      <label class="field">
-        <span>Roll length</span>
-        <div class="field__unit"><input type="number" id="rollLength" value="50" min="1" step="1" /><em>m</em></div>
-      </label>
-      <label class="field">
-        <span>Cost per roll</span>
-        <div class="field__unit"><input type="number" id="costPerRoll" min="0" step="1" placeholder="0" /><em>$</em></div>
-      </label>
+    <h2 id="settingsHeading" class="panel__heading">Products</h2>
+    <div class="table-scroll">
+      <table class="spec-table" id="productSpecTable">
+        <thead>
+          <tr>
+            <th scope="col"><span class="sr-only">Colour</span></th>
+            <th scope="col">Name</th>
+            <th scope="col" class="num">Roll width</th>
+            <th scope="col" class="num">Min overlap</th>
+            <th scope="col" class="num">Roll length</th>
+            <th scope="col" class="num">Cost/roll</th>
+            <th scope="col" class="num">Wrap/lap</th>
+            <th scope="col"><span class="sr-only">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody id="productSpecBody"></tbody>
+      </table>
     </div>
-
-    <h3 class="panel__subheading">Strata spec</h3>
-    <div class="settings-grid">
-      <label class="field">
-        <span>Roll width</span>
-        <div class="field__unit"><input type="number" id="strataRollWidth" value="5.8" min="0.1" step="0.05" /><em>m</em></div>
-      </label>
-      <label class="field">
-        <span>Minimum overlap</span>
-        <div class="field__unit"><input type="number" id="strataMinOverlap" value="150" min="0" step="10" /><em>mm</em></div>
-      </label>
-      <label class="field">
-        <span>Roll length</span>
-        <div class="field__unit"><input type="number" id="strataRollLength" value="100" min="1" step="1" /><em>m</em></div>
-      </label>
-      <label class="field">
-        <span>Cost per roll</span>
-        <div class="field__unit"><input type="number" id="strataCostPerRoll" min="0" step="1" placeholder="0" /><em>$</em></div>
-      </label>
-      <label class="field">
-        <span>Wrap + lap allowance</span>
-        <div class="field__unit"><input type="number" id="strataWrapAllowance" value="2.6" min="0" step="0.1" /><em>m</em></div>
-      </label>
-    </div>
+    <button type="button" id="addProductBtn" class="btn btn--dashed btn--block">+ Add product</button>
     <p class="generator__hint">
-      Strata wraps around the compacted face and tucks back in under the next lift up, so every
-      Strata strip's actual cut length is its embedment plus this allowance (600mm wrap + 2000mm lap
-      under = 2.6m by default) — not modelled as a strip diagram detail, just added straight onto the
-      material length. Pick the product per lift with the toggle next to its RL.
+      Each product is its own roll spec — width, minimum overlap, roll length, cost, and an optional
+      wrap/lap allowance (extra length folded onto every strip's cut length, e.g. a wrap around the
+      compacted face and a lap under the next lift up — not modelled as a strip diagram detail, just
+      added straight onto the material length; leave at 0 for a product that doesn't need it). Pick the
+      product per lift with the selector next to its RL. A product already used on a lift can't be
+      deleted — reassign or delete those lifts first.
     </p>
+    <p id="productSpecWarning" class="warning-text" hidden></p>
 
     <div class="settings-grid settings-grid--shared">
       <label class="field">
@@ -118,15 +97,15 @@
       length itself (rounded up to whatever whole strips at that overlap actually cover) — the field
       updates to the real as-built length. Only applies to manually-typed face lengths, not DXF
       extents/benched/battered lifts, which are already bound to a real surveyed boundary. Applies to
-      whichever product a lift uses, RE580 or Strata.
+      whichever product a lift uses.
     </p>
     <p class="generator__hint">
       The Roll schedule packs strips onto the fewest possible rolls by pooling every lift together —
       lowest waste, but any one roll can end up with pieces from lifts scattered right across the job.
       Set a lift count here (e.g. 3) to only ever share a roll between that many <em>adjacent</em>
       lifts — a bit more offcut, but each roll stays close to where it's actually used. Leave blank to
-      pool everything. RE580 and Strata are always packed onto separate rolls regardless of this
-      setting — they're physically different products.
+      pool everything. Different products are always packed onto separate rolls regardless of this
+      setting — they're physically different rolls.
     </p>
     <p class="generator__hint">
       Base level is the RL fill started from, below the lowest lift — needed to work out that lift's
@@ -134,8 +113,6 @@
       needs this). Leave blank if you don't need fill volumes, or don't mind the bottom lift missing
       from the total.
     </p>
-    <p id="specWarning" class="warning-text" hidden></p>
-    <p id="strataSpecWarning" class="warning-text" hidden></p>
 
     <div class="generator">
       <h3 class="panel__subheading">Generate lifts</h3>
@@ -669,10 +646,8 @@
       <span class="intermediate-badge" hidden title="Intermediate grid, inserted between two main lifts">mid</span>
     </td>
     <td class="col-product">
-      <select class="product-select" aria-label="Product">
-        <option value="re580">RE580</option>
-        <option value="strata">Strata</option>
-      </select>
+      <span class="product-swatch" aria-hidden="true"></span>
+      <select class="product-select" aria-label="Product"></select>
     </td>
     <td class="col-face">
       <div class="face-input">
