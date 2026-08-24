@@ -568,6 +568,12 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .col-product .product-select { width: calc(100% - 1.05rem); vertical-align: middle; padding: 0.4rem 1.3rem 0.4rem 0.35rem; }
 .col-face { min-width: 7.5rem; }
 .col-embed { min-width: 5.5rem; }
+/* A typed embedment (an input box, text packed to its left by default) and a DXF-derived range (a
+   bare right-aligned span, see .embed-range) used to land at opposite sides of this column — flush
+   left on a manual row, flush right on an extents row. Right-align the input's own digits too, so
+   the number sits in the same spot column-wide, matching the right-aligned convention every other
+   numeric column here already uses (RL, Strips, Area). */
+.col-embed .field__unit input { flex: 1; text-align: right; }
 /* Strips+overlap and area+fill-volume are each two related numbers sharing one column now (a
    primary figure and a smaller muted one underneath) instead of four separate columns — the same
    values, just denser, so the table needs meaningfully less width for them. */
@@ -1005,6 +1011,26 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   font-weight: 700;
 }
 .extents-release { background: none; border: none; color: inherit; cursor: pointer; font-size: 0.7rem; padding: 0; }
+/* Icon-only, same footprint as .mode-toggle — it sits in the same slot (see releaseExtents /
+   applyExtents, which show at most one of the two at a time) so a released row never has three
+   controls competing for .col-face's tight width budget. */
+.extents-reattach {
+  flex: none;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 4px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  color: var(--accent);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  line-height: 1;
+  padding: 0;
+}
+.extents-reattach:hover { background: var(--accent-tint); border-color: var(--accent); }
 .embed-range { display: block; font-size: 0.62rem; color: var(--ink-muted); margin-top: 0.15rem; text-align: right; }
 .face-extend-note { display: block; font-size: 0.62rem; color: var(--accent-strong); margin-top: 0.15rem; }
 .face-extend-note:empty { display: none; }

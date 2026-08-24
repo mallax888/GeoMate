@@ -1291,6 +1291,12 @@ function addLiftRow(rl = "", faceLength = "", embed = "", insertBeforeNode = nul
     computeAndRender();
   });
 
+  row.querySelector(".extents-reattach").addEventListener("click", () => {
+    if (!row._extentsPointsSaved) return;
+    applyExtents(row, row._extentsPointsSaved);
+    computeAndRender();
+  });
+
   tbody.insertBefore(frag, insertBeforeNode);
   populateProductSelects();
   return row;
@@ -1298,23 +1304,32 @@ function addLiftRow(rl = "", faceLength = "", embed = "", insertBeforeNode = nul
 
 function applyExtents(row, points) {
   row._extentsPoints = points;
+  row._extentsPointsSaved = points;
   row._extentsSwapped = false;
   row.dataset.mode = "extents";
   row.querySelector(".face-input__length").hidden = true;
   row.querySelector(".face-coords").hidden = true;
   row.querySelector(".extents-badge").hidden = false;
   row.querySelector(".mode-toggle").hidden = true;
+  row.querySelector(".extents-reattach").hidden = true;
 }
 
 function releaseExtents(row) {
+  // Keep a copy so a detached row can be restored with one click, instead of forcing a re-upload
+  // of the same DXF file and relying on RL-based re-matching to find its way back.
+  row._extentsPointsSaved = row._extentsPoints;
   row._extentsPoints = null;
   row.dataset.mode = "length";
   row.querySelector(".extents-badge").hidden = true;
   row.querySelector(".face-input__length").hidden = false;
   row.querySelector(".face-coords").hidden = true;
   row.querySelector(".embed-length").hidden = false;
+  // The reattach icon takes the mode-toggle's slot rather than sitting alongside it — .col-face's
+  // width budget only has room for one small button plus the length input, and reattaching is the
+  // action a just-released row actually needs.
+  row.querySelector(".extents-reattach").hidden = false;
   const modeBtn = row.querySelector(".mode-toggle");
-  modeBtn.hidden = false;
+  modeBtn.hidden = true;
   setModeToggleIcon(modeBtn, false);
   modeBtn.title = "Straight length — click to switch to pasted coordinates";
 }
