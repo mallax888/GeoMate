@@ -43,35 +43,7 @@
 <main class="layout">
 
   <section class="panel panel--settings" aria-labelledby="settingsHeading">
-    <h2 id="settingsHeading" class="panel__heading">Products</h2>
-    <div class="table-scroll">
-      <table class="spec-table" id="productSpecTable">
-        <thead>
-          <tr>
-            <th scope="col"><span class="sr-only">Colour</span></th>
-            <th scope="col">Name</th>
-            <th scope="col" class="num">Roll width</th>
-            <th scope="col" class="num">Min overlap</th>
-            <th scope="col" class="num">Roll length</th>
-            <th scope="col" class="num">Cost/roll</th>
-            <th scope="col" class="num">Wrap/lap</th>
-            <th scope="col"><span class="sr-only">Actions</span></th>
-          </tr>
-        </thead>
-        <tbody id="productSpecBody"></tbody>
-      </table>
-    </div>
-    <button type="button" id="addProductBtn" class="btn btn--dashed btn--block">+ Add product</button>
-    <p class="generator__hint">
-      Each product is its own roll spec — width, minimum overlap, roll length, cost, and an optional
-      wrap/lap allowance (extra length folded onto every strip's cut length, e.g. a wrap around the
-      compacted face and a lap under the next lift up — not modelled as a strip diagram detail, just
-      added straight onto the material length; leave at 0 for a product that doesn't need it). Pick the
-      product per lift with the selector next to its RL. A product already used on a lift can't be
-      deleted — reassign or delete those lifts first.
-    </p>
-    <p id="productSpecWarning" class="warning-text" hidden></p>
-
+    <h2 id="settingsHeading" class="panel__heading">Settings</h2>
     <div class="settings-grid settings-grid--shared">
       <label class="field">
         <span>Group rolls across</span>
@@ -630,6 +602,45 @@
     <button id="exportBtn" class="btn btn--primary btn--block" type="button">Export CSV</button>
     <button id="exportFullPdfBtn" class="btn btn--ghost btn--block" type="button">Export full PDF (all sheets + 3D view)</button>
   </aside>
+
+  <section class="panel panel--products-full" aria-labelledby="productsSummaryHeading">
+    <details id="productsDetails">
+      <summary id="productsSummaryHeading" class="products-summary">
+        <span class="panel__heading products-summary__heading">Products</span>
+        <span id="productsCountBadge" class="products-count-badge"></span>
+        <span class="products-summary__hint">click to edit</span>
+      </summary>
+      <div class="products-full-body">
+        <div class="table-scroll">
+          <table class="spec-table" id="productSpecTable">
+            <thead>
+              <tr>
+                <th scope="col"><span class="sr-only">Colour</span></th>
+                <th scope="col">Name</th>
+                <th scope="col" class="num">Roll width</th>
+                <th scope="col" class="num">Min overlap</th>
+                <th scope="col" class="num">Roll length</th>
+                <th scope="col" class="num">Cost/roll</th>
+                <th scope="col" class="num">Wrap/lap</th>
+                <th scope="col"><span class="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody id="productSpecBody"></tbody>
+          </table>
+        </div>
+        <button type="button" id="addProductBtn" class="btn btn--dashed btn--block">+ Add product</button>
+        <p class="generator__hint">
+          Each product is its own roll spec — width, minimum overlap, roll length, cost, and an optional
+          wrap/lap allowance (extra length folded onto every strip's cut length, e.g. a wrap around the
+          compacted face and a lap under the next lift up — not modelled as a strip diagram detail, just
+          added straight onto the material length; leave at 0 for a product that doesn't need it). Pick
+          the product per lift with the selector next to its RL. A product already used on a lift can't
+          be deleted — reassign or delete those lifts first.
+        </p>
+        <p id="productSpecWarning" class="warning-text" hidden></p>
+      </div>
+    </details>
+  </section>
 
 </main>
 

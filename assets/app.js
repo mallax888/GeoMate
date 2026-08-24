@@ -1095,6 +1095,13 @@ function buildProductRowHtml(row) {
   `;
 }
 
+/** The count badge next to the (collapsed by default) Products summary — the one hint of what's in
+ *  there without having to open it. */
+function updateProductsCountBadge() {
+  const badge = document.getElementById("productsCountBadge");
+  if (badge) badge.textContent = `${products.length} product${products.length === 1 ? "" : "s"}`;
+}
+
 /** Full rebuild from a list of complete row specs — used at boot and when restoring a saved/
  *  autosaved project. Everyday add/delete instead touch just the one row that changed (see
  *  addProduct/deleteProduct below), so an in-progress edit elsewhere in the table is never disturbed. */
@@ -1102,6 +1109,7 @@ function renderProductTable(rows) {
   products = rows.map((r) => ({ id: r.id, colorSlot: r.colorSlot }));
   productSpecBody.innerHTML = rows.map(buildProductRowHtml).join("");
   populateProductSelects();
+  updateProductsCountBadge();
 }
 
 function addProduct() {
@@ -1109,6 +1117,7 @@ function addProduct() {
   products.push({ id: row.id, colorSlot: row.colorSlot });
   productSpecBody.insertAdjacentHTML("beforeend", buildProductRowHtml(row));
   populateProductSelects();
+  updateProductsCountBadge();
   computeAndRender();
   productFieldEl(row.id, "name")?.focus();
 }
@@ -1120,6 +1129,7 @@ function deleteProduct(id) {
   products = products.filter((p) => p.id !== id);
   productRowEl(id)?.remove();
   populateProductSelects();
+  updateProductsCountBadge();
   computeAndRender();
 }
 

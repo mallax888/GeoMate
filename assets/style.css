@@ -400,6 +400,49 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .product-delete-btn:disabled:hover { background: none; color: var(--ink-muted); border-color: transparent; }
 
 .product-swatch { display: inline-block; margin-right: 0.35rem; }
+
+/* ---------- Products panel — full-width, collapsed below the 3-column layout ---------- */
+/* The product table needs real horizontal room (8 columns) that the 17rem sidebar never had —
+   spanning the whole grid instead of sitting in one track fixes that, and staying collapsed by
+   default means the Takeoff table you look at every day isn't pushed down to make room for it. */
+.panel--products-full { grid-column: 1 / -1; padding: 0; }
+.products-summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 1rem 1.2rem;
+}
+.products-summary::-webkit-details-marker { display: none; }
+.products-summary::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 5px 0 5px 6px;
+  border-color: transparent transparent transparent var(--ink-muted);
+  transition: transform 0.15s ease;
+  flex: none;
+}
+#productsDetails[open] .products-summary::before { transform: rotate(90deg); }
+.products-summary__heading { margin: 0; }
+.products-count-badge {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--ink-muted);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+}
+.products-summary__hint { margin-left: auto; font-size: 0.72rem; color: var(--ink-muted); }
+#productsDetails[open] .products-summary__hint { display: none; }
+.products-full-body { padding: 0 1.2rem 1.3rem; max-width: 760px; border-top: 1px solid var(--line); margin-top: -1px; padding-top: 1rem; }
+@media (max-width: 760px) {
+  .products-summary__hint { display: none; }
+}
 .warning-text {
   margin: 0.6rem 0 0;
   font-size: 0.78rem;
