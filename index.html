@@ -74,6 +74,18 @@
         <div class="field__unit"><input type="number" id="baseLevel" step="0.01" placeholder="optional" /><em>RL</em></div>
       </label>
     </div>
+    <label class="checkbox">
+      <input type="checkbox" id="extendFaceToggle" />
+      <span>Extend face length instead of spreading overlap</span>
+    </label>
+    <p class="generator__hint">
+      A face length rarely divides evenly into whole roll widths, so there's always some leftover —
+      normally spread thinly across every seam as extra overlap above the minimum. Turn this on and
+      every seam sits at exactly the minimum overlap instead, with the leftover pushed into the face
+      length itself (rounded up to whatever whole strips at that overlap actually cover) — the field
+      updates to the real as-built length. Only applies to manually-typed face lengths, not DXF
+      extents/benched/battered lifts, which are already bound to a real surveyed boundary.
+    </p>
     <p class="generator__hint">
       The Roll schedule packs strips onto the fewest possible rolls by pooling every lift together —
       lowest waste, but any one roll can end up with pieces from lifts scattered right across the job.
@@ -477,6 +489,16 @@
           <div class="field__unit"><input type="number" id="linerRollLength" value="50" min="1" step="1" /><em>m</em></div>
         </label>
       </div>
+      <label class="checkbox">
+        <input type="checkbox" id="linerExtendFaceToggle" />
+        <span>Extend face length instead of spreading overlap</span>
+      </label>
+      <p class="generator__hint">
+        Same idea as the takeoff table's own version of this setting — panels sit at exactly the
+        minimum overlap instead of a bit more, spread thin to divide evenly. The floor and wall
+        dimensions themselves never change (they're the real dug excavation), only how the panel
+        count's overlap is reported.
+      </p>
       <p id="linerSpecWarning" class="warning-text" hidden></p>
       <div class="liner-inputs">
         <label class="field field--compact">
@@ -619,6 +641,7 @@
           <button type="button" class="extents-release" title="Detach DXF extents and go back to manual entry">✕</button>
         </span>
       </div>
+      <span class="face-extend-note"></span>
     </td>
     <td class="col-embed">
       <div class="field__unit"><input type="number" class="embed-length" min="0" step="0.01" aria-label="Embedment (m)" /><em>m</em></div>

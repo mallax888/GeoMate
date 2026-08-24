@@ -815,6 +815,8 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 .extents-release { background: none; border: none; color: inherit; cursor: pointer; font-size: 0.7rem; padding: 0; }
 .embed-range { display: block; font-size: 0.62rem; color: var(--ink-muted); margin-top: 0.15rem; text-align: right; }
+.face-extend-note { display: block; font-size: 0.62rem; color: var(--accent-strong); margin-top: 0.15rem; }
+.face-extend-note:empty { display: none; }
 
 /* ---------- 3D view ---------- */
 .view3d-controls {

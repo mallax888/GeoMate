@@ -905,6 +905,7 @@ const settingsInputs = {
   costPerRoll: document.getElementById("costPerRoll"),
   installRate: document.getElementById("installRate"),
   baseLevel: document.getElementById("baseLevel"),
+  extendFace: document.getElementById("extendFaceToggle"),
 };
 
 function readSettings() {
@@ -921,6 +922,7 @@ function readSettings() {
     // The RL fill started from, below the lowest lift — null (not 0) when blank, since RL 0 is a
     // perfectly real elevation and can't double as "not set".
     baseLevel: Number.isFinite(baseLevelRaw) ? baseLevelRaw : null,
+    extendFace: settingsInputs.extendFace.checked,
   };
 }
 
@@ -1295,7 +1297,7 @@ function renderRowWarnings(issues) {
 }
 
 function computeAndRender() {
-  const { w, oMin, rollLength, rollGroupSize, costPerRoll, installRate, baseLevel } = readSettings();
+  const { w, oMin, rollLength, rollGroupSize, costPerRoll, installRate, baseLevel, extendFace } = readSettings();
   const specWarning = document.getElementById("specWarning");
   const specIssues = [];
   if (oMin < 0) {
@@ -1364,6 +1366,8 @@ function computeAndRender() {
         stripLengths = cutPlan.cutLengths;
         theoreticalArea = cutPlan.polygonArea;
         row.querySelector(".face-length").value = L.toFixed(2);
+        const extentsFaceExtendNoteEl = row.querySelector(".face-extend-note");
+        if (extentsFaceExtendNoteEl) extentsFaceExtendNoteEl.textContent = "";
         // Hiding the input alone leaves its .field__unit wrapper (border, background, the "m" unit
         // label) rendered as an empty box — the wrapper isn't hidden, just its child. Extents mode
         // has no single embedment to show (every strip cuts to a different length against the
@@ -1385,6 +1389,27 @@ function computeAndRender() {
       embedInput.parentElement.hidden = false;
       embedRangeEl.textContent = "";
       result = oMin < w ? calcLift(L, w, oMin) : null;
+      // Extend mode: pin every seam to exactly the minimum overlap and let the face length itself
+      // grow to whatever that many strips actually cover, instead of spreading the leftover a whole
+      // strip count doesn't quite divide evenly into as extra overlap on every seam. Only for a
+      // manually-typed length — extents/benched/battered lifts are already bound to a real boundary,
+      // there's no "length" of theirs to extend. Deliberately leaves the .face-length input itself
+      // untouched (unlike extents mode, which permanently owns that field) — this is meant to be a
+      // freely-toggleable comparison, not a one-way overwrite of the typed approximate value, so
+      // switching the setting back off must still find the number the user actually typed.
+      const faceExtendNoteEl = row.querySelector(".face-extend-note");
+      if (result && extendFace && result.n > 1) {
+        const extendedL = result.n * (w - oMin) + oMin;
+        if (extendedL > L + 1e-9) {
+          L = extendedL;
+          result = { ...result, overlap: oMin, materialWidth: result.n * w, excessWidth: result.n * w - L };
+          if (faceExtendNoteEl) faceExtendNoteEl.textContent = `extended to ${fmt.m(L)} m — fits ${result.n} strips @ exactly ${fmt.mm(oMin)} mm`;
+        } else if (faceExtendNoteEl) {
+          faceExtendNoteEl.textContent = "";
+        }
+      } else if (faceExtendNoteEl) {
+        faceExtendNoteEl.textContent = "";
+      }
       if (result && embed > 0) {
         stripLengths = new Array(result.n).fill(embed);
         theoreticalArea = L * embed;
@@ -3296,6 +3321,7 @@ const linerInputs = {
   floorWidth: document.getElementById("linerFloorWidth"),
   depth: document.getElementById("linerDepth"),
   slope: document.getElementById("linerSlope"),
+  extendFace: document.getElementById("linerExtendFaceToggle"),
 };
 
 /** Back to the same defaults a fresh project starts with — a blank roll width would break the
@@ -3310,6 +3336,7 @@ function resetLinerInputs() {
   linerInputs.floorWidth.value = "";
   linerInputs.depth.value = "";
   linerInputs.slope.value = "";
+  linerInputs.extendFace.checked = false;
 }
 
 document.getElementById("linerResetBtn").addEventListener("click", () => {
@@ -3324,7 +3351,7 @@ document.getElementById("linerResetBtn").addEventListener("click", () => {
  * length (Pythagoras on depth + slope ratio doesn't depend on which floor edge it rises from);
  * only their trapezoid base widths differ, matching the floor's own length vs width.
  */
-function computeLinerPlan(Lf, Wf, D, slopeRatio, w, oMin) {
+function computeLinerPlan(Lf, Wf, D, slopeRatio, w, oMin, extendFace) {
   if (!(Lf > 0) || !(Wf > 0) || !(D > 0) || !(slopeRatio >= 0) || !(w > 0) || oMin < 0 || oMin >= w) return null;
 
   const S = D * Math.sqrt(1 + slopeRatio * slopeRatio); // slope length, same up every wall
@@ -3340,12 +3367,21 @@ function computeLinerPlan(Lf, Wf, D, slopeRatio, w, oMin) {
   // strip, tiled across the floor length. Minimises seams crossing a slope (a real leachate-risk
   // point), matching how liner panels are actually laid out on site.
   const mainPanelLength = 2 * S + Wf;
-  const mainResult = calcLift(Lf, w, oMin);
+  let mainResult = calcLift(Lf, w, oMin);
 
   // End walls: the two shorter sides, each its own panel run tiled across the floor width — same
   // strip-count math, idealised the same way the rest of this app treats a tapering face (strip
   // count comes from the baseline length; only the CUT length reflects the slope).
-  const endResult = calcLift(Wf, w, oMin);
+  let endResult = calcLift(Wf, w, oMin);
+
+  // Extend mode, liner version: pin overlap to exactly the minimum on both runs — but unlike the
+  // takeoff table, there's no "face length" here to grow instead. Lf/Wf/floorArea/wallArea are the
+  // real dug excavation and can never change, so this only affects how each run's overlap is
+  // reported, not the excavation itself.
+  if (extendFace) {
+    if (mainResult && mainResult.n > 1) mainResult = { ...mainResult, overlap: oMin };
+    if (endResult && endResult.n > 1) endResult = { ...endResult, overlap: oMin };
+  }
 
   return { S, horizRun, floorArea, wallArea, totalArea, mainPanelLength, mainResult, endResult };
 }
@@ -3383,7 +3419,7 @@ function renderLiner() {
   specWarningEl.hidden = specIssues.length === 0;
   specWarningEl.innerHTML = specIssues.map((m) => `<span>${escapeHtml(m)}</span>`).join("<br>");
 
-  const plan = computeLinerPlan(Lf, Wf, D, Number.isFinite(slopeRaw) ? slopeRaw : 0, w, oMin);
+  const plan = computeLinerPlan(Lf, Wf, D, Number.isFinite(slopeRaw) ? slopeRaw : 0, w, oMin, linerInputs.extendFace.checked);
 
   const emptyEl = document.getElementById("linerEmpty");
   const resultsEl = document.getElementById("linerResults");
@@ -3456,6 +3492,7 @@ function buildStateSnapshot() {
       costPerRoll: settingsInputs.costPerRoll.value,
       installRate: settingsInputs.installRate.value,
       baseLevel: settingsInputs.baseLevel.value,
+      extendFace: settingsInputs.extendFace.checked,
     },
     rows,
     liner: {
@@ -3466,6 +3503,7 @@ function buildStateSnapshot() {
       floorWidth: linerInputs.floorWidth.value,
       depth: linerInputs.depth.value,
       slope: linerInputs.slope.value,
+      extendFace: linerInputs.extendFace.checked,
     },
   };
 }
@@ -3486,6 +3524,7 @@ function applyStateSnapshot(state) {
   if (s.costPerRoll != null) settingsInputs.costPerRoll.value = s.costPerRoll;
   if (s.installRate != null) settingsInputs.installRate.value = s.installRate;
   if (s.baseLevel != null) settingsInputs.baseLevel.value = s.baseLevel;
+  if (s.extendFace != null) settingsInputs.extendFace.checked = !!s.extendFace;
 
   if (l) {
     if (l.rollWidth != null) linerInputs.rollWidth.value = l.rollWidth;
@@ -3495,6 +3534,7 @@ function applyStateSnapshot(state) {
     if (l.floorWidth != null) linerInputs.floorWidth.value = l.floorWidth;
     if (l.depth != null) linerInputs.depth.value = l.depth;
     if (l.slope != null) linerInputs.slope.value = l.slope;
+    if (l.extendFace != null) linerInputs.extendFace.checked = !!l.extendFace;
   }
 
   // Loading a named project needs to fully replace whatever's currently in the table — unlike the
@@ -3691,6 +3731,7 @@ document.getElementById("newProjectBtn").addEventListener("click", () => {
   settingsInputs.costPerRoll.value = "";
   settingsInputs.installRate.value = "";
   settingsInputs.baseLevel.value = "";
+  settingsInputs.extendFace.checked = false;
 
   resetLinerInputs();
 
