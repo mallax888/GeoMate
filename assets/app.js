@@ -908,6 +908,44 @@ const settingsInputs = {
   extendFace: document.getElementById("extendFaceToggle"),
 };
 
+const strataInputs = {
+  rollWidth: document.getElementById("strataRollWidth"),
+  minOverlapMm: document.getElementById("strataMinOverlap"),
+  rollLength: document.getElementById("strataRollLength"),
+  costPerRoll: document.getElementById("strataCostPerRoll"),
+  wrapAllowance: document.getElementById("strataWrapAllowance"),
+};
+
+/**
+ * Two physically different rolled products can appear in the same job — RE580 (the original,
+ * default spec above) and Strata (its own width/overlap/roll length, plus a wrap-around-the-face +
+ * lap-under-the-next-lift allowance that RE580 doesn't need). Every lift row picks one via its own
+ * Product toggle; this is the lookup the per-row loop and roll packing key off of. RE580 stays
+ * exactly the plain global spec it always was — Strata is the only thing genuinely new here.
+ */
+function readProductSpecs() {
+  return {
+    re580: {
+      id: "re580",
+      label: "RE580",
+      w: parseFloat(settingsInputs.rollWidth.value) || 0,
+      oMin: (parseFloat(settingsInputs.minOverlapMm.value) || 0) / 1000,
+      rollLength: parseFloat(settingsInputs.rollLength.value) || 0,
+      costPerRoll: parseFloat(settingsInputs.costPerRoll.value) || 0,
+      wrapAllowance: 0,
+    },
+    strata: {
+      id: "strata",
+      label: "Strata",
+      w: parseFloat(strataInputs.rollWidth.value) || 0,
+      oMin: (parseFloat(strataInputs.minOverlapMm.value) || 0) / 1000,
+      rollLength: parseFloat(strataInputs.rollLength.value) || 0,
+      costPerRoll: parseFloat(strataInputs.costPerRoll.value) || 0,
+      wrapAllowance: parseFloat(strataInputs.wrapAllowance.value) || 0,
+    },
+  };
+}
+
 function readSettings() {
   const rollGroupSizeRaw = parseInt(settingsInputs.rollGroupSize.value, 10);
   const baseLevelRaw = parseFloat(settingsInputs.baseLevel.value);
@@ -964,6 +1002,7 @@ function addLiftRow(rl = "", faceLength = "", embed = "", insertBeforeNode = nul
   row.querySelectorAll("input, textarea").forEach((el) => {
     el.addEventListener("input", computeAndRender);
   });
+  row.querySelector(".product-select").addEventListener("change", computeAndRender);
 
   row.querySelector(".row-remove").addEventListener("click", () => {
     row.remove();
@@ -1153,6 +1192,7 @@ document.getElementById("interRemoveBtn").addEventListener("click", () => {
 });
 
 Object.values(settingsInputs).forEach((el) => el.addEventListener("input", computeAndRender));
+Object.values(strataInputs).forEach((el) => el.addEventListener("input", computeAndRender));
 
 /* ============================================================
    Strip-layout diagram
@@ -1246,7 +1286,7 @@ function wasteLevel(pct) {
  * nothing here blocks the plan from computing, it's purely a heads-up to double-check before
  * ordering material.
  */
-function validateRows(results, rollLength) {
+function validateRows(results, productSpecs) {
   const issues = [];
 
   // Install-tracking keys the "Installed" checkbox by RL text (see isLiftInstalled) — two rows
@@ -1270,15 +1310,17 @@ function validateRows(results, rollLength) {
     }
   }
 
-  // A single embedment length longer than one roll needs a splice this app doesn't plan a joint
-  // for — extents-mode rows are cut to fit the boundary already and aren't a fixed embedment.
-  if (rollLength > 0) {
-    results.forEach((r, i) => {
-      if (r.mode !== "extents" && r.embed > rollLength) {
-        issues.push(`RL ${r.rl || `row ${i + 1}`}: embedment (${fmt.m(r.embed)} m) is longer than the roll length (${fmt.m(rollLength)} m) — will need a splice.`);
-      }
-    });
-  }
+  // A single strip's real cut length (embedment plus any wrap/lap allowance) longer than one roll
+  // needs a splice this app doesn't plan a joint for — extents-mode rows are cut to fit the
+  // boundary already and aren't a fixed embedment. Each row's own product decides its roll length.
+  results.forEach((r, i) => {
+    if (r.mode === "extents") return;
+    const rollLength = (productSpecs[r.product] || productSpecs.re580).rollLength;
+    const cutLen = r.stripLengths && r.stripLengths.length ? Math.max(...r.stripLengths) : r.embed;
+    if (rollLength > 0 && cutLen > rollLength) {
+      issues.push(`RL ${r.rl || `row ${i + 1}`}: cut length (${fmt.m(cutLen)} m) is longer than the ${r.productLabel} roll length (${fmt.m(rollLength)} m) — will need a splice.`);
+    }
+  });
 
   return issues;
 }
@@ -1296,24 +1338,39 @@ function renderRowWarnings(issues) {
     .join("")}</ul>`;
 }
 
+/** Same three checks (negative overlap, overlap >= width, non-positive roll length), run once per
+ * product against its own inputs — RE580 and Strata each need their own spec to be internally valid
+ * regardless of whether the other one is. */
+function validateProductSpec(p, inputsEl, rollLengthRawStr) {
+  const issues = [];
+  if (p.oMin < 0) {
+    issues.push(`Minimum overlap can't be negative — every ${p.label} lift will show as blank until it's fixed.`);
+  } else if (p.oMin >= p.w) {
+    issues.push(`Minimum overlap (${fmt.mm(p.oMin)} mm) must be smaller than the roll width (${p.w} m).`);
+  }
+  if (rollLengthRawStr.trim() !== "" && parseFloat(rollLengthRawStr) <= 0) {
+    issues.push(`Roll length must be greater than zero — "${p.label}" rolls/cost will both show as 0 until it's fixed.`);
+  }
+  return issues;
+}
+
 function computeAndRender() {
-  const { w, oMin, rollLength, rollGroupSize, costPerRoll, installRate, baseLevel, extendFace } = readSettings();
+  const { rollGroupSize, installRate, baseLevel, extendFace } = readSettings();
+  const productSpecs = readProductSpecs();
+  const productFor = (row) => {
+    const sel = row.querySelector(".product-select");
+    return productSpecs[sel ? sel.value : "re580"] || productSpecs.re580;
+  };
+
   const specWarning = document.getElementById("specWarning");
-  const specIssues = [];
-  if (oMin < 0) {
-    specIssues.push(`Minimum overlap can't be negative — every lift below will show as blank until it's fixed.`);
-  } else if (oMin >= w) {
-    specIssues.push(`Minimum overlap (${fmt.mm(oMin)} mm) must be smaller than the roll width (${w} m).`);
-  }
-  // A blank Roll length just means "not filled in yet" (rollLength defaults to 0 the same way) —
-  // only an explicit non-positive value is actually wrong and worth a warning, otherwise every
-  // fresh project would show this before the user's had a chance to type anything.
-  const rollLengthRaw = settingsInputs.rollLength.value;
-  if (rollLengthRaw.trim() !== "" && parseFloat(rollLengthRaw) <= 0) {
-    specIssues.push(`Roll length must be greater than zero — "Rolls to order" and material cost will both show as 0 until it's fixed.`);
-  }
+  const specIssues = validateProductSpec(productSpecs.re580, settingsInputs, settingsInputs.rollLength.value);
   specWarning.hidden = specIssues.length === 0;
   specWarning.innerHTML = specIssues.map((m) => `<span>${escapeHtml(m)}</span>`).join("<br>");
+
+  const strataSpecWarning = document.getElementById("strataSpecWarning");
+  const strataSpecIssues = validateProductSpec(productSpecs.strata, strataInputs, strataInputs.rollLength.value);
+  strataSpecWarning.hidden = strataSpecIssues.length === 0;
+  strataSpecWarning.innerHTML = strataSpecIssues.map((m) => `<span>${escapeHtml(m)}</span>`).join("<br>");
 
   const rows = Array.from(tbody.querySelectorAll(".lift-row"));
   emptyState.hidden = rows.length > 0;
@@ -1329,7 +1386,8 @@ function computeAndRender() {
   const cutPlanByRow = new Map();
   rows.forEach((row) => {
     if (row.dataset.mode === "extents" && row._extentsPoints) {
-      const cp = oMin < w ? computeCutPlan(row._extentsPoints, w, oMin, row._extentsSwapped) : null;
+      const p = productFor(row);
+      const cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._extentsSwapped) : null;
       if (cp) cutPlanByRow.set(row, cp);
     }
   });
@@ -1356,6 +1414,7 @@ function computeAndRender() {
     const areaCell = row.querySelector(".area-value");
     const diagram = row.querySelector(".strip-diagram");
 
+    const p = productFor(row);
     let L, result, stripLengths, theoreticalArea, cutPlan = null;
 
     if (mode === "extents" && row._extentsPoints) {
@@ -1363,7 +1422,11 @@ function computeAndRender() {
       if (cutPlan) {
         L = cutPlan.faceLength;
         result = { n: cutPlan.n, overlap: cutPlan.overlap, materialWidth: cutPlan.materialWidth };
-        stripLengths = cutPlan.cutLengths;
+        // Wrap/lap allowance (0 for RE580) adds onto each strip's REAL cut length the same way it
+        // adds onto a manually-typed embedment below — the boundary geometry decides where the
+        // design footprint ends, the wrap is extra material tacked on beyond that to fold back
+        // around the face, same for every strip regardless of how its base length was worked out.
+        stripLengths = p.wrapAllowance > 0 ? cutPlan.cutLengths.map((len) => len + p.wrapAllowance) : cutPlan.cutLengths;
         theoreticalArea = cutPlan.polygonArea;
         row.querySelector(".face-length").value = L.toFixed(2);
         const extentsFaceExtendNoteEl = row.querySelector(".face-extend-note");
@@ -1388,7 +1451,7 @@ function computeAndRender() {
       const embed = parseFloat(embedRaw) || 0;
       embedInput.parentElement.hidden = false;
       embedRangeEl.textContent = "";
-      result = oMin < w ? calcLift(L, w, oMin) : null;
+      result = p.oMin < p.w ? calcLift(L, p.w, p.oMin) : null;
       // Extend mode: pin every seam to exactly the minimum overlap and let the face length itself
       // grow to whatever that many strips actually cover, instead of spreading the leftover a whole
       // strip count doesn't quite divide evenly into as extra overlap on every seam. Only for a
@@ -1399,11 +1462,11 @@ function computeAndRender() {
       // switching the setting back off must still find the number the user actually typed.
       const faceExtendNoteEl = row.querySelector(".face-extend-note");
       if (result && extendFace && result.n > 1) {
-        const extendedL = result.n * (w - oMin) + oMin;
+        const extendedL = result.n * (p.w - p.oMin) + p.oMin;
         if (extendedL > L + 1e-9) {
           L = extendedL;
-          result = { ...result, overlap: oMin, materialWidth: result.n * w, excessWidth: result.n * w - L };
-          if (faceExtendNoteEl) faceExtendNoteEl.textContent = `extended to ${fmt.m(L)} m — fits ${result.n} strips @ exactly ${fmt.mm(oMin)} mm`;
+          result = { ...result, overlap: p.oMin, materialWidth: result.n * p.w, excessWidth: result.n * p.w - L };
+          if (faceExtendNoteEl) faceExtendNoteEl.textContent = `extended to ${fmt.m(L)} m — fits ${result.n} strips @ exactly ${fmt.mm(p.oMin)} mm`;
         } else if (faceExtendNoteEl) {
           faceExtendNoteEl.textContent = "";
         }
@@ -1411,7 +1474,11 @@ function computeAndRender() {
         faceExtendNoteEl.textContent = "";
       }
       if (result && embed > 0) {
-        stripLengths = new Array(result.n).fill(embed);
+        // Strata's wrap/lap allowance (0 for RE580) is extra material tacked onto the real cut
+        // length, not part of the design embedment itself — kept separate from "embed" (which
+        // stays exactly what's typed) so Fill volume, driven by theoreticalArea below, still
+        // reflects real soil footprint rather than how much extra grid gets folded back on itself.
+        stripLengths = new Array(result.n).fill(embed + p.wrapAllowance);
         theoreticalArea = L * embed;
       }
       const label = rl || `row ${rows.indexOf(row) + 1}`;
@@ -1443,9 +1510,9 @@ function computeAndRender() {
     // Stitch patches (extra material for a boundary pocket a strip's single straight cut can't reach)
     // consume grid too, so they count toward area, roll purchasing, and waste stats same as any strip.
     const stitchLengths = cutPlan ? cutPlan.stitches.flat().map((s) => s.length) : [];
-    const area = stripLengths.reduce((s, len) => s + w * len, 0) + stitchLengths.reduce((s, len) => s + w * len, 0);
+    const area = stripLengths.reduce((s, len) => s + p.w * len, 0) + stitchLengths.reduce((s, len) => s + p.w * len, 0);
     areaCell.innerHTML = `${fmt.m(area)}<small> m²</small>`;
-    renderDiagram(diagram, L, result, w);
+    renderDiagram(diagram, L, result, p.w);
 
     const footprint =
       mode === "extents" && cutPlan
@@ -1469,6 +1536,9 @@ function computeAndRender() {
       mode,
       row,
       footprint,
+      w: p.w,
+      product: p.id,
+      productLabel: p.label,
     });
   });
 
@@ -1496,12 +1566,12 @@ function computeAndRender() {
   });
 
   window.__geogridResults = liftResults; // exposed for CSV export + progress tracking, set before renderSummary needs it
-  renderRowWarnings([...inputIssues, ...validateRows(liftResults, rollLength)]);
-  renderSummary(liftResults, rollLength, rollGroupSize, costPerRoll, installRate, baseLevel);
-  renderSequence(liftResults, w);
-  renderCutPlan(liftResults, w);
+  renderRowWarnings([...inputIssues, ...validateRows(liftResults, productSpecs)]);
+  renderSummary(liftResults, productSpecs, rollGroupSize, installRate, baseLevel);
+  renderSequence(liftResults);
+  renderCutPlan(liftResults);
   render3D(liftResults);
-  renderRollSchedule(window.__geogridRolls || [], rollLength, rollGroupSize);
+  renderRollSchedule(window.__geogridRolls || [], rollGroupSize);
   renderLiner();
   saveAutosave();
 }
@@ -1578,7 +1648,24 @@ function faceAlignedFootprint(cutPlan) {
   });
 }
 
-function renderSummary(results, rollLength, rollGroupSize, costPerRoll, installRate, baseLevel) {
+/** Packs one product's own strips onto its own rolls (RE580 and Strata never share a roll — they're
+ *  physically different products) and tags each roll with that product's identity/length/cost, so
+ *  every downstream consumer (roll cards, CSV, print sheets) can read a roll's own spec off itself
+ *  instead of needing a single global rollLength passed alongside it. */
+function packRollsForProduct(results, productId, productSpecs, rollGroupSize) {
+  const spec = productSpecs[productId];
+  const subset = results.filter((r) => r.product === productId);
+  const rolls = packRollsWindowed(subset, spec.rollLength, rollGroupSize);
+  rolls.forEach((roll) => {
+    roll.product = spec.id;
+    roll.productLabel = spec.label;
+    roll.rollLength = spec.rollLength;
+    roll.costPerRoll = spec.costPerRoll;
+  });
+  return rolls;
+}
+
+function renderSummary(results, productSpecs, rollGroupSize, installRate, baseLevel) {
   // Build-order position of each lift — used by buildRollPieces (below, and inside
   // packRollsWindowed) to number rolls in first-used-on-site order. Tagged once, here, so it's set
   // before EITHER caller reads it regardless of which one happens to run first.
@@ -1633,9 +1720,15 @@ function renderSummary(results, rollLength, rollGroupSize, costPerRoll, installR
   // Pack every strip/stitch onto numbered rolls (see Roll schedule tab) — the same packing drives
   // both this summary and that tab, so they always agree. Pooled across every lift by default (fewest
   // rolls); optionally restricted to bands of `rollGroupSize` adjacent lifts so a roll never mixes
-  // pieces from opposite ends of the job (see packRollsWindowed).
+  // pieces from opposite ends of the job (see packRollsWindowed). RE580 and Strata are packed
+  // separately (different physical roll, different length) then merged back into one on-site
+  // numbering order by first-used sequence, same as packRollsWindowed does within a single product.
   const rollPieces = buildRollPieces(results);
-  const rolls = packRollsWindowed(results, rollLength, rollGroupSize);
+  const rolls = [
+    ...packRollsForProduct(results, "re580", productSpecs, rollGroupSize),
+    ...packRollsForProduct(results, "strata", productSpecs, rollGroupSize),
+  ];
+  rolls.sort((a, b) => Math.min(...a.pieces.map((p) => p.seq)) - Math.min(...b.pieces.map((p) => p.seq)));
   window.__geogridRolls = rolls;
   window.__geogridRollPieces = rollPieces;
 
@@ -1645,13 +1738,18 @@ function renderSummary(results, rollLength, rollGroupSize, costPerRoll, installR
   // "—", not a $0/instant estimate that would misread as a real answer rather than missing input.
   // The hint span (separate from the value itself, so it never leaks into the CSV/PDF exports that
   // read statCost/statInstallTime's own textContent) explains why, instead of just looking blank.
-  document.getElementById("statCost").textContent = costPerRoll > 0 ? fmt.cost(rolls.length * costPerRoll) : "—";
-  document.getElementById("statCostHint").hidden = costPerRoll > 0;
+  // A mixed-product job needs BOTH products' cost/roll filled in for the total to be complete — the
+  // hint fires if either used product is still missing its cost, not just when both are.
+  const usedProducts = new Set(rolls.map((roll) => roll.product));
+  const missingCost = Array.from(usedProducts).some((id) => !(productSpecs[id].costPerRoll > 0));
+  const totalCost = rolls.reduce((s, roll) => s + (roll.costPerRoll > 0 ? roll.costPerRoll : 0), 0);
+  document.getElementById("statCost").textContent = totalCost > 0 ? fmt.cost(totalCost) : "—";
+  document.getElementById("statCostHint").hidden = rolls.length === 0 || !missingCost;
   const installDays = installRate > 0 ? Math.ceil((totalArea / installRate) * 2) / 2 : 0;
   document.getElementById("statInstallTime").textContent = installDays > 0 ? `${fmt.m(installDays)} day${installDays === 1 ? "" : "s"}` : "—";
   document.getElementById("statInstallTimeHint").hidden = installDays > 0;
 
-  const purchased = rolls.length * rollLength;
+  const purchased = rolls.reduce((s, roll) => s + roll.rollLength, 0);
   const extraTotal = rolls.reduce((s, roll) => s + roll.pieces.reduce((s2, p) => s2 + p.extra, 0), 0);
   const extraPct = purchased > 0 ? (extraTotal / purchased) * 100 : 0;
   const wasteOffcutEl = document.getElementById("wasteOffcut");
@@ -1759,7 +1857,7 @@ function buildCutPlanSvgMarkup(cutPlan, w, stripRollNumbers) {
  *  Folds in the installation-sequence steps (build order, stagger note, next fill target) and the
  *  "Installed" checkbox too, so this one sheet is everything a crew needs for that level — no need to
  *  separately print the Installation sequence tab and flip between two sheets on site. */
-function buildCutPlanPrintPages(results, project, w, rollLength) {
+function buildCutPlanPrintPages(results, project) {
   const rolls = window.__geogridRolls || [];
   const rollLookup = buildRollLookup(rolls);
   const allResults = window.__geogridResults || results;
@@ -1771,7 +1869,7 @@ function buildCutPlanPrintPages(results, project, w, rollLength) {
       const fillTarget = next ? `RL ${escapeHtml(next.rl)}` : "final design surface";
       let staggerNote = "";
       if (stagger && r.n > 1 && buildIndex >= 0) {
-        const pitch = w - r.overlap;
+        const pitch = r.w - r.overlap;
         const offsetMm = Math.round((pitch / 2) * 1000);
         staggerNote =
           buildIndex % 2 === 1
@@ -1808,18 +1906,17 @@ function buildCutPlanPrintPages(results, project, w, rollLength) {
       // a roll's leftover space here often belongs to a DIFFERENT lift (that's the whole point of
       // pooling rolls to avoid waste), so this shows the true, complete picture for each roll, not
       // just this lift's slice of it.
-      const rollsSection =
-        rollLength > 0 && rollsUsed.size
-          ? `
+      const rollsSection = rollsUsed.size
+        ? `
             <div class="cutplan-print-page__rolls">
               <h4>Rolls used on this page</h4>
               ${Array.from(rollsUsed)
                 .sort((a, b) => a - b)
-                .map((n) => buildRollCardHtml(rolls[n - 1], n - 1, rollLength))
+                .map((n) => buildRollCardHtml(rolls[n - 1], n - 1))
                 .join("")}
             </div>
           `
-          : "";
+        : "";
 
       const orderBadge = buildIndex >= 0 ? `<span class="cutplan-print-page__order">${buildIndex + 1}</span>` : "";
       return `
@@ -1841,7 +1938,7 @@ function buildCutPlanPrintPages(results, project, w, rollLength) {
           </ol>
           ${staggerNote ? `<div class="cutplan-print-page__stagger">${escapeHtml(staggerNote)}</div>` : ""}
           <div class="cutplan-print-page__body">
-            ${buildCutPlanSvgMarkup(r.cutPlan, w, stripRollNumbers)}
+            ${buildCutPlanSvgMarkup(r.cutPlan, r.w, stripRollNumbers)}
             <table class="cutplan-print-table">
               <thead><tr><th>Strip #</th><th>Cut length</th><th>Roll #</th><th>Note</th></tr></thead>
               <tbody>${rows}</tbody>
@@ -1857,8 +1954,7 @@ function buildCutPlanPrintPages(results, project, w, rollLength) {
 document.getElementById("printCutPlanBtn").addEventListener("click", () => {
   const results = window.__geogridCutPlanResults || [];
   const project = document.getElementById("projectName").value || "Geogrid takeoff";
-  const { w, rollLength } = readSettings();
-  document.getElementById("cutPlanPrintView").innerHTML = buildCutPlanPrintPages(results, project, w, rollLength);
+  document.getElementById("cutPlanPrintView").innerHTML = buildCutPlanPrintPages(results, project);
   document.body.classList.add("printing-cutplan");
   window.print();
 });
@@ -1873,7 +1969,6 @@ window.addEventListener("afterprint", () => {
 document.getElementById("exportFullPdfBtn").addEventListener("click", () => {
   const results = window.__geogridResults || [];
   const project = document.getElementById("projectName").value || "Geogrid takeoff";
-  const { w, rollLength } = readSettings();
 
   const coverSheet = `
     <section class="export-sheet">
@@ -1937,7 +2032,7 @@ document.getElementById("exportFullPdfBtn").addEventListener("click", () => {
   `;
 
   const extentsResults = results.filter((r) => r.mode === "extents" && r.cutPlan);
-  const cutPlanSheets = extentsResults.length ? buildCutPlanPrintPages(extentsResults, project, w, rollLength) : "";
+  const cutPlanSheets = extentsResults.length ? buildCutPlanPrintPages(extentsResults, project) : "";
 
   // toDataURL() snapshots whatever's currently painted — if the user is in dark mode (toggled or
   // just their OS preference), that bakes dark-theme colours (near-white "ink" labels especially)
@@ -1960,7 +2055,7 @@ document.getElementById("exportFullPdfBtn").addEventListener("click", () => {
     : "";
 
   const rolls = window.__geogridRolls || [];
-  const rollCards = rolls.map((roll, i) => buildRollCardHtml(roll, i, rollLength)).join("");
+  const rollCards = rolls.map((roll, i) => buildRollCardHtml(roll, i)).join("");
   const rollSheet = rolls.length
     ? `<section class="export-sheet"><h2>Roll cutting schedule</h2><div class="roll-schedule-list">${rollCards}</div></section>`
     : "";
@@ -1990,7 +2085,7 @@ function switchTab(which) {
   if (which === "view3d" && window.__geogridResults) render3D(window.__geogridResults);
 }
 
-function renderSequence(results, w) {
+function renderSequence(results) {
   sequenceList.innerHTML = "";
   const stagger = staggerToggle.checked;
 
@@ -2002,7 +2097,7 @@ function renderSequence(results, w) {
 
     let staggerNote = "";
     if (stagger && r.n > 1) {
-      const pitch = w - r.overlap;
+      const pitch = r.w - r.overlap;
       const offsetMm = Math.round((pitch / 2) * 1000);
       staggerNote =
         i % 2 === 1
@@ -2040,7 +2135,7 @@ function renderSequence(results, w) {
 
     sequenceList.appendChild(li);
     const svg = li.querySelector(".sequence-card__diagram");
-    renderDiagram(svg, r.L, { n: r.n, overlap: r.overlap, materialWidth: r.materialWidth }, w, 480, 40);
+    renderDiagram(svg, r.L, { n: r.n, overlap: r.overlap, materialWidth: r.materialWidth }, r.w, 480, 40);
 
     li.querySelector(".sequence-card__installed-input").addEventListener("change", (e) => {
       setLiftInstalled(r.rl, e.target.checked);
@@ -2401,7 +2496,7 @@ cutPlanList.addEventListener("click", (e) => {
   computeAndRender();
 });
 
-function renderCutPlan(results, w) {
+function renderCutPlan(results) {
   const extentsResults = results.filter((r) => r.mode === "extents" && r.cutPlan);
   cutPlanEmpty.hidden = extentsResults.length > 0;
   document.getElementById("printCutPlanBtn").hidden = extentsResults.length === 0;
@@ -2452,7 +2547,7 @@ function renderCutPlan(results, w) {
       });
     });
 
-    renderCutPlanSvg(card.querySelector(".cutplan-card__plan"), r.cutPlan, w, stripRollNumbersFor(r, rollLookup));
+    renderCutPlanSvg(card.querySelector(".cutplan-card__plan"), r.cutPlan, r.w, stripRollNumbersFor(r, rollLookup));
   });
 }
 
@@ -3098,7 +3193,8 @@ function syncCompass() {
    ============================================================ */
 
 /** One <div class="roll-card"> — a labelled bar diagram plus a piece list — shared by the on-screen list and print. */
-function buildRollCardHtml(roll, index, rollLength) {
+function buildRollCardHtml(roll, index) {
+  const rollLength = roll.rollLength;
   const used = roll.pieces.reduce((s, p) => s + p.length + p.extra, 0);
   const barPieces = roll.pieces
     .map((p) => {
@@ -3114,10 +3210,11 @@ function buildRollCardHtml(roll, index, rollLength) {
     })
     .join("");
   const cut = isRollCut(index + 1);
+  const productTag = roll.productLabel ? ` <span class="roll-card__product">${escapeHtml(roll.productLabel)}</span>` : "";
   return `
     <div class="roll-card${cut ? " is-cut" : ""}">
       <div class="roll-card__head">
-        <span class="roll-card__title">Roll ${index + 1}</span>
+        <span class="roll-card__title">Roll ${index + 1}${productTag}</span>
         <span class="roll-card__meta">${fmt.m(used)} m of ${fmt.m(rollLength)} m used · ${roll.pieces.length} piece${roll.pieces.length === 1 ? "" : "s"}</span>
         <label class="checkbox roll-card__cut">
           <input type="checkbox" class="roll-card__cut-input" data-roll="${index + 1}" ${cut ? "checked" : ""} />
@@ -3130,7 +3227,7 @@ function buildRollCardHtml(roll, index, rollLength) {
   `;
 }
 
-function renderRollSchedule(rolls, rollLength, rollGroupSize) {
+function renderRollSchedule(rolls, rollGroupSize) {
   const list = document.getElementById("rollScheduleList");
   const emptyEl = document.getElementById("rollScheduleEmpty");
   const summaryEl = document.getElementById("rollScheduleSummary");
@@ -3144,7 +3241,7 @@ function renderRollSchedule(rolls, rollLength, rollGroupSize) {
         : `Every strip and stitch across every lift, pooled together and packed onto numbered rolls to get the least possible off-cut — not one roll per lift. A strip can share a roll with pieces from other levels, and a roll can supply pieces to more than one level. Set "Group rolls across" in the spec panel to keep rolls within a band of nearby lifts instead.`;
   }
 
-  if (!rolls.length || !(rollLength > 0)) {
+  if (!rolls.length) {
     list.innerHTML = "";
     emptyEl.hidden = false;
     summaryEl.hidden = true;
@@ -3164,7 +3261,7 @@ function renderRollSchedule(rolls, rollLength, rollGroupSize) {
     extraTotal > 1e-6 ? ` (${fmt.m(extraTotal)} m installed as extra embedment to avoid off-cut, see individual pieces below)` : ""
   }.`;
 
-  list.innerHTML = rolls.map((roll, i) => buildRollCardHtml(roll, i, rollLength)).join("");
+  list.innerHTML = rolls.map((roll, i) => buildRollCardHtml(roll, i)).join("");
 }
 
 // Delegated once on the (persistent) list container — card HTML is fully replaced on every
@@ -3180,16 +3277,17 @@ document.getElementById("rollScheduleList").addEventListener("change", (e) => {
 /** Small stick-on tags, 3-up per row, meant to be printed, cut apart, and stuck straight onto each
  *  physical roll before it goes out — so the field crew is reading a label on the roll itself instead
  *  of matching numbers off a table. */
-function buildRollLabelsHtml(rolls, rollLength, project) {
+function buildRollLabelsHtml(rolls, project) {
   const cards = rolls
     .map((roll, i) => {
       const pieces = roll.pieces
         .map((p) => `<li><span>${escapeHtml(p.label)}</span><span>${fmt.m(p.length + p.extra)} m</span></li>`)
         .join("");
+      const productBit = roll.productLabel ? `${escapeHtml(roll.productLabel)} — ` : "";
       return `
         <div class="roll-label">
           <div class="roll-label__num">Roll ${i + 1}</div>
-          <div class="roll-label__len">${fmt.m(rollLength)} m roll — ${escapeHtml(project)}</div>
+          <div class="roll-label__len">${productBit}${fmt.m(roll.rollLength)} m roll — ${escapeHtml(project)}</div>
           <ul class="roll-label__pieces">${pieces}</ul>
         </div>
       `;
@@ -3200,18 +3298,16 @@ function buildRollLabelsHtml(rolls, rollLength, project) {
 
 document.getElementById("printRollLabelsBtn").addEventListener("click", () => {
   const project = document.getElementById("projectName").value || "Geogrid takeoff";
-  const { rollLength } = readSettings();
   const rolls = window.__geogridRolls || [];
-  document.getElementById("rollLabelsPrintView").innerHTML = buildRollLabelsHtml(rolls, rollLength, project);
+  document.getElementById("rollLabelsPrintView").innerHTML = buildRollLabelsHtml(rolls, project);
   document.body.classList.add("printing-roll-labels");
   window.print();
 });
 
 document.getElementById("printRollScheduleBtn").addEventListener("click", () => {
   const project = document.getElementById("projectName").value || "Geogrid takeoff";
-  const { rollLength } = readSettings();
   const rolls = window.__geogridRolls || [];
-  const cards = rolls.map((roll, i) => buildRollCardHtml(roll, i, rollLength)).join("");
+  const cards = rolls.map((roll, i) => buildRollCardHtml(roll, i)).join("");
   document.getElementById("rollSchedulePrintView").innerHTML = `
     <h2 class="roll-print-heading">${escapeHtml(project)} — Roll cutting schedule</h2>
     <div class="roll-schedule-list">${cards}</div>
@@ -3226,26 +3322,32 @@ document.getElementById("printRollScheduleBtn").addEventListener("click", () => 
 
 document.getElementById("exportBtn").addEventListener("click", () => {
   const results = window.__geogridResults || [];
-  const { w, oMin, rollLength, rollGroupSize, costPerRoll, installRate, baseLevel } = readSettings();
+  const { rollGroupSize, installRate, baseLevel } = readSettings();
+  const productSpecs = readProductSpecs();
   const project = document.getElementById("projectName").value || "geogrid-takeoff";
 
   const lines = [
     `Project,${csvEscape(project)}`,
-    `Roll width (m),${w}`,
-    `Minimum overlap (mm),${Math.round(oMin * 1000)}`,
-    `Roll length (m),${rollLength}`,
+    `RE580 roll width (m),${productSpecs.re580.w}`,
+    `RE580 minimum overlap (mm),${Math.round(productSpecs.re580.oMin * 1000)}`,
+    `RE580 roll length (m),${productSpecs.re580.rollLength}`,
+    `Strata roll width (m),${productSpecs.strata.w}`,
+    `Strata minimum overlap (mm),${Math.round(productSpecs.strata.oMin * 1000)}`,
+    `Strata roll length (m),${productSpecs.strata.rollLength}`,
+    `Strata wrap/lap allowance (m),${productSpecs.strata.wrapAllowance}`,
     `Roll grouping,${rollGroupSize > 0 ? `${rollGroupSize} adjacent lifts` : "pooled across all lifts"}`,
     `Material cost,${csvEscape(document.getElementById("statCost").textContent)}`,
     `Est. install time,${csvEscape(document.getElementById("statInstallTime").textContent)}`,
     `Base level (RL),${baseLevel != null ? baseLevel : ""}`,
     `Total fill volume,${csvEscape(document.getElementById("statVolume").textContent)}`,
     "",
-    "RL,Face length (m),Embedment (m),Strips,Overlap (mm),Material width (m),Area (m2),Theoretical area (m2),Lift thickness (m),Fill volume (m3),Source",
+    "RL,Product,Face length (m),Embedment (m),Strips,Overlap (mm),Material width (m),Area (m2),Theoretical area (m2),Lift thickness (m),Fill volume (m3),Source",
   ];
   results.forEach((r) => {
     lines.push(
       [
         csvEscape(r.rl),
+        csvEscape(r.productLabel),
         r.L.toFixed(3),
         r.mode === "extents" ? "variable" : r.embed.toFixed(3),
         r.n,
@@ -3276,10 +3378,10 @@ document.getElementById("exportBtn").addEventListener("click", () => {
 
   const rolls = window.__geogridRolls || [];
   if (rolls.length) {
-    lines.push("", "Roll cutting schedule", "Roll #,Piece,Length (m),Roll off-cut (m)");
+    lines.push("", "Roll cutting schedule", "Roll #,Product,Piece,Length (m),Roll off-cut (m)");
     rolls.forEach((roll, i) => {
       roll.pieces.forEach((p) => {
-        lines.push([i + 1, csvEscape(p.label), p.length.toFixed(3), p.extra > 1e-6 ? p.extra.toFixed(3) : ""].join(","));
+        lines.push([i + 1, csvEscape(roll.productLabel), csvEscape(p.label), p.length.toFixed(3), p.extra > 1e-6 ? p.extra.toFixed(3) : ""].join(","));
       });
     });
   }
@@ -3480,6 +3582,7 @@ function buildStateSnapshot() {
     extentsPoints: row._extentsPoints || null,
     extentsSwapped: !!row._extentsSwapped,
     batteredLevel: !!row._batteredLevel,
+    product: row.querySelector(".product-select").value,
   }));
   return {
     version: 1,
@@ -3493,6 +3596,13 @@ function buildStateSnapshot() {
       installRate: settingsInputs.installRate.value,
       baseLevel: settingsInputs.baseLevel.value,
       extendFace: settingsInputs.extendFace.checked,
+    },
+    strata: {
+      rollWidth: strataInputs.rollWidth.value,
+      minOverlap: strataInputs.minOverlapMm.value,
+      rollLength: strataInputs.rollLength.value,
+      costPerRoll: strataInputs.costPerRoll.value,
+      wrapAllowance: strataInputs.wrapAllowance.value,
     },
     rows,
     liner: {
@@ -3526,6 +3636,15 @@ function applyStateSnapshot(state) {
   if (s.baseLevel != null) settingsInputs.baseLevel.value = s.baseLevel;
   if (s.extendFace != null) settingsInputs.extendFace.checked = !!s.extendFace;
 
+  const st = state.strata;
+  if (st) {
+    if (st.rollWidth != null) strataInputs.rollWidth.value = st.rollWidth;
+    if (st.minOverlap != null) strataInputs.minOverlapMm.value = st.minOverlap;
+    if (st.rollLength != null) strataInputs.rollLength.value = st.rollLength;
+    if (st.costPerRoll != null) strataInputs.costPerRoll.value = st.costPerRoll;
+    if (st.wrapAllowance != null) strataInputs.wrapAllowance.value = st.wrapAllowance;
+  }
+
   if (l) {
     if (l.rollWidth != null) linerInputs.rollWidth.value = l.rollWidth;
     if (l.minOverlap != null) linerInputs.minOverlap.value = l.minOverlap;
@@ -3543,6 +3662,7 @@ function applyStateSnapshot(state) {
 
   (state.rows || []).forEach((r) => {
     const row = addLiftRow(r.rl || "", r.mode === "length" ? r.faceLength || "" : "", r.embed || "", null, !!r.isIntermediate);
+    if (r.product) row.querySelector(".product-select").value = r.product;
     if (r.mode === "coords") {
       row.dataset.mode = "coords";
       row.querySelector(".face-input__length").hidden = true;
@@ -3732,6 +3852,12 @@ document.getElementById("newProjectBtn").addEventListener("click", () => {
   settingsInputs.installRate.value = "";
   settingsInputs.baseLevel.value = "";
   settingsInputs.extendFace.checked = false;
+
+  strataInputs.rollWidth.value = "5.8";
+  strataInputs.minOverlapMm.value = "150";
+  strataInputs.rollLength.value = "100";
+  strataInputs.costPerRoll.value = "";
+  strataInputs.wrapAllowance.value = "2.6";
 
   resetLinerInputs();
 
