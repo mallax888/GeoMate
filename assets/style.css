@@ -804,11 +804,46 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.7rem;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.7rem;
   margin-bottom: 0.5rem;
 }
 .cutplan-card__rl { font-family: var(--font-mono); font-weight: 700; font-size: 0.92rem; }
 .cutplan-card__meta { font-size: 0.76rem; color: var(--ink-muted); }
+.cutplan-card__manual-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px dashed var(--line-strong);
+  border-radius: 4px;
+  background: var(--surface);
+}
+.cutplan-card__active-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.cutplan-card__active-product {
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.3rem 0.5rem;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.cutplan-manual-ghost { cursor: pointer; }
+.cutplan-manual-ghost:hover { fill-opacity: 0.4; }
 .cutplan-card__body { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
 @media (max-width: 900px) { .cutplan-card__body { grid-template-columns: 1fr; } }
 .cutplan-card__plan { width: 100%; height: auto; border-radius: 4px; background: var(--surface); }

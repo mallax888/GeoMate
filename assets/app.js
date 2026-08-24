@@ -314,6 +314,59 @@ function roundUpToStep(value, step) {
  * area beyond a gap that a strip's single straight cut can't reach in one piece, that pocket is
  * reported as a "stitch" — a small supplementary patch strip — rather than distorting the main strip.
  */
+/**
+ * The boundary geometry for ONE strip at a given station/width — how far it truly reaches into the
+ * fill, where its near edge sits, and any stitch patches needed past a gap its single straight cut
+ * can't cover. Pulled out of computeCutPlan so the same sampling logic (still keyed only off a
+ * station and a width, not off any particular product) also drives the manual/mixed-product strip
+ * builder below, which picks each strip's station and width strip-by-strip instead of from one
+ * uniform pitch.
+ */
+function stripBoundaryReach(station, w, poly, face, inward, vertexStations) {
+  const pt = pointAtStation(face, station);
+  const segments = insideSegments(pt, inward, poly);
+  const main = segments.find((s) => s.start <= 1e-6);
+
+  // The true boundary reach for this strip, sampled across its full width — a boundary that kinks
+  // partway across the strip's width can dodge a coarse, evenly-spaced sample and leave a real,
+  // uncovered sliver between the strip and the true line. Worst of all at the wall FACE itself,
+  // where the strip has to tie up flush with zero gap (the far/inner end just ties into existing
+  // ground, so it's rounded up generously and is far less sensitive to this). Combines a modest
+  // even sweep with every actual polygon vertex that falls inside this strip's width, so a kink is
+  // always sampled exactly rather than only approximately.
+  const laneMin = Math.max(0, station - w / 2), laneMax = Math.min(face.length, station + w / 2);
+  const sampleCount = Math.max(3, Math.min(15, Math.round(w / 0.3) + 1));
+  const edgeStations = [];
+  for (let k = 0; k < sampleCount; k++) {
+    const t = sampleCount === 1 ? 0.5 : k / (sampleCount - 1);
+    edgeStations.push(laneMin + t * (laneMax - laneMin));
+  }
+  vertexStations.forEach((s) => {
+    if (s > laneMin && s < laneMax) edgeStations.push(s);
+  });
+  let farReach = 0, nearReach = 0;
+  edgeStations.forEach((s) => {
+    const p = pointAtStation(face, s);
+    const segs = insideSegments(p, inward, poly);
+    const m = segs.find((seg) => seg.start <= 1e-6);
+    if (m) {
+      farReach = Math.max(farReach, m.end);
+      nearReach = Math.min(nearReach, m.start);
+    }
+  });
+
+  // Reported/cut length: the true reach rounded up to a practical site number. Rounding only ever
+  // goes up, so this can end up slightly longer than the true extents reach — that overshoot is
+  // exactly the bit that needs trimming back on site to avoid burying wasted material past the
+  // design boundary, shown separately in the diagram rather than folded silently into this number.
+  const cutLength = roundUpToStep(farReach, ROUND_STEP);
+  const stitches = segments
+    .filter((s) => s !== main && s.end - s.start > STITCH_MIN)
+    .map((s) => ({ offset: roundUpToStep(s.start, ROUND_STEP), length: roundUpToStep(s.end - s.start, ROUND_STEP) }));
+
+  return { cutLength, farReach, nearReach, stitches };
+}
+
 function computeCutPlan(rawPoints, w, oMin, swapped) {
   const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
   const chains = chainEdges(poly);
@@ -345,51 +398,11 @@ function computeCutPlan(rawPoints, w, oMin, swapped) {
   const frontReach = [];
   for (let i = 0; i < result.n; i++) {
     const station = Math.max(0, Math.min(face.length, i * pitch + w / 2));
-    const pt = pointAtStation(face, station);
-    const segments = insideSegments(pt, inward, poly);
-    const main = segments.find((s) => s.start <= 1e-6);
-
-    // The true boundary reach for this strip, sampled across its full width — a boundary that kinks
-    // partway across the strip's width can dodge a coarse, evenly-spaced sample and leave a real,
-    // uncovered sliver between the strip and the true line. Worst of all at the wall FACE itself,
-    // where the strip has to tie up flush with zero gap (the far/inner end just ties into existing
-    // ground, so it's rounded up generously and is far less sensitive to this). Combines a modest
-    // even sweep with every actual polygon vertex that falls inside this strip's width, so a kink is
-    // always sampled exactly rather than only approximately.
-    const laneMin = Math.max(0, station - w / 2), laneMax = Math.min(face.length, station + w / 2);
-    const sampleCount = Math.max(3, Math.min(15, Math.round(w / 0.3) + 1));
-    const edgeStations = [];
-    for (let k = 0; k < sampleCount; k++) {
-      const t = sampleCount === 1 ? 0.5 : k / (sampleCount - 1);
-      edgeStations.push(laneMin + t * (laneMax - laneMin));
-    }
-    vertexStations.forEach((s) => {
-      if (s > laneMin && s < laneMax) edgeStations.push(s);
-    });
-    let farReach = 0, nearReach = 0;
-    edgeStations.forEach((s) => {
-      const p = pointAtStation(face, s);
-      const segs = insideSegments(p, inward, poly);
-      const m = segs.find((seg) => seg.start <= 1e-6);
-      if (m) {
-        farReach = Math.max(farReach, m.end);
-        nearReach = Math.min(nearReach, m.start);
-      }
-    });
-    extentsReach.push(farReach);
-    frontReach.push(nearReach);
-
-    // Reported/cut length: the true reach rounded up to a practical site number. Rounding only ever
-    // goes up, so this can end up slightly longer than the true extents reach — that overshoot is
-    // exactly the bit that needs trimming back on site to avoid burying wasted material past the
-    // design boundary, shown separately in the diagram rather than folded silently into this number.
-    cutLengths.push(roundUpToStep(farReach, ROUND_STEP));
-
-    stitches.push(
-      segments
-        .filter((s) => s !== main && s.end - s.start > STITCH_MIN)
-        .map((s) => ({ offset: roundUpToStep(s.start, ROUND_STEP), length: roundUpToStep(s.end - s.start, ROUND_STEP) }))
-    );
+    const r = stripBoundaryReach(station, w, poly, face, inward, vertexStations);
+    cutLengths.push(r.cutLength);
+    stitches.push(r.stitches);
+    extentsReach.push(r.farReach);
+    frontReach.push(r.nearReach);
   }
 
   return {
@@ -404,6 +417,93 @@ function computeCutPlan(rawPoints, w, oMin, swapped) {
     stitches,
     extentsReach,
     frontReach,
+    polygonArea: Math.abs(signedArea(poly)),
+  };
+}
+
+/**
+ * The manual/mixed-product counterpart to computeCutPlan: instead of one uniform pitch derived from
+ * a single product's width and overlap, walks an explicit, ordered strip sequence (built one click
+ * at a time — see the Cut Plan tab's "Build manually" mode) where each strip can be a different
+ * product. Where two different products meet, the seam uses whichever of the two products' minimum
+ * overlaps is larger, so both are satisfied at once; consecutive strips of the same product use that
+ * product's own overlap, same as the automatic layout would. Returns the same shape computeCutPlan
+ * does (n, cutLengths, stitches, extentsReach, frontReach, polygonArea, face, back) plus per-strip
+ * product/geometry arrays the uniform layout has no need for.
+ */
+function computeManualCutPlan(rawPoints, manualStrips, productSpecs, swapped) {
+  // manualStrips may be an empty array — that's "build mode is on, nothing placed yet" — still worth
+  // computing the boundary/face so the Cut Plan tab has something to draw the first click-node
+  // against, rather than showing nothing until the first strip exists.
+  if (!manualStrips) return null;
+  const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
+  const chains = chainEdges(poly);
+  if (chains.length < 2) return null;
+  let { face, back } = pickFaceAndBack(chains);
+  if (swapped && back) { const t = face; face = back; back = t; }
+
+  const inward = inwardNormal(face.dir);
+  const faceOrigin = face.edges[0].from;
+  const vertexStations = poly
+    .map((p) => (p.x - faceOrigin.x) * face.dir.x + (p.y - faceOrigin.y) * face.dir.y)
+    .filter((s) => s >= 0 && s <= face.length)
+    .sort((a, b) => a - b);
+
+  const cutLengths = [];
+  const stitches = [];
+  const extentsReach = [];
+  const frontReach = [];
+  const stripProductIds = [];
+  const stripWidths = [];
+  const stripStarts = [];
+  const stripEnds = [];
+  const seamOverlaps = []; // seamOverlaps[i] is the overlap used between strip i and strip i+1
+
+  let cursorEnd = 0; // the running far/right edge of the sequence built so far, along the face
+  manualStrips.forEach((strip, i) => {
+    const spec = productSpecs[strip.productId];
+    if (!spec) return; // a product deleted out from under a saved sequence — skip rather than crash
+    const w = spec.w > 0 ? spec.w : 0.01;
+    let start;
+    if (i === 0) {
+      start = 0;
+    } else {
+      const prevSpec = productSpecs[manualStrips[i - 1].productId] || spec;
+      const overlap = Math.max(spec.oMin, prevSpec.oMin);
+      seamOverlaps.push(overlap);
+      start = cursorEnd - overlap;
+    }
+    const end = start + w;
+    cursorEnd = end;
+    const station = Math.max(0, Math.min(face.length, (start + end) / 2));
+
+    const r = stripBoundaryReach(station, w, poly, face, inward, vertexStations);
+    cutLengths.push(r.cutLength);
+    stitches.push(r.stitches);
+    extentsReach.push(r.farReach);
+    frontReach.push(r.nearReach);
+    stripProductIds.push(strip.productId);
+    stripWidths.push(w);
+    stripStarts.push(start);
+    stripEnds.push(end);
+  });
+
+  return {
+    poly,
+    face,
+    back,
+    faceLength: face.length,
+    n: stripProductIds.length,
+    cutLengths,
+    stitches,
+    extentsReach,
+    frontReach,
+    stripProductIds,
+    stripWidths,
+    stripStarts,
+    stripEnds,
+    seamOverlaps,
+    manual: true,
     polygonArea: Math.abs(signedArea(poly)),
   };
 }
@@ -839,7 +939,7 @@ function packRollsDetailed(pieces, rollLength) {
 }
 
 /** Every strip and stitch across every lift, labelled by source, for the pooled cross-level roll schedule. */
-function buildRollPieces(results) {
+function buildRollPieces(results, productId) {
   const pieces = [];
   results.forEach((r) => {
     // r._buildIndex is this lift's position in the FULL job (see packRollsWindowed) — not its
@@ -848,6 +948,11 @@ function buildRollPieces(results) {
     // of which band or how the bin packer itself ordered them internally.
     const buildIndex = r._buildIndex ?? 0;
     r.stripLengths.forEach((len, i) => {
+      // A manually built row can mix products strip-by-strip, so which product a piece belongs to is
+      // decided per strip (stripProductIds), not by the row's single (mostly nominal, for an
+      // automatic row still exactly right) product — a stitch inherits its parent strip's product.
+      const stripProduct = (r.stripProductIds && r.stripProductIds[i]) || r.product;
+      if (stripProduct !== productId) return;
       const seq = buildIndex * 1000 + i;
       if (len > 1e-6) pieces.push({ label: `RL ${r.rl} · Strip ${i + 1}`, length: len, seq });
       if (r.cutPlan) {
@@ -870,17 +975,17 @@ function buildRollPieces(results) {
  * bit more offcut (fewer chances to fill a gap with an unrelated piece) but keeps every roll close to
  * where it's actually used.
  */
-function packRollsWindowed(results, rollLength, groupSize) {
+function packRollsWindowed(results, rollLength, groupSize, productId) {
   // r._buildIndex is tagged by the caller (renderSummary) before this runs — see buildRollPieces.
   let rolls;
   if (groupSize > 0) {
     rolls = [];
     for (let start = 0; start < results.length; start += groupSize) {
       const band = results.slice(start, start + groupSize);
-      rolls = rolls.concat(packRollsDetailed(buildRollPieces(band), rollLength));
+      rolls = rolls.concat(packRollsDetailed(buildRollPieces(band, productId), rollLength));
     }
   } else {
-    rolls = packRollsDetailed(buildRollPieces(results), rollLength);
+    rolls = packRollsDetailed(buildRollPieces(results, productId), rollLength);
   }
 
   // Renumber by first-used-on-site order, not whatever order the bin packer (which sorts purely by
@@ -1424,6 +1529,62 @@ function renderDiagram(svg, L, result, w, W = 240, H = 34) {
   });
 }
 
+/** The compact per-row diagram's counterpart for a manually built (mixed-product) row — each strip
+ * drawn at its own true width and position (no uniform pitch to approximate from, computeManualCutPlan
+ * already worked out the exact geometry), coloured by its own product's swatch colour instead of the
+ * single accent colour every automatic-layout row uses. */
+function renderDiagramManual(svg, L, cutPlan, productSpecs, W = 240, H = 34) {
+  svg.innerHTML = "";
+  const { stripStarts, stripEnds, stripProductIds } = cutPlan;
+  if (!stripStarts || !stripStarts.length) return;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const pad = 2;
+  const usableW = W - pad * 2;
+  const maxExtent = Math.max(L, ...stripEnds);
+  const scale = usableW / Math.max(maxExtent, 1e-6);
+  const ns = "http://www.w3.org/2000/svg";
+
+  stripStarts.forEach((start, i) => {
+    const width = stripEnds[i] - start;
+    const x = pad + start * scale;
+    const wPx = width * scale;
+    const spec = productSpecs[stripProductIds[i]];
+    const colorVar = spec && spec.colorSlot ? `var(--${spec.colorSlot})` : "var(--accent)";
+    const rect = document.createElementNS(ns, "rect");
+    rect.setAttribute("x", x.toFixed(2));
+    rect.setAttribute("y", 6);
+    rect.setAttribute("width", Math.max(wPx, 0).toFixed(2));
+    rect.setAttribute("height", 16);
+    rect.setAttribute("rx", 1.5);
+    rect.setAttribute("fill", colorVar);
+    rect.setAttribute("fill-opacity", "0.7");
+    rect.setAttribute("stroke", colorVar);
+    rect.setAttribute("stroke-width", "1");
+    svg.appendChild(rect);
+  });
+
+  // Face-length dimension line beneath the strips — same convention as the automatic diagram.
+  const dimY = 28;
+  const line = document.createElementNS(ns, "line");
+  line.setAttribute("x1", pad);
+  line.setAttribute("x2", (pad + L * scale).toFixed(2));
+  line.setAttribute("y1", dimY);
+  line.setAttribute("y2", dimY);
+  line.setAttribute("stroke", "var(--graphite)");
+  line.setAttribute("stroke-width", "1");
+  svg.appendChild(line);
+  [pad, pad + L * scale].forEach((x) => {
+    const tick = document.createElementNS(ns, "line");
+    tick.setAttribute("x1", x.toFixed(2));
+    tick.setAttribute("x2", x.toFixed(2));
+    tick.setAttribute("y1", dimY - 2);
+    tick.setAttribute("y2", dimY + 2);
+    tick.setAttribute("stroke", "var(--graphite)");
+    tick.setAttribute("stroke-width", "1");
+    svg.appendChild(tick);
+  });
+}
+
 /* ============================================================
    Compute + render everything
    ============================================================ */
@@ -1551,8 +1712,13 @@ function computeAndRender() {
   const cutPlanByRow = new Map();
   rows.forEach((row) => {
     if (row.dataset.mode === "extents" && row._extentsPoints) {
-      const p = productFor(row);
-      const cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._extentsSwapped) : null;
+      let cp;
+      if (row._manualStrips) {
+        cp = computeManualCutPlan(row._extentsPoints, row._manualStrips, productSpecs, row._extentsSwapped);
+      } else {
+        const p = productFor(row);
+        cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._extentsSwapped) : null;
+      }
       if (cp) cutPlanByRow.set(row, cp);
     }
   });
@@ -1588,12 +1754,29 @@ function computeAndRender() {
       cutPlan = cutPlanByRow.get(row) || null;
       if (cutPlan) {
         L = cutPlan.faceLength;
-        result = { n: cutPlan.n, overlap: cutPlan.overlap, materialWidth: cutPlan.materialWidth };
-        // Wrap/lap allowance (0 for RE580) adds onto each strip's REAL cut length the same way it
-        // adds onto a manually-typed embedment below — the boundary geometry decides where the
-        // design footprint ends, the wrap is extra material tacked on beyond that to fold back
-        // around the face, same for every strip regardless of how its base length was worked out.
-        stripLengths = p.wrapAllowance > 0 ? cutPlan.cutLengths.map((len) => len + p.wrapAllowance) : cutPlan.cutLengths;
+        if (cutPlan.manual) {
+          // A manually built row can mix products strip-by-strip, so there's no single overlap/width
+          // to report — overlap is left null (every consumer below is expected to check for that and
+          // fall back to "mixed" wording) and materialWidth is the true sum of each strip's own width.
+          result = {
+            n: cutPlan.n,
+            overlap: null,
+            materialWidth: cutPlan.stripWidths.reduce((s, w) => s + w, 0),
+          };
+          // Each strip's own product decides its own wrap/lap allowance — not the row's single
+          // (now largely nominal) product like the uniform layout below.
+          stripLengths = cutPlan.cutLengths.map((len, i) => {
+            const spec = productSpecs[cutPlan.stripProductIds[i]];
+            return spec && spec.wrapAllowance > 0 ? len + spec.wrapAllowance : len;
+          });
+        } else {
+          result = { n: cutPlan.n, overlap: cutPlan.overlap, materialWidth: cutPlan.materialWidth };
+          // Wrap/lap allowance (0 for RE580) adds onto each strip's REAL cut length the same way it
+          // adds onto a manually-typed embedment below — the boundary geometry decides where the
+          // design footprint ends, the wrap is extra material tacked on beyond that to fold back
+          // around the face, same for every strip regardless of how its base length was worked out.
+          stripLengths = p.wrapAllowance > 0 ? cutPlan.cutLengths.map((len) => len + p.wrapAllowance) : cutPlan.cutLengths;
+        }
         theoreticalArea = cutPlan.polygonArea;
         row.querySelector(".face-length").value = L.toFixed(2);
         const extentsFaceExtendNoteEl = row.querySelector(".face-extend-note");
@@ -1665,6 +1848,17 @@ function computeAndRender() {
       overlapCell.classList.add("is-empty");
       areaCell.classList.add("is-empty");
       diagram.innerHTML = "";
+      // A manual-build row with nothing placed yet has nothing to report here, but its boundary and
+      // first click-node still need to show up in the Cut Plan tab — push a minimal, empty result
+      // rather than dropping the row from that tab entirely until its first strip exists.
+      if (cutPlan && cutPlan.manual) {
+        liftResults.push({
+          rl, L, n: 0, overlap: null, materialWidth: 0,
+          stripLengths: [], stripWidths: [], stripProductIds: [], stitchLengths: [],
+          area: 0, theoreticalArea: 0, embed: null, cutPlan, mode, row, footprint: null,
+          w: p.w, product: p.id, productLabel: p.label,
+        });
+      }
       return;
     }
 
@@ -1673,13 +1867,26 @@ function computeAndRender() {
     areaCell.classList.remove("is-empty");
 
     strips.textContent = result.n;
-    overlapCell.textContent = result.n > 1 ? `${fmt.mm(result.overlap)} mm` : "—";
+    overlapCell.textContent = result.n > 1 ? (result.overlap != null ? `${fmt.mm(result.overlap)} mm` : "mixed") : "—";
+    // Every strip's own width — uniform (the row's one product) for an automatic row, per-strip for a
+    // manually built one. Threading this through as one array lets area/roll-packing/etc below treat
+    // both cases the same way instead of branching on cutPlan.manual at every consumer.
+    const stripWidths = cutPlan && cutPlan.manual ? cutPlan.stripWidths : stripLengths.map(() => p.w);
+    const stripProductIds = cutPlan && cutPlan.manual ? cutPlan.stripProductIds : stripLengths.map(() => p.id);
     // Stitch patches (extra material for a boundary pocket a strip's single straight cut can't reach)
-    // consume grid too, so they count toward area, roll purchasing, and waste stats same as any strip.
+    // consume grid too, so they count toward area, roll purchasing, and waste stats same as any strip
+    // — each stitch billed at its OWN strip's width, not necessarily the row's.
     const stitchLengths = cutPlan ? cutPlan.stitches.flat().map((s) => s.length) : [];
-    const area = stripLengths.reduce((s, len) => s + p.w * len, 0) + stitchLengths.reduce((s, len) => s + p.w * len, 0);
+    const stitchArea = cutPlan
+      ? cutPlan.stitches.reduce((sum, group, i) => sum + group.reduce((s, st) => s + st.length * stripWidths[i], 0), 0)
+      : 0;
+    const area = stripLengths.reduce((s, len, i) => s + stripWidths[i] * len, 0) + stitchArea;
     areaCell.innerHTML = `${fmt.m(area)}<small> m²</small>`;
-    renderDiagram(diagram, L, result, p.w);
+    if (cutPlan && cutPlan.manual) {
+      renderDiagramManual(diagram, L, cutPlan, productSpecs);
+    } else {
+      renderDiagram(diagram, L, result, p.w);
+    }
 
     const footprint =
       mode === "extents" && cutPlan
@@ -1695,6 +1902,8 @@ function computeAndRender() {
       overlap: result.overlap,
       materialWidth: result.materialWidth,
       stripLengths,
+      stripWidths,
+      stripProductIds,
       stitchLengths,
       area,
       theoreticalArea,
@@ -1822,8 +2031,10 @@ function faceAlignedFootprint(cutPlan) {
  *  instead of needing a single global rollLength passed alongside it. */
 function packRollsForProduct(results, productId, productSpecs, rollGroupSize) {
   const spec = productSpecs[productId];
-  const subset = results.filter((r) => r.product === productId);
-  const rolls = packRollsWindowed(subset, spec.rollLength, rollGroupSize);
+  // Passed the full, unfiltered results (not pre-filtered to rows whose OWN product matches) — a
+  // manually built row can carry strips of several products at once, so which pieces belong here is
+  // decided per strip inside buildRollPieces, not by discarding whole rows up front.
+  const rolls = packRollsWindowed(results, spec.rollLength, rollGroupSize, productId);
   rolls.forEach((roll) => {
     roll.product = spec.id;
     roll.productLabel = spec.label;
@@ -1891,11 +2102,9 @@ function renderSummary(results, productSpecs, rollGroupSize, installRate, baseLe
   // pieces from opposite ends of the job (see packRollsWindowed). Every product is packed
   // separately (different physical roll, different length) then merged back into one on-site
   // numbering order by first-used sequence, same as packRollsWindowed does within a single product.
-  const rollPieces = buildRollPieces(results);
   const rolls = products.flatMap((p) => packRollsForProduct(results, p.id, productSpecs, rollGroupSize));
   rolls.sort((a, b) => Math.min(...a.pieces.map((p) => p.seq)) - Math.min(...b.pieces.map((p) => p.seq)));
   window.__geogridRolls = rolls;
-  window.__geogridRollPieces = rollPieces;
 
   document.getElementById("statRolls").textContent = fmt.int(rolls.length);
 
@@ -2033,7 +2242,7 @@ function buildCutPlanPrintPages(results, project) {
       const next = buildIndex >= 0 ? allResults[buildIndex + 1] : null;
       const fillTarget = next ? `RL ${escapeHtml(next.rl)}` : "final design surface";
       let staggerNote = "";
-      if (stagger && r.n > 1 && buildIndex >= 0) {
+      if (stagger && r.n > 1 && buildIndex >= 0 && r.overlap != null) {
         const pitch = r.w - r.overlap;
         const offsetMm = Math.round((pitch / 2) * 1000);
         staggerNote =
@@ -2098,7 +2307,9 @@ function buildCutPlanPrintPages(results, project) {
             </label>
           </div>
           <ol class="cutplan-print-page__steps">
-            <li>Roll out ${r.n} strip${r.n === 1 ? "" : "s"} per the cut lengths below${r.n > 1 ? `, lapping each by ${fmt.mm(r.overlap)} mm` : ""}.</li>
+            <li>Roll out ${r.n} strip${r.n === 1 ? "" : "s"} per the cut lengths below${
+              r.n > 1 ? (r.overlap != null ? `, lapping each by ${fmt.mm(r.overlap)} mm` : ", lapping each strip by its own product's overlap — mixed products on this lift, see the strip list") : ""
+            }.</li>
             <li>Pin/stake the grid as required, then place and compact fill up to ${fillTarget}.</li>
           </ol>
           ${staggerNote ? `<div class="cutplan-print-page__stagger">${escapeHtml(staggerNote)}</div>` : ""}
@@ -2159,7 +2370,7 @@ document.getElementById("exportFullPdfBtn").addEventListener("click", () => {
         <td>${fmt.m(r.L)}</td>
         <td>${r.mode === "extents" ? "variable" : fmt.m(r.embed)}</td>
         <td>${r.n}</td>
-        <td>${r.n > 1 ? fmt.mm(r.overlap) + " mm" : "—"}</td>
+        <td>${r.n > 1 ? (r.overlap != null ? fmt.mm(r.overlap) + " mm" : "mixed") : "—"}</td>
         <td>${fmt.m(r.area)}</td>
         <td>${r.fillVolume != null ? fmt.m(r.fillVolume) : "—"}</td>
       </tr>`
@@ -2182,7 +2393,7 @@ document.getElementById("exportFullPdfBtn").addEventListener("click", () => {
       const embedText = r.mode === "extents" ? `${fmt.m(Math.min(...r.stripLengths))}–${fmt.m(Math.max(...r.stripLengths))} m (cut plan)` : `${fmt.m(r.embed)} m`;
       return `<tr>
         <td>${i + 1}</td><td>${escapeHtml(r.rl)}</td><td>${r.n}</td>
-        <td>${r.n > 1 ? fmt.mm(r.overlap) + " mm" : "—"}</td><td>${embedText}</td><td>Fill to ${fillTarget}</td>
+        <td>${r.n > 1 ? (r.overlap != null ? fmt.mm(r.overlap) + " mm" : "mixed") : "—"}</td><td>${embedText}</td><td>Fill to ${fillTarget}</td>
       </tr>`;
     })
     .join("");
@@ -2253,6 +2464,7 @@ function switchTab(which) {
 function renderSequence(results) {
   sequenceList.innerHTML = "";
   const stagger = staggerToggle.checked;
+  const productSpecs = readProductSpecs();
 
   results.forEach((r, i) => {
     const li = document.createElement("li");
@@ -2261,7 +2473,7 @@ function renderSequence(results) {
     if (installed) li.classList.add("is-installed");
 
     let staggerNote = "";
-    if (stagger && r.n > 1) {
+    if (stagger && r.n > 1 && r.overlap != null) {
       const pitch = r.w - r.overlap;
       const offsetMm = Math.round((pitch / 2) * 1000);
       staggerNote =
@@ -2290,7 +2502,7 @@ function renderSequence(results) {
       </div>
       <ol class="sequence-card__steps">
         <li>Roll out ${r.n} strip${r.n === 1 ? "" : "s"} across the ${fmt.m(r.L)} m face${
-      r.n > 1 ? `, lapping each by ${fmt.mm(r.overlap)} mm` : ""
+      r.n > 1 ? (r.overlap != null ? `, lapping each by ${fmt.mm(r.overlap)} mm` : ", lapping each strip by its own product's overlap — mixed products on this lift") : ""
     }, ${embedText}.</li>
         <li>Pin/stake the grid as required, then place and compact fill up to ${fillTarget}.</li>
       </ol>
@@ -2300,7 +2512,11 @@ function renderSequence(results) {
 
     sequenceList.appendChild(li);
     const svg = li.querySelector(".sequence-card__diagram");
-    renderDiagram(svg, r.L, { n: r.n, overlap: r.overlap, materialWidth: r.materialWidth }, r.w, 480, 40);
+    if (r.cutPlan && r.cutPlan.manual) {
+      renderDiagramManual(svg, r.L, r.cutPlan, productSpecs, 480, 40);
+    } else {
+      renderDiagram(svg, r.L, { n: r.n, overlap: r.overlap, materialWidth: r.materialWidth }, r.w, 480, 40);
+    }
 
     li.querySelector(".sequence-card__installed-input").addEventListener("change", (e) => {
       setLiftInstalled(r.rl, e.target.checked);
@@ -2653,11 +2869,80 @@ document.getElementById("rebuildBatteredBtn").addEventListener("click", () => {
 });
 
 cutPlanList.addEventListener("click", (e) => {
-  const btn = e.target.closest(".cutplan-card__swap");
-  if (!btn) return;
-  const row = window.__geogridRowsById.get(btn.dataset.rowId);
+  const swapBtn = e.target.closest(".cutplan-card__swap");
+  if (swapBtn) {
+    const row = window.__geogridRowsById.get(swapBtn.dataset.rowId);
+    if (row) {
+      row._extentsSwapped = !row._extentsSwapped;
+      computeAndRender();
+    }
+    return;
+  }
+
+  const toggleBtn = e.target.closest(".cutplan-card__manual-toggle");
+  if (toggleBtn) {
+    const row = window.__geogridRowsById.get(toggleBtn.dataset.rowId);
+    if (row) {
+      if (row._manualStrips) {
+        // Turning manual build off — keep the sequence built so far so switching back on later
+        // (rather than typing it all in again) picks up right where it left off.
+        row._manualStripsSaved = row._manualStrips;
+        row._manualStrips = null;
+      } else {
+        row._manualStrips = row._manualStripsSaved || [];
+      }
+      computeAndRender();
+    }
+    return;
+  }
+
+  const undoBtn = e.target.closest(".cutplan-card__undo");
+  if (undoBtn) {
+    const row = window.__geogridRowsById.get(undoBtn.dataset.rowId);
+    if (row && row._manualStrips && row._manualStrips.length) {
+      row._manualStrips.pop();
+      computeAndRender();
+    }
+    return;
+  }
+
+  const clearBtn = e.target.closest(".cutplan-card__clear");
+  if (clearBtn) {
+    const row = window.__geogridRowsById.get(clearBtn.dataset.rowId);
+    if (row && row._manualStrips && row._manualStrips.length) {
+      row._manualStrips = [];
+      computeAndRender();
+    }
+    return;
+  }
+
+  const fillBtn = e.target.closest(".cutplan-card__fill");
+  if (fillBtn) {
+    const row = window.__geogridRowsById.get(fillBtn.dataset.rowId);
+    if (row && row._manualStrips) {
+      fillRemainder(row, row._manualActiveProduct, readProductSpecs());
+      computeAndRender();
+    }
+    return;
+  }
+
+  const ghost = e.target.closest(".cutplan-manual-ghost");
+  if (ghost) {
+    const row = window.__geogridRowsById.get(ghost.dataset.rowId);
+    if (row && row._manualStrips && row._manualActiveProduct) {
+      row._manualStrips.push({ productId: row._manualActiveProduct });
+      computeAndRender();
+    }
+    return;
+  }
+});
+
+cutPlanList.addEventListener("change", (e) => {
+  const select = e.target.closest(".cutplan-card__active-product");
+  if (!select) return;
+  const row = window.__geogridRowsById.get(select.dataset.rowId);
   if (!row) return;
-  row._extentsSwapped = !row._extentsSwapped;
+  row._manualActiveProduct = select.value;
   computeAndRender();
 });
 
@@ -2673,6 +2958,7 @@ function renderCutPlan(results) {
   // forever for the life of the tab.
   window.__geogridRowsById = new Map();
   const rollLookup = buildRollLookup(window.__geogridRolls || []);
+  const productSpecs = readProductSpecs();
 
   extentsResults.forEach((r) => {
     const id = `row-${Math.random().toString(36).slice(2)}`;
@@ -2681,19 +2967,42 @@ function renderCutPlan(results) {
     const card = document.createElement("div");
     card.className = "cutplan-card";
 
+    const isManual = !!r.row._manualStrips;
     const stitchCount = r.cutPlan.stitches.reduce((s, arr) => s + arr.length, 0);
-    const metaParts = [`${r.n} strips`, `face ${fmt.m(r.L)} m`];
+    const metaParts = [`${r.n} strip${r.n === 1 ? "" : "s"}`, `face ${fmt.m(r.L)} m`];
     if (stitchCount) metaParts.push(`${stitchCount} stitch patch${stitchCount === 1 ? "" : "es"}`);
+    if (isManual) metaParts.push("mixed build");
+
+    let activeProductId = r.row._manualActiveProduct;
+    if (!activeProductId || !productSpecs[activeProductId]) {
+      activeProductId = r.stripProductIds && r.stripProductIds.length ? r.stripProductIds[r.stripProductIds.length - 1] : r.product;
+    }
+    r.row._manualActiveProduct = activeProductId; // remembered across renders
 
     card.innerHTML = `
       <div class="cutplan-card__head">
         <span class="cutplan-card__rl">RL ${escapeHtml(r.rl) || "—"}</span>
         <span class="cutplan-card__meta">${metaParts.join(" · ")}</span>
         <button type="button" class="btn btn--ghost cutplan-card__swap" data-row-id="${id}">Swap face/back</button>
+        <button type="button" class="btn btn--ghost cutplan-card__manual-toggle" data-row-id="${id}">${isManual ? "Auto layout" : "Build manually"}</button>
       </div>
+      ${
+        isManual
+          ? `<div class="cutplan-card__manual-toolbar">
+        <label class="cutplan-card__active-label">Next strip
+          <select class="cutplan-card__active-product" data-row-id="${id}">
+            ${products.map((p) => `<option value="${p.id}" ${p.id === activeProductId ? "selected" : ""}>${escapeHtml((productSpecs[p.id] && productSpecs[p.id].label) || p.id)}</option>`).join("")}
+          </select>
+        </label>
+        <button type="button" class="btn btn--ghost cutplan-card__undo" data-row-id="${id}" ${!r.row._manualStrips.length ? "disabled" : ""}>Undo last strip</button>
+        <button type="button" class="btn btn--ghost cutplan-card__fill" data-row-id="${id}">Fill remainder</button>
+        <button type="button" class="btn btn--ghost cutplan-card__clear" data-row-id="${id}" ${!r.row._manualStrips.length ? "disabled" : ""}>Clear</button>
+      </div>`
+          : ""
+      }
       <div class="cutplan-card__body">
         <svg class="cutplan-card__plan" viewBox="0 0 400 260" preserveAspectRatio="xMidYMid meet"></svg>
-        <ol class="cutplan-card__strips"></ol>
+        <ol class="cutplan-card__strips" tabindex="0"></ol>
       </div>
     `;
     cutPlanList.appendChild(card);
@@ -2701,7 +3010,8 @@ function renderCutPlan(results) {
     const stripsList = card.querySelector(".cutplan-card__strips");
     r.stripLengths.forEach((len, i) => {
       const li = document.createElement("li");
-      li.innerHTML = `<span>Strip ${i + 1}</span><span>cut to ${fmt.m(len)} m</span>`;
+      const productBit = isManual && r.stripProductIds ? ` — ${escapeHtml((productSpecs[r.stripProductIds[i]] && productSpecs[r.stripProductIds[i]].label) || r.stripProductIds[i])}` : "";
+      li.innerHTML = `<span>Strip ${i + 1}${productBit}</span><span>cut to ${fmt.m(len)} m</span>`;
       stripsList.appendChild(li);
 
       (r.cutPlan.stitches[i] || []).forEach((s, si) => {
@@ -2712,8 +3022,29 @@ function renderCutPlan(results) {
       });
     });
 
-    renderCutPlanSvg(card.querySelector(".cutplan-card__plan"), r.cutPlan, r.w, stripRollNumbersFor(r, rollLookup));
+    const svgEl = card.querySelector(".cutplan-card__plan");
+    if (isManual) {
+      renderCutPlanSvgManual(svgEl, r.cutPlan, productSpecs, activeProductId, id);
+    } else {
+      renderCutPlanSvg(svgEl, r.cutPlan, r.w, stripRollNumbersFor(r, rollLookup));
+    }
   });
+}
+
+/** Keeps appending strips of `productId` to a row's manual sequence until the boundary is covered —
+ *  the "Fill remainder" shortcut, for when the rest of a mixed row is just plain single-product fill
+ *  and clicking every remaining strip by hand would be tedious. Same placement rule as one click. */
+function fillRemainder(row, productId, productSpecs) {
+  const spec = productSpecs[productId];
+  if (!spec || !(spec.w > 0)) return;
+  let guard = 0;
+  while (guard++ < 500) {
+    const cp = computeManualCutPlan(row._extentsPoints, row._manualStrips, productSpecs, row._extentsSwapped);
+    if (!cp) break;
+    const lastEnd = cp.stripEnds.length ? cp.stripEnds[cp.stripEnds.length - 1] : 0;
+    if (lastEnd >= cp.faceLength - 1e-6) break;
+    row._manualStrips.push({ productId });
+  }
 }
 
 function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
@@ -2850,6 +3181,148 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
       svg.appendChild(rollText);
     }
   });
+}
+
+/**
+ * The Cut Plan diagram's counterpart for a row in "Build manually" mode: draws each already-committed
+ * strip at its own true position/width, coloured by its own product, plus one dashed, clickable
+ * "ghost" strip previewing exactly where the next click will land — same seam-overlap rule
+ * computeManualCutPlan itself uses, so what's shown is exactly what committing it would produce. The
+ * ghost carries a data-row-id so the delegated click handler below can resolve it back to a row.
+ */
+function renderCutPlanSvgManual(svg, cutPlan, productSpecs, activeProductId, rowId) {
+  const ns = "http://www.w3.org/2000/svg";
+  const face = cutPlan.face;
+  const stripStarts = cutPlan.stripStarts || [];
+  const stripEnds = cutPlan.stripEnds || [];
+  const stripProductIds = cutPlan.stripProductIds || [];
+  const extentsReach = cutPlan.extentsReach || [];
+  const frontReach = cutPlan.frontReach || [];
+
+  const activeSpec = productSpecs[activeProductId];
+  const ghostW = activeSpec && activeSpec.w > 0 ? activeSpec.w : 0;
+  let ghostStart = 0;
+  if (stripStarts.length) {
+    const lastEnd = stripEnds[stripEnds.length - 1];
+    const lastSpec = productSpecs[stripProductIds[stripProductIds.length - 1]];
+    const overlap = lastSpec ? Math.max(activeSpec ? activeSpec.oMin : 0, lastSpec.oMin) : activeSpec ? activeSpec.oMin : 0;
+    ghostStart = lastEnd - overlap;
+  }
+  const ghostEnd = ghostStart + ghostW;
+  let ghostReach = null;
+  if (ghostW > 0) {
+    const inward = inwardNormal(face.dir);
+    const faceOrigin = face.edges[0].from;
+    const vertexStations = cutPlan.poly
+      .map((p) => (p.x - faceOrigin.x) * face.dir.x + (p.y - faceOrigin.y) * face.dir.y)
+      .filter((s) => s >= 0 && s <= face.length)
+      .sort((a, b) => a - b);
+    const station = Math.max(0, Math.min(face.length, (ghostStart + ghostEnd) / 2));
+    ghostReach = stripBoundaryReach(station, ghostW, cutPlan.poly, face, inward, vertexStations);
+  }
+
+  const localPoly = faceAlignedFootprint(cutPlan);
+  const xs = localPoly.map((p) => p.x), ys = localPoly.map((p) => p.y);
+  const minX = Math.min(0, ...xs), maxX = Math.max(face.length, ghostEnd, ...xs);
+  const ghostFar = ghostReach ? ghostReach.farReach : 0;
+  const ghostNear = ghostReach ? ghostReach.nearReach : 0;
+  const minY = Math.min(0, ...ys, ...frontReach, ghostNear);
+  const maxY = Math.max(0, ...extentsReach, ...ys, ghostFar);
+  const W = 400, H = 260, pad = 16;
+  const scale = Math.min((W - pad * 2) / Math.max(maxX - minX, 1e-6), (H - pad * 2) / Math.max(maxY - minY, 1e-6));
+  const tx = (x) => pad + (x - minX) * scale;
+  const ty = (y) => H - pad - (y - minY) * scale;
+
+  svg.innerHTML = "";
+  const poly2d = localPoly.map((p) => `${tx(p.x).toFixed(1)},${ty(p.y).toFixed(1)}`).join(" ");
+  const polyEl = document.createElementNS(ns, "polygon");
+  polyEl.setAttribute("points", poly2d);
+  polyEl.setAttribute("fill", "var(--accent-tint)");
+  polyEl.setAttribute("stroke", "var(--line-strong)");
+  polyEl.setAttribute("stroke-width", "1.5");
+  svg.appendChild(polyEl);
+
+  const labelFontSize = Math.max(4.5, Math.min(7, 165 / Math.max(stripStarts.length, 1)));
+
+  stripStarts.forEach((start, i) => {
+    const end = stripEnds[i];
+    const spec = productSpecs[stripProductIds[i]];
+    const colorVar = spec && spec.colorSlot ? `var(--${spec.colorSlot})` : "var(--accent)";
+    const farReach = extentsReach[i] ?? 0;
+    const nearReach = frontReach[i] ?? 0;
+    const xLeft = tx(start), xRight = tx(end);
+    const yFar = ty(farReach), yNear = ty(nearReach);
+
+    const rect = document.createElementNS(ns, "rect");
+    rect.setAttribute("x", Math.min(xLeft, xRight).toFixed(1));
+    rect.setAttribute("y", yFar.toFixed(1));
+    rect.setAttribute("width", Math.abs(xRight - xLeft).toFixed(1));
+    rect.setAttribute("height", Math.max(0, yNear - yFar).toFixed(1));
+    rect.setAttribute("fill", colorVar);
+    rect.setAttribute("fill-opacity", "0.72");
+    rect.setAttribute("stroke", colorVar);
+    rect.setAttribute("stroke-width", "1");
+    svg.appendChild(rect);
+
+    (cutPlan.stitches[i] || []).forEach((s) => {
+      const station = (start + end) / 2;
+      const sy1 = ty(s.offset), sy2 = ty(s.offset + s.length);
+      const stitchLine = document.createElementNS(ns, "line");
+      stitchLine.setAttribute("x1", tx(station).toFixed(1));
+      stitchLine.setAttribute("y1", sy1.toFixed(1));
+      stitchLine.setAttribute("x2", tx(station).toFixed(1));
+      stitchLine.setAttribute("y2", sy2.toFixed(1));
+      stitchLine.setAttribute("stroke", colorVar);
+      stitchLine.setAttribute("stroke-width", "2");
+      stitchLine.setAttribute("stroke-linecap", "round");
+      stitchLine.setAttribute("stroke-dasharray", "3,2");
+      svg.appendChild(stitchLine);
+    });
+
+    const label = document.createElementNS(ns, "text");
+    const lx = Math.max(6, Math.min(W - 6, tx((start + end) / 2)));
+    const ly = Math.max(6, Math.min(H - 6, yFar - 8));
+    label.setAttribute("x", lx.toFixed(1));
+    label.setAttribute("y", ly.toFixed(1));
+    label.setAttribute("font-size", labelFontSize.toFixed(1));
+    label.setAttribute("font-family", "var(--font-mono)");
+    label.setAttribute("font-weight", "700");
+    label.setAttribute("fill", "var(--ink)");
+    label.setAttribute("text-anchor", "middle");
+    label.textContent = String(i + 1);
+    svg.appendChild(label);
+  });
+
+  if (ghostW > 0 && ghostReach) {
+    const xLeft = tx(ghostStart), xRight = tx(ghostEnd);
+    const yFar = ty(ghostReach.farReach), yNear = ty(ghostReach.nearReach);
+    const colorVar = activeSpec.colorSlot ? `var(--${activeSpec.colorSlot})` : "var(--accent)";
+
+    const ghost = document.createElementNS(ns, "rect");
+    ghost.setAttribute("class", "cutplan-manual-ghost");
+    ghost.setAttribute("data-row-id", rowId);
+    ghost.setAttribute("x", Math.min(xLeft, xRight).toFixed(1));
+    ghost.setAttribute("y", yFar.toFixed(1));
+    ghost.setAttribute("width", Math.abs(xRight - xLeft).toFixed(1));
+    ghost.setAttribute("height", Math.max(0, yNear - yFar).toFixed(1));
+    ghost.setAttribute("fill", colorVar);
+    ghost.setAttribute("fill-opacity", "0.22");
+    ghost.setAttribute("stroke", colorVar);
+    ghost.setAttribute("stroke-width", "1.5");
+    ghost.setAttribute("stroke-dasharray", "4,3");
+    svg.appendChild(ghost);
+
+    const hint = document.createElementNS(ns, "text");
+    hint.setAttribute("x", tx((ghostStart + ghostEnd) / 2).toFixed(1));
+    hint.setAttribute("y", Math.max(8, ty(ghostReach.farReach) - 6).toFixed(1));
+    hint.setAttribute("font-size", "8");
+    hint.setAttribute("font-family", "var(--font-mono)");
+    hint.setAttribute("fill", colorVar);
+    hint.setAttribute("text-anchor", "middle");
+    hint.setAttribute("pointer-events", "none");
+    hint.textContent = "click to place";
+    svg.appendChild(hint);
+  }
 }
 
 /* ============================================================
@@ -3510,14 +3983,18 @@ document.getElementById("exportBtn").addEventListener("click", () => {
     "RL,Product,Face length (m),Embedment (m),Strips,Overlap (mm),Material width (m),Area (m2),Theoretical area (m2),Lift thickness (m),Fill volume (m3),Source",
   ];
   results.forEach((r) => {
+    const isMixed = !!(r.cutPlan && r.cutPlan.manual);
     lines.push(
       [
         csvEscape(r.rl),
-        csvEscape(r.productLabel),
+        // A manually built row can mix products strip-by-strip — the per-row Product column can't
+        // show one name for that, so it's flagged "Mixed" here; the full strip-by-strip breakdown is
+        // in the roll cutting schedule section below, where each piece is labelled by its own product.
+        csvEscape(isMixed ? "Mixed" : r.productLabel),
         r.L.toFixed(3),
         r.mode === "extents" ? "variable" : r.embed.toFixed(3),
         r.n,
-        Math.round(r.overlap * 1000),
+        r.overlap != null ? Math.round(r.overlap * 1000) : "",
         r.materialWidth.toFixed(3),
         r.area.toFixed(3),
         r.theoreticalArea.toFixed(3),
@@ -3749,6 +4226,12 @@ function buildStateSnapshot() {
     extentsSwapped: !!row._extentsSwapped,
     batteredLevel: !!row._batteredLevel,
     product: row.querySelector(".product-select").value,
+    // A manually built mixed-product sequence — null when the row is on ordinary automatic layout.
+    // _manualStripsSaved carries a sequence built earlier and since toggled off back to automatic, so
+    // reopening the saved project doesn't lose it even though it's not currently active.
+    manualStrips: row._manualStrips || null,
+    manualStripsSaved: row._manualStripsSaved || null,
+    manualActiveProduct: row._manualActiveProduct || null,
   }));
   return {
     version: 2,
@@ -3827,6 +4310,9 @@ function applyStateSnapshot(state) {
       applyExtents(row, r.extentsPoints);
       row._extentsSwapped = !!r.extentsSwapped;
       row._batteredLevel = !!r.batteredLevel;
+      if (Array.isArray(r.manualStrips)) row._manualStrips = r.manualStrips;
+      if (Array.isArray(r.manualStripsSaved)) row._manualStripsSaved = r.manualStripsSaved;
+      if (r.manualActiveProduct) row._manualActiveProduct = r.manualActiveProduct;
     }
   });
 
