@@ -2010,6 +2010,17 @@ function computeAndRender() {
       } else {
         const p = productFor(row);
         cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle, refDir, packSide, stripSide) : null;
+        // How many stitch patches EVERY candidate face would produce, not just the active one — lets
+        // the Face picker show the consequence of each option up front (see renderCutPlan) instead of
+        // the user clicking through them blind to find the one with zero patches.
+        if (cp) {
+          const chains = candidateFaceChains(row._extentsPoints);
+          const activeIdx = ((row._faceCycle || 0) % chains.length + chains.length) % chains.length;
+          row._faceStitchCounts = chains.map((_, i) => {
+            const altCp = i === activeIdx ? cp : computeCutPlan(row._extentsPoints, p.w, p.oMin, i, refDir, packSide, stripSide);
+            return altCp.stitches.reduce((s, arr) => s + arr.length, 0);
+          });
+        }
       }
       if (cp) {
         cutPlanByRow.set(row, cp);
@@ -3333,6 +3344,7 @@ function renderCutPlan(results) {
     // enough to tell candidates apart at a glance (the diagram/meta line confirms which one landed).
     const faceChains = candidateFaceChains(r.row._extentsPoints);
     const faceIdx = ((r.row._faceCycle || 0) % faceChains.length + faceChains.length) % faceChains.length;
+    const faceStitchCounts = r.row._faceStitchCounts;
 
     card.innerHTML = `
       <div class="cutplan-card__head">
@@ -3340,7 +3352,13 @@ function renderCutPlan(results) {
         <span class="cutplan-card__meta">${metaParts.join(" · ")}</span>
         <label class="cutplan-card__face-label">Face
           <select class="cutplan-card__face-select" data-row-id="${id}">
-            ${faceChains.map((c, i) => `<option value="${i}" ${i === faceIdx ? "selected" : ""}>${fmt.m(c.length)} m${i === 0 ? " · longest" : ""}</option>`).join("")}
+            ${faceChains
+              .map((c, i) => {
+                const sc = faceStitchCounts ? faceStitchCounts[i] : null;
+                const stitchLabel = sc == null ? "" : sc === 0 ? " · 0 stitches" : ` · ${sc} stitch${sc === 1 ? "" : "es"}`;
+                return `<option value="${i}" ${i === faceIdx ? "selected" : ""}>${fmt.m(c.length)} m${i === 0 ? " · longest" : ""}${stitchLabel}</option>`;
+              })
+              .join("")}
           </select>
         </label>
         <button type="button" class="btn btn--ghost cutplan-card__manual-toggle" data-row-id="${id}">${isManual ? "Auto layout" : "Build manually"}</button>
@@ -3393,6 +3411,16 @@ function renderCutPlan(results) {
       renderCutPlanSvgManual(svgEl, r.cutPlan, productSpecs, activeProductId, id);
     } else {
       renderCutPlanSvg(svgEl, r.cutPlan, r.w, stripRollNumbersFor(r, rollLookup));
+    }
+    // A dense lift's diagram (see renderCutPlanSvg's W) can need more room than the plan/strip-list
+    // side-by-side split leaves it — rather than force horizontal scrolling to see the rest of it,
+    // drop the strip list below instead so the diagram gets the card's FULL width to lay out in.
+    // Measured against the scroll wrapper's width now (before switching), since that's the same
+    // width the diagram was actually drawn against — switching first would move the goalposts.
+    const scrollWrap = card.querySelector(".cutplan-card__plan-scroll");
+    const svgWidth = parseFloat(svgEl.getAttribute("width")) || 0;
+    if (svgWidth > scrollWrap.clientWidth + 1) {
+      card.querySelector(".cutplan-card__body").classList.add("cutplan-card__body--stacked");
     }
   });
 }
@@ -3490,8 +3518,28 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
     // physical overlap width — the real lap is already called out in the "lapping each by Xmm"
     // instruction elsewhere, and drawing every strip's true overlapping width here just doubles up
     // every seam line and makes a 30+ strip diagram unreadable.
-    const leftSeam = i === 0 ? 0 : seamAfter(i - 1);
-    const rightSeam = i === cutLengths.length - 1 ? face.length : seamAfter(i);
+    //
+    // seamAfter(i) is a midpoint between ARRAY-adjacent strips i and i+1 — normally also their
+    // SPATIAL neighbour relationship (index increasing left to right), but "Strip 1 starts from
+    // Right" (see computeCutPlan's mirror) reverses stripStarts to decreasing instead, without
+    // reordering the array itself. Blindly treating "seam before index i" as the left edge and "seam
+    // after index i" as the right edge then draws each strip almost the full face width, backwards —
+    // comparing both candidate seams against this strip's own station (whichever is smaller really
+    // is its left edge) keeps this correct in both directions.
+    const prevSeam = i === 0 ? null : seamAfter(i - 1);
+    const nextSeam = i === cutLengths.length - 1 ? null : seamAfter(i);
+    let leftSeam, rightSeam;
+    if (prevSeam == null && nextSeam == null) {
+      leftSeam = 0;
+      rightSeam = face.length;
+    } else if (prevSeam == null) {
+      if (station <= nextSeam) { leftSeam = 0; rightSeam = nextSeam; } else { leftSeam = nextSeam; rightSeam = face.length; }
+    } else if (nextSeam == null) {
+      if (station >= prevSeam) { leftSeam = prevSeam; rightSeam = face.length; } else { leftSeam = 0; rightSeam = prevSeam; }
+    } else {
+      leftSeam = Math.min(prevSeam, nextSeam);
+      rightSeam = Math.max(prevSeam, nextSeam);
+    }
     // Strips are drawn as real rectangles — square cut, same convention as the manual takeoffs —
     // running from the true front boundary out to the true far boundary (sampled across the strip's
     // own width in computeCutPlan), so there's never a gap between the grid and the extents on either side.

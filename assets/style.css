@@ -230,8 +230,8 @@ h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
     min-width:690px, scrollable on its own via .table-scroll) blow the whole page wider than the
     viewport instead of scrolling internally — this lets the panel actually shrink to its track. */
 }
-.panel--summary { position: sticky; top: 1.1rem; }
-@media (max-width: 1080px) { .panel--summary { position: static; } }
+.panel--summary, .panel--settings { position: sticky; top: 1.1rem; }
+@media (max-width: 1080px) { .panel--summary, .panel--settings { position: static; } }
 
 .panel__heading {
   font-size: 0.72rem;
@@ -972,6 +972,10 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 .cutplan-card__body { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
 @media (max-width: 900px) { .cutplan-card__body { grid-template-columns: 1fr; } }
+/* A dense lift's diagram needs more width than the side-by-side split has room for — see the
+   svgWidth check in renderCutPlan — so it drops to full width, strip list below, instead of the
+   diagram being forced to scroll horizontally to see the rest of it. */
+.cutplan-card__body--stacked { grid-template-columns: 1fr; }
 /* The scroll wrapper lets the diagram grow wider than its column for a dense (30+ strip) lift — see
    renderCutPlanSvg, which sizes the svg's own viewBox/width so every roll-number circle keeps enough
    room to stay legible instead of shrinking text below what's readable. min-width (not width) on the
