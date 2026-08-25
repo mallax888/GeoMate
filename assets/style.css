@@ -1002,6 +1002,36 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 .cutplan-card__strips li:last-child { border-bottom: none; }
 .cutplan-card__strips li.is-stitch { color: var(--accent-strong); background: var(--accent-tint); font-style: italic; }
+.cutplan-card__strip-len {
+  width: 3.6em;
+  font: inherit;
+  font-family: var(--font-mono);
+  color: inherit;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0.05rem 0.25rem;
+  text-align: right;
+}
+.cutplan-card__strip-product {
+  font: inherit;
+  font-family: var(--font-body);
+  color: inherit;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0.05rem 0.25rem;
+  max-width: 8em;
+}
+.cutplan-card__finished-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--accent-strong);
+  background: var(--accent-tint);
+  border-radius: 4px;
+  padding: 0.3rem 0.6rem;
+  margin-left: auto;
+}
 
 .cutplan-list-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin: 0.6rem 0; }
 /* #cutPlanEmpty and the print button are mutually exclusive (one hides exactly when the other

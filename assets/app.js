@@ -660,7 +660,13 @@ function computeManualCutPlan(rawPoints, manualStrips, productSpecs, faceCycle, 
     cursorEnd = end;
     const station = Math.max(0, Math.min(face.length, (start + end) / 2));
 
-    const r = stripBoundaryReach(station, w, poly, face, inward, vertexStations);
+    // A manually-set cut length (see the Cut Plan card's strip list) overrides the boundary-driven
+    // reach entirely — it's a deliberate correction, so it draws as a plain flush rectangle to that
+    // length with no stitch, not a geometry pocket the app is still trying to fill for you.
+    const r =
+      strip.length > 0
+        ? { cutLength: strip.length, stitches: [], farReach: strip.length, nearReach: 0 }
+        : stripBoundaryReach(station, w, poly, face, inward, vertexStations);
     cutLengths.push(r.cutLength);
     stitches.push(r.stitches);
     extentsReach.push(r.farReach);
@@ -2793,6 +2799,10 @@ function switchTab(which) {
   });
   document.getElementById("addLiftBtn").hidden = which !== "takeoff";
   if (which === "view3d" && window.__geogridResults) render3D(window.__geogridResults);
+  // Cut Plan cards can be built while this tab is hidden (e.g. an autosaved project restoring on
+  // page load) — refreshCutPlanStacking's width check can't measure anything real until the tab is
+  // actually visible, so redo it now that it is.
+  if (which === "cutplan") refreshCutPlanStacking();
 }
 
 function renderSequence(results) {
@@ -3297,6 +3307,31 @@ cutPlanList.addEventListener("change", (e) => {
     return;
   }
 
+  const productInput = e.target.closest(".cutplan-card__strip-product");
+  if (productInput) {
+    const row = window.__geogridRowsById.get(productInput.dataset.rowId);
+    const i = parseInt(productInput.dataset.stripIndex, 10);
+    if (row && row._manualStrips && row._manualStrips[i]) {
+      row._manualStrips[i].productId = productInput.value;
+      computeAndRender();
+    }
+    return;
+  }
+
+  const lenInput = e.target.closest(".cutplan-card__strip-len");
+  if (lenInput) {
+    const row = window.__geogridRowsById.get(lenInput.dataset.rowId);
+    const i = parseInt(lenInput.dataset.stripIndex, 10);
+    if (row && row._manualStrips && row._manualStrips[i]) {
+      const v = parseFloat(lenInput.value);
+      // Blank/zero/invalid clears the override back to "auto" (the boundary-driven reach) rather
+      // than pinning the strip at a meaningless length — same as never having typed one.
+      row._manualStrips[i].length = v > 0 ? v : null;
+      computeAndRender();
+    }
+    return;
+  }
+
   const select = e.target.closest(".cutplan-card__active-product");
   if (!select) return;
   const row = window.__geogridRowsById.get(select.dataset.rowId);
@@ -3337,6 +3372,10 @@ function renderCutPlan(results) {
       activeProductId = r.stripProductIds && r.stripProductIds.length ? r.stripProductIds[r.stripProductIds.length - 1] : r.product;
     }
     r.row._manualActiveProduct = activeProductId; // remembered across renders
+    // Same "no room left" check renderCutPlanSvgManual uses to drop its click-to-place ghost — drives
+    // the toolbar's "Fully built" badge in the same spot instead of leaving that space looking empty
+    // once there's nothing left to place.
+    const manualFinished = isManual && r.cutPlan.stripEnds && r.cutPlan.stripEnds.length > 0 && r.cutPlan.stripEnds[r.cutPlan.stripEnds.length - 1] >= r.cutPlan.faceLength - 1e-6;
 
     // Every candidate edge, longest first — an option's position here IS its faceCycle index (see
     // pickFaceByIndex), so picking one directly jumps to that edge instead of clicking "Swap
@@ -3372,8 +3411,9 @@ function renderCutPlan(results) {
           </select>
         </label>
         <button type="button" class="btn btn--ghost cutplan-card__undo" data-row-id="${id}" ${!r.row._manualStrips.length ? "disabled" : ""}>Undo last strip</button>
-        <button type="button" class="btn btn--ghost cutplan-card__fill" data-row-id="${id}">Fill remainder</button>
+        <button type="button" class="btn btn--ghost cutplan-card__fill" data-row-id="${id}" ${manualFinished ? "disabled" : ""}>Fill remainder</button>
         <button type="button" class="btn btn--ghost cutplan-card__clear" data-row-id="${id}" ${!r.row._manualStrips.length ? "disabled" : ""}>Clear</button>
+        ${manualFinished ? `<span class="cutplan-card__finished-badge">✓ Fully built — edit any strip's length or product below</span>` : ""}
       </div>`
           : ""
       }
@@ -3393,9 +3433,24 @@ function renderCutPlan(results) {
     const rollNumsForList = isManual ? null : stripRollNumbersFor(r, rollLookup);
     r.stripLengths.forEach((len, i) => {
       const li = document.createElement("li");
-      const productBit = isManual && r.stripProductIds ? ` — ${escapeHtml((productSpecs[r.stripProductIds[i]] && productSpecs[r.stripProductIds[i]].label) || r.stripProductIds[i])}` : "";
+      // Changing a placed strip's product reflows every strip after it (their own station depends on
+      // the running end-of-sequence position, which its width feeds into) exactly the same way
+      // inserting or undoing one already does — computeManualCutPlan always rebuilds the whole
+      // sequence from _manualStrips, so this is just as safe as any other edit to the list.
+      const productBit = isManual
+        ? ` — <select class="cutplan-card__strip-product" data-row-id="${id}" data-strip-index="${i}">${products
+            .map((p) => `<option value="${p.id}" ${p.id === r.stripProductIds[i] ? "selected" : ""}>${escapeHtml((productSpecs[p.id] && productSpecs[p.id].label) || p.id)}</option>`)
+            .join("")}</select>`
+        : "";
       const rollBit = rollNumsForList && rollNumsForList[i] ? ` — roll ${escapeHtml(rollNumsForList[i])}` : "";
-      li.innerHTML = `<span>Strip ${i + 1}${productBit}${rollBit}</span><span>cut to ${fmt.m(len)} m</span>`;
+      // A manually built strip's length is otherwise entirely computed from where it lands against
+      // the boundary — no way to say "actually, cut this one to 8 m" if the crew's real cut differs
+      // from that. An explicit override (see computeManualCutPlan) lets any placed strip, finished
+      // build or not, be corrected directly here instead of undoing back to it and re-placing.
+      const lenBit = isManual
+        ? `cut to <input type="number" class="cutplan-card__strip-len" data-row-id="${id}" data-strip-index="${i}" value="${len.toFixed(2)}" step="0.05" min="0.05"> m`
+        : `cut to ${fmt.m(len)} m`;
+      li.innerHTML = `<span>Strip ${i + 1}${productBit}${rollBit}</span><span>${lenBit}</span>`;
       stripsList.appendChild(li);
 
       (r.cutPlan.stitches[i] || []).forEach((s, si) => {
@@ -3412,16 +3467,27 @@ function renderCutPlan(results) {
     } else {
       renderCutPlanSvg(svgEl, r.cutPlan, r.w, stripRollNumbersFor(r, rollLookup));
     }
-    // A dense lift's diagram (see renderCutPlanSvg's W) can need more room than the plan/strip-list
-    // side-by-side split leaves it — rather than force horizontal scrolling to see the rest of it,
-    // drop the strip list below instead so the diagram gets the card's FULL width to lay out in.
-    // Measured against the scroll wrapper's width now (before switching), since that's the same
-    // width the diagram was actually drawn against — switching first would move the goalposts.
+  });
+  // A dense lift's diagram (see renderCutPlanSvg's W) can need more room than the plan/strip-list
+  // side-by-side split leaves it — rather than force horizontal scrolling to see the rest of it,
+  // drop the strip list below instead so the diagram gets the card's FULL width to lay out in. Done
+  // as a separate pass over the finished cards (not measured inline above) because this whole render
+  // can run while the Cut Plan tab itself is hidden (e.g. restoring an autosaved project on page
+  // load lands on the Takeoff table tab first) — a hidden ancestor collapses clientWidth to 0 for
+  // EVERY card, which used to make every single one stack regardless of how many strips it had. See
+  // switchTab, which re-runs this once the tab is actually visible to measure and lay out.
+  refreshCutPlanStacking();
+}
+
+function refreshCutPlanStacking() {
+  document.querySelectorAll(".cutplan-card").forEach((card) => {
     const scrollWrap = card.querySelector(".cutplan-card__plan-scroll");
+    const svgEl = card.querySelector(".cutplan-card__plan");
+    const body = card.querySelector(".cutplan-card__body");
+    if (!scrollWrap || !svgEl || !body) return;
+    if (scrollWrap.clientWidth === 0) return; // still hidden/unlaid-out — nothing reliable to measure yet
     const svgWidth = parseFloat(svgEl.getAttribute("width")) || 0;
-    if (svgWidth > scrollWrap.clientWidth + 1) {
-      card.querySelector(".cutplan-card__body").classList.add("cutplan-card__body--stacked");
-    }
+    body.classList.toggle("cutplan-card__body--stacked", svgWidth > scrollWrap.clientWidth + 1);
   });
 }
 
@@ -3668,8 +3734,13 @@ function renderCutPlanSvgManual(svg, cutPlan, productSpecs, activeProductId, row
   const extentsReach = cutPlan.extentsReach || [];
   const frontReach = cutPlan.frontReach || [];
 
+  // Once the last placed strip already reaches (or overshoots) the far end of the face, the build is
+  // done — no more room for a "next" strip, so the click-to-place ghost preview has nothing real left
+  // to show (it used to keep drawing a degenerate sliver right at the edge). renderCutPlan uses this
+  // return value to show a "fully built" state instead of the empty space where the ghost used to be.
+  const finished = stripEnds.length > 0 && stripEnds[stripEnds.length - 1] >= face.length - 1e-6;
   const activeSpec = productSpecs[activeProductId];
-  const ghostW = activeSpec && activeSpec.w > 0 ? activeSpec.w : 0;
+  const ghostW = !finished && activeSpec && activeSpec.w > 0 ? activeSpec.w : 0;
   let ghostStart = 0;
   if (stripStarts.length) {
     const lastEnd = stripEnds[stripEnds.length - 1];
@@ -3735,7 +3806,11 @@ function renderCutPlanSvgManual(svg, cutPlan, productSpecs, activeProductId, row
     rect.setAttribute("width", Math.abs(xRight - xLeft).toFixed(1));
     rect.setAttribute("height", Math.max(0, yNear - yFar).toFixed(1));
     rect.setAttribute("fill", colorVar);
-    rect.setAttribute("fill-opacity", "0.72");
+    // Colour still identifies the PRODUCT (mixed-product builds need that), but adjacent strips of
+    // the very same product otherwise blend into one solid block with no visible seam between them —
+    // alternating opacity the same way the automatic layout alternates hue keeps every strip
+    // separable at a glance either way.
+    rect.setAttribute("fill-opacity", i % 2 === 0 ? "0.78" : "0.48");
     rect.setAttribute("stroke", colorVar);
     rect.setAttribute("stroke-width", "1");
     svg.appendChild(rect);
@@ -3808,6 +3883,7 @@ function renderCutPlanSvgManual(svg, cutPlan, productSpecs, activeProductId, row
     hint.textContent = fitsFull ? fullHintText : "+";
     svg.appendChild(hint);
   }
+  return finished;
 }
 
 /* ============================================================
