@@ -678,6 +678,13 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--accent-strong);
+  /* Anchors the number to the BOTTOM of its box instead of sitting right under the label — a longer
+     label (e.g. "Rolls to order") can wrap to two lines next to a shorter one in the same row (e.g.
+     "Material cost") that stays on one, and the grid stretches both boxes to match heights either
+     way, so without this the two numbers end up sitting at different heights side by side. Pushing
+     the value down to consume the leftover space keeps every value in a row lined up on one baseline
+     regardless of how its own label happened to wrap. */
+  margin-top: auto;
 }
 .stat__value small { font-size: 0.65rem; font-weight: 400; color: var(--ink-muted); }
 .stat__hint { font-size: 0.62rem; color: var(--ink-muted); margin-top: 0.1rem; }

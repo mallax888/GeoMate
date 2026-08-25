@@ -427,6 +427,17 @@ function roundUpToStep(value, step) {
   return Math.ceil(value / step - 1e-9) * step;
 }
 
+// Nothing shorter than this is a real, installable piece — a true reach of just a centimetre or two
+// (right where a boundary barely grazes past the face) isn't "cut it down to a sliver," it's "there's
+// nothing there worth a separate cut," so it's brought up to this floor instead. Also fixes a genuine
+// bug in roundUpToStep alone: ROUND_SNAP_TOL's "snap down to the step below" logic had nothing to
+// snap down TO for a value already inside the very first step, so a couple of centimetres of true
+// reach was rounding all the way down to a nonsensical 0 m "strip."
+const MIN_STRIP_LENGTH = 2;
+function roundToPracticalLength(value, step) {
+  return Math.max(MIN_STRIP_LENGTH, roundUpToStep(value, step));
+}
+
 /**
  * Full cut plan for one lift's extents polygon: face length, strip count/overlap, and each strip's
  * clipped cut length. Every strip is cut with one straight, square (perpendicular) trim from a single
@@ -476,14 +487,15 @@ function stripBoundaryReach(station, w, poly, face, inward, vertexStations) {
     }
   });
 
-  // Reported/cut length: the true reach rounded up to a practical site number. Rounding only ever
-  // goes up, so this can end up slightly longer than the true extents reach — that overshoot is
-  // exactly the bit that needs trimming back on site to avoid burying wasted material past the
-  // design boundary, shown separately in the diagram rather than folded silently into this number.
-  const cutLength = roundUpToStep(farReach, ROUND_STEP);
+  // Reported/cut length: the true reach rounded up to a practical site number, never below
+  // MIN_STRIP_LENGTH. Rounding only ever goes up, so this can end up longer than the true extents
+  // reach — that overshoot is exactly the bit that needs trimming back on site to avoid burying
+  // wasted material past the design boundary, shown separately in the diagram rather than folded
+  // silently into this number.
+  const cutLength = roundToPracticalLength(farReach, ROUND_STEP);
   const stitches = segments
     .filter((s) => s !== main && s.end - s.start > STITCH_MIN)
-    .map((s) => ({ offset: roundUpToStep(s.start, ROUND_STEP), length: roundUpToStep(s.end - s.start, ROUND_STEP) }));
+    .map((s) => ({ offset: roundUpToStep(s.start, ROUND_STEP), length: roundToPracticalLength(s.end - s.start, ROUND_STEP) }));
 
   return { cutLength, farReach, nearReach, stitches };
 }
