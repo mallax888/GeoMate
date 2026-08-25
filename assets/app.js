@@ -126,6 +126,48 @@ function calcLift(L, w, oMin) {
   return { n, overlap, materialWidth, excessWidth: materialWidth - L };
 }
 
+/**
+ * The "pack from one side" alternative to calcLift's default (spread the leftover evenly) and the
+ * Extend-face-length setting (grow the reported face length): every strip is full width w at exactly
+ * oMin overlap, starting flush against whichever `side` is chosen — strip 1 is always the one flush
+ * against that side, so it's the first one the crew actually rolls out. Full-width strips step in at
+ * the exact pitch until the next one would run past L; whatever's left becomes one narrower closing
+ * strip at the opposite side, trimmed to reach L exactly, at that same exact pitch from its neighbour
+ * — there's nothing beyond the true edge for it to overlap with, hence "no overlap" right at the end.
+ * Returns per-strip start/width arrays (used directly as station/width in computeCutPlan, or reduced
+ * to just widths for a manually-typed length, which has no boundary to clip against).
+ */
+function packStripsFromSide(L, w, oMin, side) {
+  if (!(L > 0) || !(w > 0) || oMin < 0 || oMin >= w) return null;
+  if (L <= w) return { n: 1, starts: [0], widths: [w], overlap: 0, materialWidth: w, excessWidth: w - L };
+
+  const pitch = w - oMin;
+  const starts = [];
+  const widths = [];
+  let cursor = 0;
+  while (cursor + w <= L + 1e-9) {
+    starts.push(cursor);
+    widths.push(w);
+    cursor += pitch;
+  }
+  const remaining = L - cursor;
+  if (remaining > 1e-6) {
+    starts.push(cursor);
+    widths.push(remaining);
+  }
+  if (side === "right") {
+    // Mirrors every strip's position about the face's midpoint, in place — index 0 stays "Strip 1"
+    // but its position flips from flush-left to flush-right, and the narrower closing strip (still
+    // whichever index it already was) ends up at the opposite (left) side instead.
+    for (let i = 0; i < starts.length; i++) starts[i] = L - starts[i] - widths[i];
+  }
+  // materialWidth sums the strips' TRUE widths (the closing strip narrower than a full roll width),
+  // not n*w like calcLift's — that closing piece genuinely needs less material, not a full roll's
+  // width trimmed down and wasted.
+  const materialWidth = widths.reduce((s, x) => s + x, 0);
+  return { n: starts.length, starts, widths, overlap: oMin, materialWidth, excessWidth: materialWidth - L };
+}
+
 /** Arc length of a pasted polyline, "x,y" or "x,y,z" per line (comma or whitespace separated). */
 function parseCoordsLength(text) {
   const pts = text
@@ -421,15 +463,16 @@ function stripBoundaryReach(station, w, poly, face, inward, vertexStations) {
   return { cutLength, farReach, nearReach, stitches };
 }
 
-function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null) {
+function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide = null) {
   const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
   const chains = chainEdges(poly);
   if (chains.length < 2) return null;
   const { face, back } = faceCycle ? pickFaceByIndex(chains, faceCycle) : pickFaceAndBack(chains, refDir);
 
-  const result = calcLift(face.length, w, oMin);
+  const packed = packSide ? packStripsFromSide(face.length, w, oMin, packSide) : null;
+  const result = packed || calcLift(face.length, w, oMin);
   if (!result) return null;
-  const pitch = result.n > 1 ? w - result.overlap : 0;
+  const pitch = !packed && result.n > 1 ? w - result.overlap : 0;
 
   // Fixed for the whole lift, not recomputed per strip from a locally-varying tangent — every strip
   // is parallel, which is what "grids can only ever be square" means in practice.
@@ -449,13 +492,19 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null) {
   const stitches = [];
   const extentsReach = [];
   const frontReach = [];
+  const stripWidths = [];
+  const stripStarts = [];
   for (let i = 0; i < result.n; i++) {
-    const station = Math.max(0, Math.min(face.length, i * pitch + w / 2));
-    const r = stripBoundaryReach(station, w, poly, face, inward, vertexStations);
+    const width = packed ? packed.widths[i] : w;
+    const start = packed ? packed.starts[i] : i * pitch;
+    const station = Math.max(0, Math.min(face.length, start + width / 2));
+    const r = stripBoundaryReach(station, width, poly, face, inward, vertexStations);
     cutLengths.push(r.cutLength);
     stitches.push(r.stitches);
     extentsReach.push(r.farReach);
     frontReach.push(r.nearReach);
+    stripWidths.push(width);
+    stripStarts.push(start);
   }
 
   return {
@@ -465,11 +514,13 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null) {
     faceLength: face.length,
     n: result.n,
     overlap: result.overlap,
+    stripStarts,
     materialWidth: result.materialWidth,
     cutLengths,
     stitches,
     extentsReach,
     frontReach,
+    stripWidths,
     polygonArea: Math.abs(signedArea(poly)),
   };
 }
@@ -1071,7 +1122,18 @@ const settingsInputs = {
   installRate: document.getElementById("installRate"),
   baseLevel: document.getElementById("baseLevel"),
   extendFace: document.getElementById("extendFaceToggle"),
+  packSide: document.getElementById("packSideToggle"),
+  packSideValue: document.getElementById("packSide"),
 };
+
+const packSideField = document.getElementById("packSideField");
+const packSideHint = document.getElementById("packSideHint");
+settingsInputs.packSide.addEventListener("change", () => {
+  packSideField.hidden = !settingsInputs.packSide.checked;
+  packSideHint.hidden = !settingsInputs.packSide.checked;
+  computeAndRender();
+});
+settingsInputs.packSideValue.addEventListener("change", computeAndRender);
 
 /* ============================================================
    Products — an open-ended, editable list of rolled products (RE580, Strata, or whatever a job
@@ -1318,6 +1380,7 @@ function readSettings() {
     // perfectly real elevation and can't double as "not set".
     baseLevel: Number.isFinite(baseLevelRaw) ? baseLevelRaw : null,
     extendFace: settingsInputs.extendFace.checked,
+    packSide: settingsInputs.packSide.checked ? settingsInputs.packSideValue.value : null,
   };
 }
 
@@ -1590,12 +1653,18 @@ function renderDiagram(svg, L, result, w, W = 240, H = 34) {
   const pad = 2;
   const usableW = W - pad * 2;
   const scale = usableW / Math.max(L, result.materialWidth);
-  const stripPx = w * scale;
   const pitchPx = n > 1 ? (w - overlap) * scale : 0;
   const ns = "http://www.w3.org/2000/svg";
 
+  // "Pack from one side" (packStripsFromSide) can leave one strip — always at most one — narrower
+  // than the rest, with real per-strip positions in result.starts/widths; every other packing mode
+  // stays uniform, reconstructed from the single pitch same as always.
+  const starts = result.starts || Array.from({ length: n }, (_, i) => i * (w - overlap));
+  const widths = result.widths || Array.from({ length: n }, () => w);
+
   for (let i = 0; i < n; i++) {
-    const x = pad + i * pitchPx;
+    const x = pad + starts[i] * scale;
+    const stripPx = widths[i] * scale;
     const rect = document.createElementNS(ns, "rect");
     rect.setAttribute("x", x.toFixed(2));
     rect.setAttribute("y", 6);
@@ -1609,12 +1678,15 @@ function renderDiagram(svg, L, result, w, W = 240, H = 34) {
     svg.appendChild(rect);
 
     if (i > 0) {
-      const overlapPx = stripPx - pitchPx;
+      // The true overlap zone with the previous strip — where this one starts to where the last one
+      // ended — rather than assuming every strip is exactly `pitchPx` apart.
+      const prevEnd = starts[i - 1] + widths[i - 1];
+      const overlapPx = Math.max(0, (prevEnd - starts[i]) * scale);
       const ox = x;
       const orect = document.createElementNS(ns, "rect");
       orect.setAttribute("x", ox.toFixed(2));
       orect.setAttribute("y", 6);
-      orect.setAttribute("width", Math.max(overlapPx, 0).toFixed(2));
+      orect.setAttribute("width", overlapPx.toFixed(2));
       orect.setAttribute("height", 16);
       orect.setAttribute("fill", "var(--accent-strong)");
       orect.setAttribute("opacity", "0.55");
@@ -1801,7 +1873,7 @@ function validateProductSpec(p, rollLengthRawStr) {
 }
 
 function computeAndRender() {
-  const { rollGroupSize, installRate, baseLevel, extendFace } = readSettings();
+  const { rollGroupSize, installRate, baseLevel, extendFace, packSide } = readSettings();
   const productSpecs = readProductSpecs();
   const fallbackProduct = productSpecs[products[0]?.id];
   const productFor = (row) => {
@@ -1847,7 +1919,7 @@ function computeAndRender() {
         cp = computeManualCutPlan(row._extentsPoints, row._manualStrips, productSpecs, row._faceCycle, refDir);
       } else {
         const p = productFor(row);
-        cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle, refDir) : null;
+        cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle, refDir, packSide) : null;
       }
       if (cp) {
         cutPlanByRow.set(row, cp);
@@ -1935,7 +2007,8 @@ function computeAndRender() {
       const embed = parseFloat(embedRaw) || 0;
       embedInput.parentElement.hidden = false;
       embedRangeEl.textContent = "";
-      result = p.oMin < p.w ? calcLift(L, p.w, p.oMin) : null;
+      result =
+        p.oMin < p.w ? (packSide ? packStripsFromSide(L, p.w, p.oMin, packSide) : calcLift(L, p.w, p.oMin)) : null;
       // Extend mode: pin every seam to exactly the minimum overlap and let the face length itself
       // grow to whatever that many strips actually cover, instead of spreading the leftover a whole
       // strip count doesn't quite divide evenly into as extra overlap on every seam. Only for a
@@ -1944,8 +2017,11 @@ function computeAndRender() {
       // untouched (unlike extents mode, which permanently owns that field) — this is meant to be a
       // freely-toggleable comparison, not a one-way overwrite of the typed approximate value, so
       // switching the setting back off must still find the number the user actually typed.
+      // "Pack from one side" (see packStripsFromSide) already keeps every seam at exactly the
+      // minimum on its own terms — nothing left to extend the face length over — so it takes
+      // priority whenever both settings happen to be on at once.
       const faceExtendNoteEl = row.querySelector(".face-extend-note");
-      if (result && extendFace && result.n > 1) {
+      if (!packSide && result && extendFace && result.n > 1) {
         const extendedL = result.n * (p.w - p.oMin) + p.oMin;
         if (extendedL > L + 1e-9) {
           L = extendedL;
@@ -2001,10 +2077,11 @@ function computeAndRender() {
 
     strips.textContent = result.n;
     overlapCell.textContent = result.n > 1 ? (result.overlap != null ? `${fmt.mm(result.overlap)} mm` : "mixed") : "—";
-    // Every strip's own width — uniform (the row's one product) for an automatic row, per-strip for a
-    // manually built one. Threading this through as one array lets area/roll-packing/etc below treat
-    // both cases the same way instead of branching on cutPlan.manual at every consumer.
-    const stripWidths = cutPlan && cutPlan.manual ? cutPlan.stripWidths : stripLengths.map(() => p.w);
+    // Every strip's own width — uniform (the row's one product) for a plain automatic row, per-strip
+    // for a manually built one OR an automatic row using "Pack from one side" (packStripsFromSide),
+    // whose closing strip is narrower than the rest. Threading this through as one array lets
+    // area/roll-packing/etc below treat all three cases the same way instead of branching everywhere.
+    const stripWidths = (cutPlan && cutPlan.stripWidths) || (result && result.widths) || stripLengths.map(() => p.w);
     const stripProductIds = cutPlan && cutPlan.manual ? cutPlan.stripProductIds : stripLengths.map(() => p.id);
     // Stitch patches (extra material for a boundary pocket a strip's single straight cut can't reach)
     // consume grid too, so they count toward area, roll purchasing, and waste stats same as any strip
@@ -2031,6 +2108,7 @@ function computeAndRender() {
       materialWidth: result.materialWidth,
       stripLengths,
       stripWidths,
+      stripStarts: (cutPlan && cutPlan.stripStarts) || result.starts || null,
       stripProductIds,
       stitchLengths,
       area,
@@ -2647,7 +2725,14 @@ function renderSequence(results) {
     if (r.cutPlan && r.cutPlan.manual) {
       renderDiagramManual(svg, r.L, r.cutPlan, productSpecs, 480, 40);
     } else {
-      renderDiagram(svg, r.L, { n: r.n, overlap: r.overlap, materialWidth: r.materialWidth }, r.w, 480, 40);
+      renderDiagram(
+        svg,
+        r.L,
+        { n: r.n, overlap: r.overlap, materialWidth: r.materialWidth, starts: r.stripStarts, widths: r.stripStarts ? r.stripWidths : null },
+        r.w,
+        480,
+        40
+      );
     }
 
     li.querySelector(".sequence-card__installed-input").addEventListener("change", (e) => {
@@ -3230,8 +3315,18 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
   svg.innerHTML = "";
   svg.appendChild(polyEl);
 
-  const pitch = cutLengths.length > 1 ? w - cutPlan.overlap : 0;
-  const stationOf = (i) => Math.max(0, Math.min(face.length, i * pitch + w / 2));
+  // Real per-strip positions/widths (computeCutPlan always fills these in now) — not recomputed from
+  // a single uniform pitch, since "Pack from one side" (packStripsFromSide) can leave one strip
+  // narrower than the rest, and a plain i*pitch formula would draw it as if it were full width.
+  const stripStarts = cutPlan.stripStarts || cutLengths.map((_, i) => i * (cutLengths.length > 1 ? w - cutPlan.overlap : 0));
+  const stripWidths = cutPlan.stripWidths || cutLengths.map(() => w);
+  const stationOf = (i) => Math.max(0, Math.min(face.length, stripStarts[i] + stripWidths[i] / 2));
+  // The midpoint of the TRUE overlap zone between two neighbouring strips (where one ends and the
+  // next starts) — not just the midpoint between their centres, which only happens to land in the
+  // same place when every strip shares one uniform width. Splitting the real overlap zone this way
+  // keeps every strip drawn edge-to-edge with no doubled-up overlap regions cluttering the diagram
+  // (see the comment below), correctly whether the last strip is a narrower closing piece or not.
+  const seamAfter = (i) => (stripStarts[i] + stripWidths[i] + stripStarts[i + 1]) / 2;
   // Strip count doesn't shrink the font below this, so numbers stay every-strip and legible without
   // ever skipping one — dense diagrams get a smaller font instead of thinned labels.
   const labelFontSize = Math.max(4.5, Math.min(7, 165 / Math.max(cutLengths.length, 1)));
@@ -3250,8 +3345,8 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
     // physical overlap width — the real lap is already called out in the "lapping each by Xmm"
     // instruction elsewhere, and drawing every strip's true overlapping width here just doubles up
     // every seam line and makes a 30+ strip diagram unreadable.
-    const leftSeam = i === 0 ? 0 : (stationOf(i - 1) + station) / 2;
-    const rightSeam = i === cutLengths.length - 1 ? face.length : (station + stationOf(i + 1)) / 2;
+    const leftSeam = i === 0 ? 0 : seamAfter(i - 1);
+    const rightSeam = i === cutLengths.length - 1 ? face.length : seamAfter(i);
     // Strips are drawn as real rectangles — square cut, same convention as the manual takeoffs —
     // running from the true front boundary out to the true far boundary (sampled across the strip's
     // own width in computeCutPlan), so there's never a gap between the grid and the extents on either side.
@@ -4435,6 +4530,8 @@ function buildStateSnapshot() {
       installRate: settingsInputs.installRate.value,
       baseLevel: settingsInputs.baseLevel.value,
       extendFace: settingsInputs.extendFace.checked,
+      packSide: settingsInputs.packSide.checked,
+      packSideValue: settingsInputs.packSideValue.value,
     },
     products: snapshotProductRows(),
     rows,
@@ -4464,6 +4561,12 @@ function applyStateSnapshot(state) {
   if (s.installRate != null) settingsInputs.installRate.value = s.installRate;
   if (s.baseLevel != null) settingsInputs.baseLevel.value = s.baseLevel;
   if (s.extendFace != null) settingsInputs.extendFace.checked = !!s.extendFace;
+  if (s.packSideValue != null) settingsInputs.packSideValue.value = s.packSideValue;
+  if (s.packSide != null) {
+    settingsInputs.packSide.checked = !!s.packSide;
+    packSideField.hidden = !s.packSide;
+    packSideHint.hidden = !s.packSide;
+  }
 
   // A project saved before the product list became editable (version 1) stored RE580's spec as
   // fixed settings.* fields and Strata's as a separate top-level strata block instead of a products
@@ -4694,6 +4797,10 @@ document.getElementById("newProjectBtn").addEventListener("click", () => {
   settingsInputs.installRate.value = "";
   settingsInputs.baseLevel.value = "";
   settingsInputs.extendFace.checked = false;
+  settingsInputs.packSide.checked = false;
+  settingsInputs.packSideValue.value = "left";
+  packSideField.hidden = true;
+  packSideHint.hidden = true;
 
   renderProductTable(defaultProductRows());
   resetLinerInputs();
