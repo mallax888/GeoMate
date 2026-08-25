@@ -93,7 +93,7 @@ function setRollCut(rollNum, val) {
 function updateProgressStats() {
   const results = window.__geogridResults || [];
   const rolls = window.__geogridRolls || [];
-  const liftsDone = results.filter((r) => isLiftInstalled(r.rl)).length;
+  const liftsDone = results.filter((r) => isLiftInstalled(r.row.dataset.liftId)).length;
   const rollsDone = rolls.filter((_, i) => isRollCut(i + 1)).length;
 
   const liftsPct = results.length ? (liftsDone / results.length) * 100 : 0;
@@ -1250,9 +1250,19 @@ function setModeToggleIcon(btn, toCoords) {
   btn.innerHTML = toCoords ? MODE_ICON_COORDS : MODE_ICON_LENGTH;
 }
 
-function addLiftRow(rl = "", faceLength = "", embed = "", insertBeforeNode = null, isIntermediate = false) {
+let liftIdSeq = 0;
+/** A stable identity for a lift row that survives its RL changing and (unlike RL text) is never
+ * shared between two rows — several products can legitimately sit at the same RL (see
+ * validateRows' old "Duplicate RL" warning), so RL alone can't key per-lift state like the
+ * Installed checkbox without two physical lifts silently sharing one tick. */
+function newLiftId() {
+  return `lift${++liftIdSeq}-${Date.now().toString(36)}`;
+}
+
+function addLiftRow(rl = "", faceLength = "", embed = "", insertBeforeNode = null, isIntermediate = false, liftId = null) {
   const frag = rowTemplate.content.cloneNode(true);
   const row = frag.querySelector(".lift-row");
+  row.dataset.liftId = liftId || newLiftId();
   row.querySelector(".rl-input").value = rl;
   row.querySelector(".face-length").value = faceLength;
   row.querySelector(".embed-length").value = embed;
@@ -1639,23 +1649,29 @@ function wasteLevel(pct) {
 function validateRows(results, productSpecs) {
   const issues = [];
 
-  // Install-tracking keys the "Installed" checkbox by RL text (see isLiftInstalled) — two rows
-  // with the same RL would silently share one checkbox between two different physical lifts.
-  const firstSeenAt = new Map();
+  // Two or more rows sharing an RL is a deliberate, supported pattern (several products/sections
+  // on the one physical lift — see the manual strip builder and per-row product select), each row
+  // keyed by its own liftId (see isLiftInstalled) rather than RL text, so siblings never collide.
+  // What's still worth a heads-up is a row group that ISN'T contiguous in the table — e.g. the same
+  // RL appearing again several rows later — since the Cut Plan/print pages, Installation Sequence,
+  // and "fill to RL X" instruction all read the table top-to-bottom as one physical build order.
+  const lastSeenAt = new Map();
   results.forEach((r, i) => {
     if (!r.rl) return;
-    if (firstSeenAt.has(r.rl)) {
-      issues.push(`Duplicate RL ${r.rl} (rows ${firstSeenAt.get(r.rl) + 1} and ${i + 1}) — they'll share one "Installed" checkbox.`);
-    } else {
-      firstSeenAt.set(r.rl, i);
+    const prevIdx = lastSeenAt.get(r.rl);
+    if (prevIdx != null && prevIdx !== i - 1) {
+      issues.push(`RL ${r.rl} (row ${i + 1}) repeats a few rows after its last appearance (row ${prevIdx + 1}) — group same-RL rows together, or it'll look like two builds out of order.`);
     }
+    lastSeenAt.set(r.rl, i);
   });
 
   // Installation sequence, the CSV/PDF export, and the "fill to RL X" instruction all assume each
-  // row is built on top of the one before it — the actual physical sequence on site.
+  // row is built on top of the one before it — the actual physical sequence on site. Rows sharing
+  // an RL with the one just before them are fine (same physical lift, different product/section),
+  // so only a genuine drop in RL is flagged here.
   for (let i = 1; i < results.length; i++) {
     const prev = parseFloat(results[i - 1].rl), cur = parseFloat(results[i].rl);
-    if (Number.isFinite(prev) && Number.isFinite(cur) && cur <= prev) {
+    if (Number.isFinite(prev) && Number.isFinite(cur) && cur < prev) {
       issues.push(`RL ${results[i].rl} (row ${i + 1}) isn't higher than the lift before it (RL ${results[i - 1].rl}) — check the build order.`);
     }
   }
@@ -2272,7 +2288,7 @@ function buildCutPlanPrintPages(results, project) {
             ? "Start the first strip flush with the left edge."
             : "";
       }
-      const installed = isLiftInstalled(r.rl);
+      const installed = isLiftInstalled(r.row.dataset.liftId);
       const stripRollNumbers = stripRollNumbersFor(r, rollLookup);
       const stitchCount = r.cutPlan.stitches.reduce((s, arr) => s + arr.length, 0);
       const rollsUsed = new Set();
@@ -2489,7 +2505,7 @@ function renderSequence(results) {
   results.forEach((r, i) => {
     const li = document.createElement("li");
     li.className = "sequence-card";
-    const installed = isLiftInstalled(r.rl);
+    const installed = isLiftInstalled(r.row.dataset.liftId);
     if (installed) li.classList.add("is-installed");
 
     let staggerNote = "";
@@ -2539,7 +2555,7 @@ function renderSequence(results) {
     }
 
     li.querySelector(".sequence-card__installed-input").addEventListener("change", (e) => {
-      setLiftInstalled(r.rl, e.target.checked);
+      setLiftInstalled(r.row.dataset.liftId, e.target.checked);
       li.classList.toggle("is-installed", e.target.checked);
       updateProgressStats();
     });
@@ -3486,7 +3502,7 @@ function render3D(results) {
 
   const lifts = results
     .filter((r) => r.footprint && r.footprint.length >= 3 && Number.isFinite(parseFloat(r.rl)))
-    .map((r) => ({ rl: parseFloat(r.rl), rlLabel: r.rl, footprint: r.footprint, installed: isLiftInstalled(r.rl) }))
+    .map((r) => ({ rl: parseFloat(r.rl), rlLabel: r.rl, footprint: r.footprint, installed: isLiftInstalled(r.row.dataset.liftId) }))
     .sort((a, b) => a.rl - b.rl);
 
   view3DEmpty.hidden = lifts.length > 0;
@@ -4248,6 +4264,7 @@ Object.values(linerInputs).forEach((el) => el.addEventListener("input", computeA
 
 function buildStateSnapshot() {
   const rows = Array.from(tbody.querySelectorAll(".lift-row")).map((row) => ({
+    liftId: row.dataset.liftId,
     rl: row.querySelector(".rl-input").value,
     isIntermediate: !row.querySelector(".intermediate-badge").hidden,
     mode: row.dataset.mode,
@@ -4327,8 +4344,19 @@ function applyStateSnapshot(state) {
   // boot-time autosave restore (the only other caller), which always runs against an empty table.
   tbody.innerHTML = "";
 
+  // A project saved before rows carried their own liftId (see newLiftId) tracked "Installed" by RL
+  // text instead — count how many rows share each such RL so the migration below only runs where
+  // it's unambiguous (one row, not a same-RL group the old scheme couldn't tell apart anyway).
+  const legacyRlCounts = new Map();
   (state.rows || []).forEach((r) => {
-    const row = addLiftRow(r.rl || "", r.mode === "length" ? r.faceLength || "" : "", r.embed || "", null, !!r.isIntermediate);
+    if (!r.liftId && r.rl) legacyRlCounts.set(r.rl, (legacyRlCounts.get(r.rl) || 0) + 1);
+  });
+
+  (state.rows || []).forEach((r) => {
+    const row = addLiftRow(r.rl || "", r.mode === "length" ? r.faceLength || "" : "", r.embed || "", null, !!r.isIntermediate, r.liftId || null);
+    if (!r.liftId && r.rl && legacyRlCounts.get(r.rl) === 1 && isLiftInstalled(r.rl)) {
+      setLiftInstalled(row.dataset.liftId, true);
+    }
     if (r.product) row.querySelector(".product-select").value = r.product;
     if (r.mode === "coords") {
       row.dataset.mode = "coords";
