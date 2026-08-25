@@ -492,7 +492,7 @@ function extendFaceToFullExtent(face, poly) {
   return { edges, length: maxStation - minStation, dir: face.dir };
 }
 
-function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide = null) {
+function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide = null, stripSide = null) {
   const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
   const chains = chainEdges(poly);
   if (chains.length < 2) return null;
@@ -503,6 +503,12 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
   const result = packed || calcLift(face.length, w, oMin);
   if (!result) return null;
   const pitch = !packed && result.n > 1 ? w - result.overlap : 0;
+  // packStripsFromSide already mirrors itself onto packSide (that's a real repositioning, since its
+  // strips sit at exact-minimum pitch, not the spread-evenly one below). The plain default layout
+  // below is uniform pitch either way — mirroring it doesn't move a single strip, it only changes
+  // which end is numbered "Strip 1" (and so which end rolls/labels count from), which is exactly
+  // what "Strip 1 starts from" is for on a lift that isn't also forcing same-length strips.
+  const mirror = !packed && stripSide === "right" && result.n > 1;
 
   // Fixed for the whole lift, not recomputed per strip from a locally-varying tangent — every strip
   // is parallel, which is what "grids can only ever be square" means in practice.
@@ -526,7 +532,11 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
   const stripStarts = [];
   for (let i = 0; i < result.n; i++) {
     const width = packed ? packed.widths[i] : w;
-    const start = packed ? packed.starts[i] : i * pitch;
+    // Uniform pitch spans exactly [0, face.length] end to end ((n-1)*pitch + w === face.length), so
+    // reflecting each position about the centre reproduces the very same set of positions — mirroring
+    // has to swap which INDEX gets which slot instead (Strip 1 takes the slot Strip n used to hold),
+    // not reflect the coordinate itself, or it's a no-op.
+    const start = packed ? packed.starts[i] : (mirror ? result.n - 1 - i : i) * pitch;
     const station = Math.max(0, Math.min(face.length, start + width / 2));
     const r = stripBoundaryReach(station, width, poly, face, inward, vertexStations);
     cutLengths.push(r.cutLength);
@@ -1156,10 +1166,8 @@ const settingsInputs = {
   packSideValue: document.getElementById("packSide"),
 };
 
-const packSideField = document.getElementById("packSideField");
 const packSideHint = document.getElementById("packSideHint");
 settingsInputs.packSide.addEventListener("change", () => {
-  packSideField.hidden = !settingsInputs.packSide.checked;
   packSideHint.hidden = !settingsInputs.packSide.checked;
   computeAndRender();
 });
@@ -1410,6 +1418,11 @@ function readSettings() {
     // perfectly real elevation and can't double as "not set".
     baseLevel: Number.isFinite(baseLevelRaw) ? baseLevelRaw : null,
     extendFace: settingsInputs.extendFace.checked,
+    // stripSide always reflects the dropdown (even with "force same length" off) — it's what mirrors
+    // which end strip 1 counts from for the plain default layout too; packSide is that SAME value
+    // but only passed through when "force same length" is actually on, since that's the one that
+    // changes packStripsFromSide's own behaviour.
+    stripSide: settingsInputs.packSideValue.value,
     packSide: settingsInputs.packSide.checked ? settingsInputs.packSideValue.value : null,
   };
 }
@@ -1910,7 +1923,7 @@ function validateProductSpec(p, rollLengthRawStr) {
 }
 
 function computeAndRender() {
-  const { rollGroupSize, installRate, baseLevel, extendFace, packSide } = readSettings();
+  const { rollGroupSize, installRate, baseLevel, extendFace, packSide, stripSide } = readSettings();
   const productSpecs = readProductSpecs();
   const fallbackProduct = productSpecs[products[0]?.id];
   const productFor = (row) => {
@@ -1956,7 +1969,7 @@ function computeAndRender() {
         cp = computeManualCutPlan(row._extentsPoints, row._manualStrips, productSpecs, row._faceCycle, refDir);
       } else {
         const p = productFor(row);
-        cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle, refDir, packSide) : null;
+        cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle, refDir, packSide, stripSide) : null;
       }
       if (cp) {
         cutPlanByRow.set(row, cp);
@@ -3338,8 +3351,15 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
   const polyEl = document.createElementNS(ns, "polygon");
   polyEl.setAttribute("points", poly2d);
   polyEl.setAttribute("fill", "var(--accent-tint)");
-  polyEl.setAttribute("stroke", "var(--line-strong)");
-  polyEl.setAttribute("stroke-width", "1.5");
+  // Bold and dashed, not the strip colours' thin solid outline — this is the one line on the whole
+  // diagram that means "this is the true design boundary, everything else must stay inside it", so
+  // it needs to read as a distinct, deliberate line even at a glance, not blend in as just another
+  // shape edge. --ink flips light/dark with the theme (near-black on light, near-white on dark) so
+  // it stays clearly readable either way instead of being tuned for just one.
+  polyEl.setAttribute("stroke", "var(--ink)");
+  polyEl.setAttribute("stroke-width", "2.5");
+  polyEl.setAttribute("stroke-dasharray", "7,4");
+  polyEl.setAttribute("stroke-linejoin", "round");
   svg.innerHTML = "";
   svg.appendChild(polyEl);
 
@@ -3542,8 +3562,15 @@ function renderCutPlanSvgManual(svg, cutPlan, productSpecs, activeProductId, row
   const polyEl = document.createElementNS(ns, "polygon");
   polyEl.setAttribute("points", poly2d);
   polyEl.setAttribute("fill", "var(--accent-tint)");
-  polyEl.setAttribute("stroke", "var(--line-strong)");
-  polyEl.setAttribute("stroke-width", "1.5");
+  // Bold and dashed, not the strip colours' thin solid outline — this is the one line on the whole
+  // diagram that means "this is the true design boundary, everything else must stay inside it", so
+  // it needs to read as a distinct, deliberate line even at a glance, not blend in as just another
+  // shape edge. --ink flips light/dark with the theme (near-black on light, near-white on dark) so
+  // it stays clearly readable either way instead of being tuned for just one.
+  polyEl.setAttribute("stroke", "var(--ink)");
+  polyEl.setAttribute("stroke-width", "2.5");
+  polyEl.setAttribute("stroke-dasharray", "7,4");
+  polyEl.setAttribute("stroke-linejoin", "round");
   svg.appendChild(polyEl);
 
   const labelFontSize = Math.max(4.5, Math.min(7, 165 / Math.max(stripStarts.length, 1)));
@@ -4592,7 +4619,6 @@ function applyStateSnapshot(state) {
   if (s.packSideValue != null) settingsInputs.packSideValue.value = s.packSideValue;
   if (s.packSide != null) {
     settingsInputs.packSide.checked = !!s.packSide;
-    packSideField.hidden = !s.packSide;
     packSideHint.hidden = !s.packSide;
   }
 
@@ -4827,7 +4853,6 @@ document.getElementById("newProjectBtn").addEventListener("click", () => {
   settingsInputs.extendFace.checked = false;
   settingsInputs.packSide.checked = false;
   settingsInputs.packSideValue.value = "left";
-  packSideField.hidden = true;
   packSideHint.hidden = true;
 
   renderProductTable(defaultProductRows());
