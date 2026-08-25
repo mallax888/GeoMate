@@ -3438,7 +3438,7 @@ function renderCutPlan(results) {
       // inserting or undoing one already does — computeManualCutPlan always rebuilds the whole
       // sequence from _manualStrips, so this is just as safe as any other edit to the list.
       const productBit = isManual
-        ? ` — <select class="cutplan-card__strip-product" data-row-id="${id}" data-strip-index="${i}">${products
+        ? ` — <select class="cutplan-card__strip-product" aria-label="Strip ${i + 1} product" data-row-id="${id}" data-strip-index="${i}">${products
             .map((p) => `<option value="${p.id}" ${p.id === r.stripProductIds[i] ? "selected" : ""}>${escapeHtml((productSpecs[p.id] && productSpecs[p.id].label) || p.id)}</option>`)
             .join("")}</select>`
         : "";
@@ -3448,7 +3448,7 @@ function renderCutPlan(results) {
       // from that. An explicit override (see computeManualCutPlan) lets any placed strip, finished
       // build or not, be corrected directly here instead of undoing back to it and re-placing.
       const lenBit = isManual
-        ? `cut to <input type="number" class="cutplan-card__strip-len" data-row-id="${id}" data-strip-index="${i}" value="${len.toFixed(2)}" step="0.05" min="0.05"> m`
+        ? `cut to <input type="number" class="cutplan-card__strip-len" aria-label="Strip ${i + 1} cut length, metres" data-row-id="${id}" data-strip-index="${i}" value="${len.toFixed(2)}" step="0.05" min="0.05"> m`
         : `cut to ${fmt.m(len)} m`;
       li.innerHTML = `<span>Strip ${i + 1}${productBit}${rollBit}</span><span>${lenBit}</span>`;
       stripsList.appendChild(li);
