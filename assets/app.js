@@ -226,31 +226,51 @@ function chainEdges(poly, angleThresholdDeg = 20) {
  * RL (see computeAndRender's per-RL refDir tracking) are the same physical wall face cut into
  * separate DXF shapes, so each one's face should run the same way as its siblings' rather than
  * whichever edge happens to be longest in that particular shape — a narrow or squarish polygon can
- * easily have its longest edge running along the wall instead of into the fill. Only takes effect
- * when some reasonably long chain (same 15% threshold used for the back pick below) actually lines
- * up with refDir; otherwise falls back to the plain longest-chain pick. */
+ * easily have its longest edge running along the wall instead of into the fill. That bias is only
+ * ever taken up if it still produces a normal, sane shape on its OWN terms — a real face has a real
+ * opposite edge roughly facing back at it (see requireBack below); a shape that has no such edge in
+ * the refDir-aligned orientation isn't a simple wall face at all (a return/wrap section, an L-shape),
+ * and forcing it to match its siblings anyway collapses its whole depth to a sliver instead of fixing
+ * its orientation. When that happens, this shape's own natural longest-chain pick is trusted instead. */
 function pickFaceAndBack(chains, refDir = null) {
   const sorted = chains.slice().sort((a, b) => b.length - a.length);
-  let face = sorted[0];
+
+  function backFor(face) {
+    const rest = sorted.filter((c) => c !== face);
+    let back = rest[0] || null, bestDot = back ? face.dir.x * back.dir.x + face.dir.y * back.dir.y : 1;
+    for (let i = 1; i < rest.length; i++) {
+      const c = rest[i];
+      if (c.length < face.length * 0.15) continue;
+      const dot = face.dir.x * c.dir.x + face.dir.y * c.dir.y;
+      if (dot < bestDot) { bestDot = dot; back = c; }
+    }
+    return { back, bestDot };
+  }
+
+  const naturalFace = sorted[0];
+  let face = naturalFace;
+  let { back, bestDot } = backFor(face);
+
   if (refDir) {
     let bestAlign = -1, bestChain = null;
     sorted.forEach((c) => {
-      if (c.length < face.length * 0.15) return;
+      if (c.length < naturalFace.length * 0.15) return;
       const align = Math.abs(c.dir.x * refDir.x + c.dir.y * refDir.y);
       if (align > bestAlign) { bestAlign = align; bestChain = c; }
     });
     // A real match should be nearly parallel or anti-parallel (dot close to ±1) — a middling
     // alignment means this shape genuinely doesn't share its siblings' orientation, so trust its
     // own longest-chain pick instead of forcing a bad match.
-    if (bestChain && bestAlign >= 0.85) face = bestChain;
-  }
-  const rest = sorted.filter((c) => c !== face);
-  let back = rest[0] || null, bestDot = back ? face.dir.x * back.dir.x + face.dir.y * back.dir.y : 1;
-  for (let i = 1; i < rest.length; i++) {
-    const c = rest[i];
-    if (c.length < face.length * 0.15) continue;
-    const dot = face.dir.x * c.dir.x + face.dir.y * c.dir.y;
-    if (dot < bestDot) { bestDot = dot; back = c; }
+    if (bestChain && bestAlign >= 0.85 && bestChain !== face) {
+      const alt = backFor(bestChain);
+      // requireBack: only take the sibling-matched face if it still has a real opposite (clearly
+      // anti-parallel, not just "not the same direction") — otherwise this shape genuinely isn't a
+      // plain wall face in that orientation, and the natural pick above is the correct one to keep.
+      if (alt.back && alt.bestDot < -0.3) {
+        face = bestChain;
+        back = alt.back;
+      }
+    }
   }
   return { face, back };
 }
@@ -3092,10 +3112,15 @@ function renderCutPlan(results) {
     cutPlanList.appendChild(card);
 
     const stripsList = card.querySelector(".cutplan-card__strips");
+    // The diagram's own per-strip roll circles can't legibly fit a 3-digit roll number on a dense
+    // (30+ strip) lift no matter how they're sized — there just isn't room. This list has plenty of
+    // width regardless of strip count, so it's the one place the roll number is always readable.
+    const rollNumsForList = isManual ? null : stripRollNumbersFor(r, rollLookup);
     r.stripLengths.forEach((len, i) => {
       const li = document.createElement("li");
       const productBit = isManual && r.stripProductIds ? ` — ${escapeHtml((productSpecs[r.stripProductIds[i]] && productSpecs[r.stripProductIds[i]].label) || r.stripProductIds[i])}` : "";
-      li.innerHTML = `<span>Strip ${i + 1}${productBit}</span><span>cut to ${fmt.m(len)} m</span>`;
+      const rollBit = rollNumsForList && rollNumsForList[i] ? ` — roll ${escapeHtml(rollNumsForList[i])}` : "";
+      li.innerHTML = `<span>Strip ${i + 1}${productBit}${rollBit}</span><span>cut to ${fmt.m(len)} m</span>`;
       stripsList.appendChild(li);
 
       (r.cutPlan.stitches[i] || []).forEach((s, si) => {
@@ -3245,28 +3270,48 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
       const margin = 6;
       const ccx = Math.max(margin + rollCircleR, Math.min(W - margin - rollCircleR, tx(station)));
       const ccy = Math.max(margin + rollCircleR, Math.min(H - margin - rollCircleR, yNear - rollCircleR - 2));
+
+      // Longer roll numbers (rolls run into the hundreds on a big job) need a smaller font to still
+      // fit inside a small circle — sized relative to digit count, not a single fixed size. But once
+      // that font would drop below what's actually legible, squeezing it in just reads as garbled
+      // text, not a smaller number — a real floor a jam-packed 30+ strip lift can hit with 3-digit
+      // roll numbers even after the circles themselves got more breathing room (see rollCircleR
+      // above). Below that floor, fall back to a small plain dot instead: the strip list alongside
+      // this diagram (stripsList in renderCutPlan) always spells the roll number out in full, at any
+      // strip count, so nothing is actually lost — it just isn't crammed into the diagram itself.
+      const rollFontSize = rollLabel.length >= 3 ? rollCircleR * 0.82 : rollLabel.length === 2 ? rollCircleR * 0.98 : rollCircleR * 1.15;
+      const MIN_LEGIBLE_FONT = 4.2;
       const circle = document.createElementNS(ns, "circle");
       circle.setAttribute("cx", ccx.toFixed(1));
       circle.setAttribute("cy", ccy.toFixed(1));
-      circle.setAttribute("r", rollCircleR.toFixed(1));
-      circle.setAttribute("fill", "var(--surface)");
-      circle.setAttribute("stroke", "var(--ink)");
-      circle.setAttribute("stroke-width", "1");
-      svg.appendChild(circle);
+      const titleEl = document.createElementNS(ns, "title");
+      titleEl.textContent = `Roll ${rollLabel}`;
 
-      // Longer roll numbers (rolls run into the hundreds on a big job) need a smaller font to still
-      // fit inside a small circle — sized relative to digit count, not a single fixed size.
-      const rollFontSize = rollLabel.length >= 3 ? rollCircleR * 0.82 : rollLabel.length === 2 ? rollCircleR * 0.98 : rollCircleR * 1.15;
-      const rollText = document.createElementNS(ns, "text");
-      rollText.setAttribute("x", ccx.toFixed(1));
-      rollText.setAttribute("y", ccy.toFixed(1));
-      rollText.setAttribute("font-size", Math.max(3, rollFontSize).toFixed(1));
-      rollText.setAttribute("font-family", "var(--font-mono)");
-      rollText.setAttribute("fill", "var(--ink)");
-      rollText.setAttribute("text-anchor", "middle");
-      rollText.setAttribute("dominant-baseline", "central");
-      rollText.textContent = rollLabel;
-      svg.appendChild(rollText);
+      if (rollFontSize >= MIN_LEGIBLE_FONT) {
+        circle.setAttribute("r", rollCircleR.toFixed(1));
+        circle.setAttribute("fill", "var(--surface)");
+        circle.setAttribute("stroke", "var(--ink)");
+        circle.setAttribute("stroke-width", "1");
+        circle.appendChild(titleEl);
+        svg.appendChild(circle);
+
+        const rollText = document.createElementNS(ns, "text");
+        rollText.setAttribute("x", ccx.toFixed(1));
+        rollText.setAttribute("y", ccy.toFixed(1));
+        rollText.setAttribute("font-size", rollFontSize.toFixed(1));
+        rollText.setAttribute("font-family", "var(--font-mono)");
+        rollText.setAttribute("fill", "var(--ink)");
+        rollText.setAttribute("text-anchor", "middle");
+        rollText.setAttribute("dominant-baseline", "central");
+        rollText.textContent = rollLabel;
+        svg.appendChild(rollText);
+      } else {
+        circle.setAttribute("r", Math.max(1.3, rollCircleR * 0.45).toFixed(1));
+        circle.setAttribute("fill", "var(--ink-muted)");
+        circle.setAttribute("stroke", "none");
+        circle.appendChild(titleEl);
+        svg.appendChild(circle);
+      }
     }
   });
 }
