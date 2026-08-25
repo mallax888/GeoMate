@@ -2384,7 +2384,7 @@ function renderSummary(results, productSpecs, rollGroupSize, installRate, baseLe
   // partial total (every lift but the bottom one) doesn't quietly read as a complete one.
   const totalFillVolume = results.reduce((s, r) => s + (r.fillVolume || 0), 0);
   document.getElementById("statVolume").innerHTML = totalFillVolume > 0 ? `${fmt.m(totalFillVolume)}<small> m³</small>` : "—";
-  document.getElementById("statVolumeHint").hidden = baseLevel != null || results.length === 0;
+  document.getElementById("statVolumeHint").textContent = baseLevel != null || results.length === 0 ? "" : "enter base level";
 
   const wasteOverlapEl = document.getElementById("wasteOverlap");
   if (totalTheoreticalArea > 0) {
@@ -2437,10 +2437,10 @@ function renderSummary(results, productSpecs, rollGroupSize, installRate, baseLe
   const missingCost = Array.from(usedProducts).some((id) => !(productSpecs[id].costPerRoll > 0));
   const totalCost = rolls.reduce((s, roll) => s + (roll.costPerRoll > 0 ? roll.costPerRoll : 0), 0);
   document.getElementById("statCost").textContent = totalCost > 0 ? fmt.cost(totalCost) : "—";
-  document.getElementById("statCostHint").hidden = rolls.length === 0 || !missingCost;
+  document.getElementById("statCostHint").textContent = rolls.length === 0 || !missingCost ? "" : "enter cost/roll";
   const installDays = installRate > 0 ? Math.ceil((totalArea / installRate) * 2) / 2 : 0;
   document.getElementById("statInstallTime").textContent = installDays > 0 ? `${fmt.m(installDays)} day${installDays === 1 ? "" : "s"}` : "—";
-  document.getElementById("statInstallTimeHint").hidden = installDays > 0;
+  document.getElementById("statInstallTimeHint").textContent = installDays > 0 ? "" : "enter install rate";
 
   const purchased = rolls.reduce((s, roll) => s + roll.rollLength, 0);
   const extraTotal = rolls.reduce((s, roll) => s + roll.pieces.reduce((s2, p) => s2 + p.extra, 0), 0);
