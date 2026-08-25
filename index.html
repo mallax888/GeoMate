@@ -305,8 +305,12 @@
               <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 11 5.5 3 12.5 4 14 11 9 14.5z"/></svg>
               Extents
             </h3>
-            <p>Upload one DXF containing a <strong>closed</strong> polyline per lift — the outer plan-view extents each strip has to fit inside. The tool finds the longest edge as the face and clips every strip against the boundary, so strips near a taper come back shorter with an exact cut length.</p>
+            <p>Upload one DXF containing a <strong>closed</strong> polyline per lift — the outer plan-view extents each strip has to fit inside. The tool finds the longest edge as the face and clips every strip against the boundary, so strips near a taper come back shorter with an exact cut length. Uploading a second file for a different product at the same RLs adds it alongside the first instead of replacing it — pick which product this file is for below first.</p>
             <div class="cutplan-upload">
+              <label class="field cutplan-upload__product">
+                <span class="sr-only">Product this upload is for</span>
+                <select id="dxfExtentsProduct"></select>
+              </label>
               <label class="btn btn--primary btn--upload">
                 Upload extents DXF
                 <input type="file" id="dxfExtentsInput" accept=".dxf" hidden />

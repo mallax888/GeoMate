@@ -1211,6 +1211,12 @@ function populateProductSelects() {
     sel.innerHTML = options.map((o) => `<option value="${o.id}">${escapeHtml(o.name)}</option>`).join("");
     sel.value = options.some((o) => o.id === prevValue) ? prevValue : options[0]?.id || "";
   });
+  const dxfProductSel = document.getElementById("dxfExtentsProduct");
+  if (dxfProductSel) {
+    const prevValue = dxfProductSel.value;
+    dxfProductSel.innerHTML = options.map((o) => `<option value="${o.id}">${escapeHtml(o.name)}</option>`).join("");
+    dxfProductSel.value = options.some((o) => o.id === prevValue) ? prevValue : options[0]?.id || "";
+  }
 }
 
 /** Every product row's raw (unparsed) field values, in table order — the shape saved into a project
@@ -2670,6 +2676,16 @@ document.getElementById("dxfExtentsInput").addEventListener("change", async (e) 
       return;
     }
 
+    // Which product this whole file is for (see the select next to the upload button) — a second
+    // file for a different product at RLs the first file already used should add alongside those
+    // rows, never quietly take one over. Matching below only ever considers an existing row a
+    // candidate when its own product already matches, so a same-RL row belonging to a different
+    // product is invisible to it and gets left alone; every newly created row is tagged with this
+    // product too, rather than whatever the table's very first product happens to default to.
+    const uploadProductId = document.getElementById("dxfExtentsProduct")?.value || products[0]?.id;
+    const uploadProductName = productFieldEl(uploadProductId, "name")?.value.trim() || uploadProductId;
+    const rowProductId = (row) => row.querySelector(".product-select").value;
+
     const hasZ = polygons.some((p) => Math.abs(p.meanZ) > 1e-6);
     const rows = Array.from(tbody.querySelectorAll(".lift-row"));
     let matched = 0;
@@ -2677,10 +2693,12 @@ document.getElementById("dxfExtentsInput").addEventListener("change", async (e) 
     if (hasZ) {
       // Match each row to the polygon whose elevation is closest to that row's own RL — not by
       // sorted position — so a table that doesn't have exactly one row per polygon (extra/missing
-      // lifts, intermediate grids) can't silently shift every later match onto the wrong RL.
+      // lifts, intermediate grids) can't silently shift every later match onto the wrong RL. Only
+      // rows already on this upload's product are eligible, per the comment above.
       const ELEV_TOL = 0.03; // metres
       const used = new Set();
       rows.forEach((row) => {
+        if (rowProductId(row) !== uploadProductId) return;
         const rl = parseFloat(row.querySelector(".rl-input").value);
         if (!Number.isFinite(rl)) return;
         let best = -1, bestDiff = Infinity;
@@ -2697,8 +2715,9 @@ document.getElementById("dxfExtentsInput").addEventListener("change", async (e) 
       });
 
       // Every polygon carries its own elevation already, so one that didn't match an existing row
-      // (most commonly: there was no row at all yet) gets a brand-new lift row created at that
-      // elevation, inserted in RL order — uploading extents alone is enough to build the table.
+      // of its product (most commonly: there was no row at all yet) gets a brand-new lift row
+      // created at that elevation, inserted in RL order — uploading extents alone is enough to
+      // build the table.
       let created = 0;
       polygons.forEach((p, idx) => {
         if (used.has(idx)) return;
@@ -2709,6 +2728,7 @@ document.getElementById("dxfExtentsInput").addEventListener("change", async (e) 
             return Number.isFinite(rl) && rl > p.meanZ + 1e-9;
           }) || null;
         const newRow = addLiftRow(p.meanZ.toFixed(2), "", "", insertBefore);
+        newRow.querySelector(".product-select").value = uploadProductId;
         applyExtents(newRow, p.points);
         created++;
         matched++;
@@ -2716,14 +2736,17 @@ document.getElementById("dxfExtentsInput").addEventListener("change", async (e) 
 
       const parts = [];
       const matchedExisting = matched - created;
-      if (matchedExisting) parts.push(`matched ${matchedExisting} existing lift${matchedExisting === 1 ? "" : "s"} by RL`);
-      if (created) parts.push(`created ${created} new lift row${created === 1 ? "" : "s"} from the DXF's own elevations`);
+      if (matchedExisting) parts.push(`matched ${matchedExisting} existing ${uploadProductName} lift${matchedExisting === 1 ? "" : "s"} by RL`);
+      if (created) parts.push(`created ${created} new ${uploadProductName} lift row${created === 1 ? "" : "s"} from the DXF's own elevations`);
       statusEl.textContent = `${polygons.length} extents loaded${parts.length ? " — " + parts.join(", ") + "." : "."}`;
     } else {
-      const count = Math.min(rows.length, polygons.length);
-      for (let i = 0; i < count; i++) applyExtents(rows[i], polygons[i].points);
+      // No elevation data to anchor a product-aware match against — falls back to matching this
+      // upload's product rows in file order, same "verify against RL order" caveat as always.
+      const productRows = rows.filter((row) => rowProductId(row) === uploadProductId);
+      const count = Math.min(productRows.length, polygons.length);
+      for (let i = 0; i < count; i++) applyExtents(productRows[i], polygons[i].points);
       matched = count;
-      statusEl.textContent = `Matched ${count} of ${polygons.length} extents to ${rows.length} lift${rows.length === 1 ? "" : "s"} (file order — verify against RL order).`;
+      statusEl.textContent = `Matched ${count} of ${polygons.length} extents to ${productRows.length} ${uploadProductName} lift${productRows.length === 1 ? "" : "s"} (file order — verify against RL order).`;
     }
     statusEl.className = matched ? "cutplan-status is-ok" : "cutplan-status is-error";
     switchTab("cutplan");

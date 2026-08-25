@@ -873,6 +873,8 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .cutplan-method p { margin: 0 0 0.8rem; }
 .cutplan-method .cutplan-upload:last-child { margin-bottom: 0; }
 .cutplan-upload { display: flex; align-items: flex-end; gap: 0.8rem; margin-bottom: 1rem; flex-wrap: wrap; }
+.cutplan-upload__product { flex: none; }
+.cutplan-upload__product select { min-width: 8rem; }
 .cutplan-tolerance { flex: none; }
 .cutplan-tolerance .field__unit { width: 6rem; }
 .btn--upload { cursor: pointer; }
