@@ -7,7 +7,25 @@
    ============================================================ */
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js").catch(() => {});
+    // updateViaCache: "none" — without this, the BROWSER's own HTTP cache can keep serving the old
+    // sw.js script itself on a plain reload (GitHub Pages' normal caching headers), so the update
+    // check inside the service worker lifecycle never even runs against a fresh copy. This is what
+    // made "just reload" unreliable for picking up a new deploy — always fetch sw.js fresh so a new
+    // version is actually noticed.
+    navigator.serviceWorker
+      .register("sw.js", { updateViaCache: "none" })
+      .then((reg) => reg.update().catch(() => {}))
+      .catch(() => {});
+  });
+
+  // Once a new service worker actually takes over an already-open tab, reload once so the new
+  // app shell/assets take effect immediately — instead of the page silently keeping the OLD
+  // version active until the user thinks to fully close and reopen the tab themselves.
+  let reloadedForUpdate = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (reloadedForUpdate) return;
+    reloadedForUpdate = true;
+    window.location.reload();
   });
 }
 
