@@ -2210,28 +2210,37 @@ function absoluteFootprint(cutPlan, origin) {
  * for the whole face, which is right for stacking several lifts in the 3D view, but a real face often
  * bends across a handful of segments — projected that way, the drawn boundary line wobbles above and
  * below where the strips actually start even though the strips themselves tie up to it exactly (they're
- * placed by true arc-length station, not by this projection). Snapping every boundary point to its
- * nearest position ON the face keeps the drawn line and the strips on the same axis, so the face edge
- * always renders as the flat baseline it actually is.
+ * placed by true arc-length station, not by this projection). Points that are actually ON the face get
+ * their exact arc-length station instead, so that edge always renders as the flat baseline it truly is.
+ *
+ * Only face-chain vertices get that treatment, though — an earlier version snapped EVERY boundary point
+ * (including ones nowhere near the face, like the back/crest edge) onto whichever spot on the face
+ * happened to be nearest. That's fine when the face is close to straight, but once the face itself is a
+ * long curved run (a curved wall alignment digitized as many short segments — exactly a "face bending
+ * across a handful of segments"), "nearest point on the face" stops moving monotonically with the
+ * polygon's own vertex order: a back-edge point can end up nearest to an early face vertex while its
+ * neighbour is nearest to a late one, so the drawn outline jumps around instead of tracing the boundary's
+ * real shape — nothing like the true polyline. Off-face points instead get ONE rigid rotation/translation
+ * onto the face's overall direction (same transform localFootprint uses), which can never reorder them
+ * relative to each other, so the rest of the boundary always keeps its true relative shape.
  */
 function faceAlignedFootprint(cutPlan) {
   const face = cutPlan.face;
   const inward = inwardNormal(face.dir);
+  const faceOrigin = face.edges[0].from;
+
+  const faceStations = new Map();
+  let acc = 0;
+  faceStations.set(face.edges[0].from, 0);
+  face.edges.forEach((e) => {
+    acc += e.len;
+    faceStations.set(e.to, acc);
+  });
+
   return cutPlan.poly.map((p) => {
-    let best = null;
-    let acc = 0;
-    for (const e of face.edges) {
-      const ex = e.to.x - e.from.x, ey = e.to.y - e.from.y;
-      const len2 = ex * ex + ey * ey;
-      let t = len2 > 1e-12 ? ((p.x - e.from.x) * ex + (p.y - e.from.y) * ey) / len2 : 0;
-      t = Math.max(0, Math.min(1, t));
-      const cx = e.from.x + ex * t, cy = e.from.y + ey * t;
-      const dx = p.x - cx, dy = p.y - cy;
-      const distSq = dx * dx + dy * dy;
-      if (!best || distSq < best.distSq) best = { distSq, station: acc + t * e.len, dx, dy };
-      acc += e.len;
-    }
-    return { x: best.station, y: best.dx * inward.x + best.dy * inward.y };
+    if (faceStations.has(p)) return { x: faceStations.get(p), y: 0 };
+    const rx = p.x - faceOrigin.x, ry = p.y - faceOrigin.y;
+    return { x: rx * face.dir.x + ry * face.dir.y, y: rx * inward.x + ry * inward.y };
   });
 }
 
