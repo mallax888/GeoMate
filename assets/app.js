@@ -221,13 +221,33 @@ function chainEdges(poly, angleThresholdDeg = 20) {
   });
 }
 
-/** Longest chain = face; the longest, most anti-parallel remaining chain = back. */
-function pickFaceAndBack(chains) {
+/** Longest chain = face; the longest, most anti-parallel remaining chain = back.
+ * `refDir`, when given, biases the face pick instead: several product/section polygons sharing one
+ * RL (see computeAndRender's per-RL refDir tracking) are the same physical wall face cut into
+ * separate DXF shapes, so each one's face should run the same way as its siblings' rather than
+ * whichever edge happens to be longest in that particular shape — a narrow or squarish polygon can
+ * easily have its longest edge running along the wall instead of into the fill. Only takes effect
+ * when some reasonably long chain (same 15% threshold used for the back pick below) actually lines
+ * up with refDir; otherwise falls back to the plain longest-chain pick. */
+function pickFaceAndBack(chains, refDir = null) {
   const sorted = chains.slice().sort((a, b) => b.length - a.length);
-  const face = sorted[0];
-  let back = sorted[1] || null, bestDot = back ? face.dir.x * back.dir.x + face.dir.y * back.dir.y : 1;
-  for (let i = 2; i < sorted.length; i++) {
-    const c = sorted[i];
+  let face = sorted[0];
+  if (refDir) {
+    let bestAlign = -1, bestChain = null;
+    sorted.forEach((c) => {
+      if (c.length < face.length * 0.15) return;
+      const align = Math.abs(c.dir.x * refDir.x + c.dir.y * refDir.y);
+      if (align > bestAlign) { bestAlign = align; bestChain = c; }
+    });
+    // A real match should be nearly parallel or anti-parallel (dot close to ±1) — a middling
+    // alignment means this shape genuinely doesn't share its siblings' orientation, so trust its
+    // own longest-chain pick instead of forcing a bad match.
+    if (bestChain && bestAlign >= 0.85) face = bestChain;
+  }
+  const rest = sorted.filter((c) => c !== face);
+  let back = rest[0] || null, bestDot = back ? face.dir.x * back.dir.x + face.dir.y * back.dir.y : 1;
+  for (let i = 1; i < rest.length; i++) {
+    const c = rest[i];
     if (c.length < face.length * 0.15) continue;
     const dot = face.dir.x * c.dir.x + face.dir.y * c.dir.y;
     if (dot < bestDot) { bestDot = dot; back = c; }
@@ -367,11 +387,11 @@ function stripBoundaryReach(station, w, poly, face, inward, vertexStations) {
   return { cutLength, farReach, nearReach, stitches };
 }
 
-function computeCutPlan(rawPoints, w, oMin, swapped) {
+function computeCutPlan(rawPoints, w, oMin, swapped, refDir = null) {
   const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
   const chains = chainEdges(poly);
   if (chains.length < 2) return null;
-  let { face, back } = pickFaceAndBack(chains);
+  let { face, back } = pickFaceAndBack(chains, refDir);
   if (swapped && back) { const t = face; face = back; back = t; }
 
   const result = calcLift(face.length, w, oMin);
@@ -431,7 +451,7 @@ function computeCutPlan(rawPoints, w, oMin, swapped) {
  * does (n, cutLengths, stitches, extentsReach, frontReach, polygonArea, face, back) plus per-strip
  * product/geometry arrays the uniform layout has no need for.
  */
-function computeManualCutPlan(rawPoints, manualStrips, productSpecs, swapped) {
+function computeManualCutPlan(rawPoints, manualStrips, productSpecs, swapped, refDir = null) {
   // manualStrips may be an empty array — that's "build mode is on, nothing placed yet" — still worth
   // computing the boundary/face so the Cut Plan tab has something to draw the first click-node
   // against, rather than showing nothing until the first strip exists.
@@ -439,7 +459,7 @@ function computeManualCutPlan(rawPoints, manualStrips, productSpecs, swapped) {
   const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
   const chains = chainEdges(poly);
   if (chains.length < 2) return null;
-  let { face, back } = pickFaceAndBack(chains);
+  let { face, back } = pickFaceAndBack(chains, refDir);
   if (swapped && back) { const t = face; face = back; back = t; }
 
   const inward = inwardNormal(face.dir);
@@ -833,11 +853,17 @@ function parseDXFPolygons(text) {
   }
   function finishClosedPoly(entity) {
     if (!entity || !entity.pts || entity.pts.length < 3) return;
-    const closed = !!(entity.flags & 1);
-    if (!closed) return;
     const pts = entity.pts.slice();
     const first = pts[0], last = pts[pts.length - 1];
-    if (Math.hypot(last.x - first.x, last.y - first.y) < 1e-9) pts.pop();
+    // A polyline someone closed by snapping its last vertex back onto the first — instead of the
+    // dedicated Close command — never gets its "closed" flag (group code 70, bit 1) set, even
+    // though it's visually and functionally a closed boundary. Treating only the flag as authority
+    // silently drops that shape (one polygon just disappears out of a whole DXF, with no error) —
+    // so an endpoint pair that coincides counts as closed too, whichever way it got that way. A
+    // genuinely open shape's endpoints essentially never land this close by accident.
+    const endpointsCoincide = Math.hypot(last.x - first.x, last.y - first.y) < 1e-6;
+    if (!(entity.flags & 1) && !endpointsCoincide) return;
+    if (endpointsCoincide) pts.pop();
     const meanZ = pts.reduce((s, p) => s + (p.z || 0), 0) / pts.length;
     polygons.push({ layer: entity.layer || "0", points: pts, meanZ });
   }
@@ -1168,7 +1194,17 @@ function snapshotProductRows() {
   });
 }
 
-document.getElementById("addProductBtn").addEventListener("click", addProduct);
+// The button now lives inside <summary> (top-right of the Products panel header, same slot
+// "+ Add lift" sits in above the Takeoff table) so it's reachable without opening the panel first —
+// but a click anywhere in <summary> also toggles the parent <details> by default, which would
+// immediately re-close the panel right after adding a product if it was already open. Cancel that
+// default toggle and force it open instead, so the new row is always visible afterward.
+document.getElementById("addProductBtn").addEventListener("click", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  document.getElementById("productsDetails").open = true;
+  addProduct();
+});
 productSpecBody.addEventListener("click", (e) => {
   const btn = e.target.closest(".product-delete-btn");
   if (btn) deleteProduct(btn.dataset.id);
@@ -1751,16 +1787,28 @@ function computeAndRender() {
   // wall's orientation, and every lift needs the SAME frame to stack with its true relative
   // alignment preserved, rather than each independently reset to its own face start.
   const cutPlanByRow = new Map();
+  // Several product/section polygons can legitimately share one RL (a wall face cut into separate
+  // DXF shapes) — each is matched to its own row, but "longest edge = face" is picked per polygon
+  // in isolation, so a narrower or squarer sibling can easily pick a side edge as its face instead
+  // of running the same way as the rest of that RL. The first row processed for a given RL sets the
+  // reference direction (in table order, top to bottom); every later row at that same RL is biased
+  // toward matching it (see pickFaceAndBack) instead of picking blind.
+  const rlFaceDir = new Map();
   rows.forEach((row) => {
     if (row.dataset.mode === "extents" && row._extentsPoints) {
+      const rl = row.querySelector(".rl-input").value.trim();
+      const refDir = rl ? rlFaceDir.get(rl) || null : null;
       let cp;
       if (row._manualStrips) {
-        cp = computeManualCutPlan(row._extentsPoints, row._manualStrips, productSpecs, row._extentsSwapped);
+        cp = computeManualCutPlan(row._extentsPoints, row._manualStrips, productSpecs, row._extentsSwapped, refDir);
       } else {
         const p = productFor(row);
-        cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._extentsSwapped) : null;
+        cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._extentsSwapped, refDir) : null;
       }
-      if (cp) cutPlanByRow.set(row, cp);
+      if (cp) {
+        cutPlanByRow.set(row, cp);
+        if (rl && !rlFaceDir.has(rl)) rlFaceDir.set(rl, cp.face.dir);
+      }
     }
   });
   let footprintRef = null;
@@ -3114,10 +3162,14 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
   // Strip count doesn't shrink the font below this, so numbers stay every-strip and legible without
   // ever skipping one — dense diagrams get a smaller font instead of thinned labels.
   const labelFontSize = Math.max(4.5, Math.min(7, 165 / Math.max(cutLengths.length, 1)));
-  // Roll-number circles are sized off the actual on-screen strip width, not a fixed size, so
-  // neighbouring circles never overlap even on a 40-strip lift.
+  // Roll-number circles are sized off the actual on-screen strip width, not a fixed size — but the
+  // margin subtracted has to leave room for the circles' own 1px stroke too, not just clear space
+  // between their centres, or a dense lift (40+ strips) ends up with barely a fraction of a pixel
+  // of true gap: technically not touching, but reading as one solid overlapping blob on screen. The
+  // lower floor (was 3, now 2.2) matters just as much — without it, an even denser lift hits the
+  // floor and overlaps outright instead of continuing to shrink.
   const avgStripPx = (W - pad * 2) / Math.max(cutLengths.length, 1);
-  const rollCircleR = Math.max(3, Math.min(7.5, avgStripPx / 2 - 0.6));
+  const rollCircleR = Math.max(2.2, Math.min(7.5, avgStripPx / 2 - 1.3));
 
   cutLengths.forEach((len, i) => {
     const station = stationOf(i);

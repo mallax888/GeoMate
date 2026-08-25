@@ -43,11 +43,15 @@
 <main class="layout">
 
   <section class="panel panel--products-full" aria-labelledby="productsSummaryHeading">
+    <!-- Sits outside <summary> deliberately — a <button> nested inside a <summary> is two
+         interactive controls in one (WCAG "nested interactive"), confusing for keyboard/screen
+         reader users. Positioned over the same top-right corner the old in-summary button
+         occupied instead (see .products-panel__add). -->
+    <button type="button" id="addProductBtn" class="btn btn--ghost products-panel__add">+ Add product</button>
     <details id="productsDetails">
       <summary id="productsSummaryHeading" class="products-summary">
         <span class="panel__heading products-summary__heading">Products</span>
         <span id="productsCountBadge" class="products-count-badge"></span>
-        <span class="products-summary__hint">click to edit</span>
       </summary>
       <div class="products-full-body">
         <div class="table-scroll">
@@ -67,7 +71,6 @@
             <tbody id="productSpecBody"></tbody>
           </table>
         </div>
-        <button type="button" id="addProductBtn" class="btn btn--dashed btn--block">+ Add product</button>
         <p class="generator__hint">
           Each product is its own roll spec — width, minimum overlap, roll length, cost, and an optional
           wrap/lap allowance (extra length folded onto every strip's cut length, e.g. a wrap around the
