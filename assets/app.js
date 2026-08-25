@@ -460,11 +460,44 @@ function stripBoundaryReach(station, w, poly, face, inward, vertexStations) {
   return { cutLength, farReach, nearReach, stitches };
 }
 
+/**
+ * A corner of the boundary can jut out past either end of the face chain itself — a diagonal
+ * tie-in/return edge whose far corner sits further along the face's own direction than the face
+ * chain's own last (or first) vertex. Strips only ever get placed within [0, face.length], so
+ * without this, that corner's area is structurally never reached by any strip no matter how the
+ * strip count/pitch is worked out — a real, permanent gap at exactly the kind of critical tie-in
+ * corner that must be fully covered. Extends the face with straight synthetic edges (continuing in
+ * the SAME direction, no new curvature invented) out to the true full station range every polygon
+ * vertex projects onto along the face's own line, so the strip run — and vertexStations' kink
+ * sampling — naturally covers that corner too, using every existing station-based function unchanged.
+ */
+function extendFaceToFullExtent(face, poly) {
+  const origin = face.edges[0].from;
+  const stations = poly.map((p) => (p.x - origin.x) * face.dir.x + (p.y - origin.y) * face.dir.y);
+  const minStation = Math.min(0, ...stations);
+  const maxStation = Math.max(face.length, ...stations);
+  if (minStation > -1e-6 && maxStation < face.length + 1e-6) return face;
+
+  const edges = face.edges.slice();
+  if (minStation < -1e-6) {
+    const from = { x: origin.x + face.dir.x * minStation, y: origin.y + face.dir.y * minStation };
+    edges.unshift({ x: face.dir.x, y: face.dir.y, len: -minStation, from, to: origin });
+  }
+  if (maxStation > face.length + 1e-6) {
+    const lastTo = edges[edges.length - 1].to;
+    const extra = maxStation - face.length;
+    const to = { x: lastTo.x + face.dir.x * extra, y: lastTo.y + face.dir.y * extra };
+    edges.push({ x: face.dir.x, y: face.dir.y, len: extra, from: lastTo, to });
+  }
+  return { edges, length: maxStation - minStation, dir: face.dir };
+}
+
 function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide = null) {
   const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
   const chains = chainEdges(poly);
   if (chains.length < 2) return null;
-  const { face, back } = faceCycle ? pickFaceByIndex(chains, faceCycle) : pickFaceAndBack(chains, refDir);
+  const { face: pickedFace, back } = faceCycle ? pickFaceByIndex(chains, faceCycle) : pickFaceAndBack(chains, refDir);
+  const face = extendFaceToFullExtent(pickedFace, poly);
 
   const packed = packSide ? packStripsFromSide(face.length, w, oMin, packSide) : null;
   const result = packed || calcLift(face.length, w, oMin);
