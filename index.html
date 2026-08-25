@@ -115,7 +115,7 @@
     </p>
     <label class="checkbox">
       <input type="checkbox" id="packSideToggle" />
-      <span>Pack strips from one side, trim the last strip</span>
+      <span>Pack strips from one side, same length every strip</span>
     </label>
     <label class="field" id="packSideField" hidden>
       <span>Start side</span>
@@ -125,10 +125,11 @@
       </select>
     </label>
     <p class="generator__hint" id="packSideHint" hidden>
-      Every seam sits at exactly the minimum overlap, working in from the side you pick — strip 1 is
-      always flush against that side. Whatever's left once no more full-width strips fit becomes one
-      narrower closing strip at the opposite side, trimmed to reach it exactly, with no overlap needed
-      past that edge. Unlike "Extend face length" above, this works on DXF extents/benched/battered
+      Every strip is a full, uncut roll width, working in from the side you pick — strip 1 is always
+      flush against that side. Full-width strips step in at the minimum overlap for as long as they
+      fit; the last strip is still full width but sits flush against the opposite edge instead, so
+      the leftover is absorbed as extra overlap at just that one closing seam — no strip is ever cut
+      narrower on site. Unlike "Extend face length" above, this works on DXF extents/benched/battered
       lifts too, not just manually-typed lengths — for those, "left"/"right" is which end of the
       already-detected face strip 1 starts against (use "Swap face/back" on the Cut Plan tab to change
       <em>which edge</em> is treated as the face in the first place). Takes priority over "Extend face

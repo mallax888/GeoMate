@@ -128,14 +128,18 @@ function calcLift(L, w, oMin) {
 
 /**
  * The "pack from one side" alternative to calcLift's default (spread the leftover evenly) and the
- * Extend-face-length setting (grow the reported face length): every strip is full width w at exactly
- * oMin overlap, starting flush against whichever `side` is chosen — strip 1 is always the one flush
- * against that side, so it's the first one the crew actually rolls out. Full-width strips step in at
- * the exact pitch until the next one would run past L; whatever's left becomes one narrower closing
- * strip at the opposite side, trimmed to reach L exactly, at that same exact pitch from its neighbour
- * — there's nothing beyond the true edge for it to overlap with, hence "no overlap" right at the end.
- * Returns per-strip start/width arrays (used directly as station/width in computeCutPlan, or reduced
- * to just widths for a manually-typed length, which has no boundary to clip against).
+ * Extend-face-length setting (grow the reported face length): every strip is full width w — never
+ * trimmed narrower, since cutting a roll down by however many mm on site to close a gap is real
+ * lost time for no structural benefit — at exactly oMin overlap, starting flush against whichever
+ * `side` is chosen (strip 1 is always the one flush against that side, the first the crew rolls
+ * out). Full-width strips step in at the exact pitch as long as the next one still fits; the very
+ * last strip is instead pinned flush against the OPPOSITE edge (still full width), so its overlap
+ * with its neighbour absorbs whatever's left over instead of any strip's width changing — provably
+ * always >= oMin, since it can only be pulled back at most one strip-width from where exact-pitch
+ * placement would have put it. Every strip is genuinely full width; only that one seam's overlap
+ * varies from the rest. Returns per-strip start/width arrays (used directly as station/width in
+ * computeCutPlan, or just as widths for a manually-typed length, which has no boundary to clip
+ * against).
  */
 function packStripsFromSide(L, w, oMin, side) {
   if (!(L > 0) || !(w > 0) || oMin < 0 || oMin >= w) return null;
@@ -143,28 +147,25 @@ function packStripsFromSide(L, w, oMin, side) {
 
   const pitch = w - oMin;
   const starts = [];
-  const widths = [];
   let cursor = 0;
   while (cursor + w <= L + 1e-9) {
     starts.push(cursor);
-    widths.push(w);
     cursor += pitch;
   }
   const remaining = L - cursor;
   if (remaining > 1e-6) {
-    starts.push(cursor);
-    widths.push(remaining);
+    // One more full-width strip, pulled back to sit flush with the far edge rather than trimmed —
+    // its overlap with the previous strip is whatever that takes, always >= oMin (see comment above).
+    starts.push(L - w);
   }
+  const widths = starts.map(() => w);
   if (side === "right") {
     // Mirrors every strip's position about the face's midpoint, in place — index 0 stays "Strip 1"
-    // but its position flips from flush-left to flush-right, and the narrower closing strip (still
-    // whichever index it already was) ends up at the opposite (left) side instead.
-    for (let i = 0; i < starts.length; i++) starts[i] = L - starts[i] - widths[i];
+    // but its position flips from flush-left to flush-right, and the pulled-back last strip ends up
+    // flush against the opposite (left) side instead.
+    for (let i = 0; i < starts.length; i++) starts[i] = L - starts[i] - w;
   }
-  // materialWidth sums the strips' TRUE widths (the closing strip narrower than a full roll width),
-  // not n*w like calcLift's — that closing piece genuinely needs less material, not a full roll's
-  // width trimmed down and wasted.
-  const materialWidth = widths.reduce((s, x) => s + x, 0);
+  const materialWidth = starts.length * w;
   return { n: starts.length, starts, widths, overlap: oMin, materialWidth, excessWidth: materialWidth - L };
 }
 
