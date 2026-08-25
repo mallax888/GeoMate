@@ -2204,44 +2204,26 @@ function absoluteFootprint(cutPlan, origin) {
 }
 
 /**
- * Re-express an extents polygon for the 2D Cut Plan diagram specifically: x = arc-length station
- * along the (possibly multi-segment) face, y = depth in the fixed inward direction cutLengths and
- * frontReach are already measured along. localFootprint above projects onto one straight direction
- * for the whole face, which is right for stacking several lifts in the 3D view, but a real face often
- * bends across a handful of segments — projected that way, the drawn boundary line wobbles above and
- * below where the strips actually start even though the strips themselves tie up to it exactly (they're
- * placed by true arc-length station, not by this projection). Points that are actually ON the face get
- * their exact arc-length station instead, so that edge always renders as the flat baseline it truly is.
+ * Re-express an extents polygon for the 2D Cut Plan diagram specifically: one rigid rotation/
+ * translation onto the face's overall direction — the exact same transform localFootprint uses for
+ * the 3D view, just anchored on this lift's own face instead of a frame shared across several lifts.
+ * A straight rotation of a real, non-self-crossing polygon can never come out self-crossing or lose
+ * area itself, so the drawn outline always traces the true boundary shape faithfully, whatever
+ * happens to be picked as face/back.
  *
- * Only face-chain vertices get that treatment, though — an earlier version snapped EVERY boundary point
- * (including ones nowhere near the face, like the back/crest edge) onto whichever spot on the face
- * happened to be nearest. That's fine when the face is close to straight, but once the face itself is a
- * long curved run (a curved wall alignment digitized as many short segments — exactly a "face bending
- * across a handful of segments"), "nearest point on the face" stops moving monotonically with the
- * polygon's own vertex order: a back-edge point can end up nearest to an early face vertex while its
- * neighbour is nearest to a late one, so the drawn outline jumps around instead of tracing the boundary's
- * real shape — nothing like the true polyline. Off-face points instead get ONE rigid rotation/translation
- * onto the face's overall direction (same transform localFootprint uses), which can never reorder them
- * relative to each other, so the rest of the boundary always keeps its true relative shape.
+ * Two earlier versions tried to additionally straighten a face that bends across a handful of
+ * segments onto a perfectly flat baseline (either snapping every point to its nearest spot on the
+ * face, or just the true face-chain vertices) — both broke down for a real curved wall alignment
+ * digitized as many short segments: "nearest point on the face" can jump around instead of moving
+ * monotonically with the polygon's own vertex order, and which vertices actually count as "on the
+ * face" depends on chainEdges' own merge threshold, which can sweep a corner/return edge into the
+ * face chain too — in one reproduced case that collapsed the ENTIRE outline onto one flat line (every
+ * vertex "on the face"), a zero-area line nothing like the true boundary. A real face that isn't
+ * perfectly straight now shows as the true (very slightly wobbly) line it actually is rather than a
+ * suspiciously flat one — a minor cosmetic trade for never risking a garbled, misleading outline.
  */
 function faceAlignedFootprint(cutPlan) {
-  const face = cutPlan.face;
-  const inward = inwardNormal(face.dir);
-  const faceOrigin = face.edges[0].from;
-
-  const faceStations = new Map();
-  let acc = 0;
-  faceStations.set(face.edges[0].from, 0);
-  face.edges.forEach((e) => {
-    acc += e.len;
-    faceStations.set(e.to, acc);
-  });
-
-  return cutPlan.poly.map((p) => {
-    if (faceStations.has(p)) return { x: faceStations.get(p), y: 0 };
-    const rx = p.x - faceOrigin.x, ry = p.y - faceOrigin.y;
-    return { x: rx * face.dir.x + ry * face.dir.y, y: rx * inward.x + ry * inward.y };
-  });
+  return localFootprint(cutPlan, null);
 }
 
 /** Packs one product's own strips onto its own rolls (RE580 and Strata never share a roll — they're
