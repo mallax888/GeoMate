@@ -389,15 +389,15 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   border-radius: 4px;
   border: 1px solid transparent;
   background: none;
-  color: var(--ink-muted);
+  color: var(--critical);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
 }
-.product-delete-btn:hover { background: var(--surface-2); color: var(--critical); border-color: var(--line); }
-.product-delete-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-.product-delete-btn:disabled:hover { background: none; color: var(--ink-muted); border-color: transparent; }
+.product-delete-btn:hover { background: var(--critical-tint); border-color: var(--critical); }
+.product-delete-btn:disabled { opacity: 0.35; cursor: not-allowed; color: var(--ink-muted); }
+.product-delete-btn:disabled:hover { background: none; border-color: transparent; }
 
 .product-swatch { display: inline-block; margin-right: 0.35rem; }
 

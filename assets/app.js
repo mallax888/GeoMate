@@ -3332,15 +3332,24 @@ function renderCutPlanSvgManual(svg, cutPlan, productSpecs, activeProductId, row
     ghost.setAttribute("stroke-dasharray", "4,3");
     svg.appendChild(ghost);
 
+    // A fixed font-size-8 "click to place" used to sit at the same height as the strip number
+    // labels, which shrink (see labelFontSize above) once a lift has enough strips that the
+    // diagram is dense — the hint ended up both larger than and overlapping the last couple of
+    // strip numbers. Size it off the same scale, and once even that's too wide for a narrow ghost
+    // strip, fall back to a short "+" instead of letting the text run over its neighbours.
+    const hintFontSize = Math.min(8, labelFontSize);
+    const ghostPxWidth = Math.abs(xRight - xLeft);
+    const fullHintText = "click to place";
+    const fitsFull = fullHintText.length * hintFontSize * 0.62 <= ghostPxWidth + 24;
     const hint = document.createElementNS(ns, "text");
     hint.setAttribute("x", tx((ghostStart + ghostEnd) / 2).toFixed(1));
     hint.setAttribute("y", Math.max(8, ty(ghostReach.farReach) - 6).toFixed(1));
-    hint.setAttribute("font-size", "8");
+    hint.setAttribute("font-size", hintFontSize.toFixed(1));
     hint.setAttribute("font-family", "var(--font-mono)");
     hint.setAttribute("fill", colorVar);
     hint.setAttribute("text-anchor", "middle");
     hint.setAttribute("pointer-events", "none");
-    hint.textContent = "click to place";
+    hint.textContent = fitsFull ? fullHintText : "+";
     svg.appendChild(hint);
   }
 }
