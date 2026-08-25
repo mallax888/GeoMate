@@ -2249,27 +2249,59 @@ function absoluteFootprint(cutPlan, origin) {
   return cutPlan.poly.map((p) => ({ x: p.x - origin.x, y: p.y - origin.y }));
 }
 
+function polygonShoelaceArea(poly) {
+  return Math.abs(
+    poly.reduce((s, p, i) => {
+      const q = poly[(i + 1) % poly.length];
+      return s + (p.x * q.y - q.x * p.y);
+    }, 0) / 2
+  );
+}
+
 /**
- * Re-express an extents polygon for the 2D Cut Plan diagram specifically: one rigid rotation/
- * translation onto the face's overall direction — the exact same transform localFootprint uses for
- * the 3D view, just anchored on this lift's own face instead of a frame shared across several lifts.
- * A straight rotation of a real, non-self-crossing polygon can never come out self-crossing or lose
- * area itself, so the drawn outline always traces the true boundary shape faithfully, whatever
- * happens to be picked as face/back.
+ * Re-express an extents polygon for the 2D Cut Plan diagram: face-chain vertices get their exact
+ * arc-length station (y=0) so the face reads as the flat baseline the strips are actually drawn
+ * against — every strip starts flush at y=0 (frontReach is measured from the TRUE, possibly-wobbly
+ * face at its own station, not from a flattened one), so leaving real face wobble in would make a
+ * perfectly-covered design look like it has gaps between the strips and the boundary line, when
+ * nothing is actually uncovered. Every other point gets one rigid rotation onto the face's overall
+ * direction (same transform localFootprint uses for the 3D view).
  *
- * Two earlier versions tried to additionally straighten a face that bends across a handful of
- * segments onto a perfectly flat baseline (either snapping every point to its nearest spot on the
- * face, or just the true face-chain vertices) — both broke down for a real curved wall alignment
- * digitized as many short segments: "nearest point on the face" can jump around instead of moving
- * monotonically with the polygon's own vertex order, and which vertices actually count as "on the
- * face" depends on chainEdges' own merge threshold, which can sweep a corner/return edge into the
- * face chain too — in one reproduced case that collapsed the ENTIRE outline onto one flat line (every
- * vertex "on the face"), a zero-area line nothing like the true boundary. A real face that isn't
- * perfectly straight now shows as the true (very slightly wobbly) line it actually is rather than a
- * suspiciously flat one — a minor cosmetic trade for never risking a garbled, misleading outline.
+ * That mixed mapping stops being safe once the face chain isn't close to straight, though: which
+ * vertices count as "on the face" depends on chainEdges' own merge threshold, which can occasionally
+ * sweep a corner/return edge into the face chain too, and in a reproduced worst case that collapsed
+ * the ENTIRE outline onto one flat line — a zero-area shape nothing like the true boundary. Rather
+ * than risk that silently, the flattened shape's own area is checked against the true polygon's
+ * first; a bad enough mismatch falls back to a plain rigid rotation instead (never flattened, but
+ * also never garbled — see localFootprint) — a real face that's very irregular may show a faint
+ * wobble against the strips rather than a perfectly flat line, but that's a far smaller problem than
+ * a misleading outline.
  */
 function faceAlignedFootprint(cutPlan) {
-  return localFootprint(cutPlan, null);
+  const face = cutPlan.face;
+  const inward = inwardNormal(face.dir);
+  const faceOrigin = face.edges[0].from;
+
+  const faceStations = new Map();
+  let acc = 0;
+  faceStations.set(face.edges[0].from, 0);
+  face.edges.forEach((e) => {
+    acc += e.len;
+    faceStations.set(e.to, acc);
+  });
+
+  const flattened = cutPlan.poly.map((p) => {
+    if (faceStations.has(p)) return { x: faceStations.get(p), y: 0 };
+    const rx = p.x - faceOrigin.x, ry = p.y - faceOrigin.y;
+    return { x: rx * face.dir.x + ry * face.dir.y, y: rx * inward.x + ry * inward.y };
+  });
+
+  const trueArea = cutPlan.polygonArea;
+  const flatArea = polygonShoelaceArea(flattened);
+  if (trueArea > 1e-6 && Math.abs(flatArea - trueArea) / trueArea > 0.2) {
+    return localFootprint(cutPlan, null);
+  }
+  return flattened;
 }
 
 /** Packs one product's own strips onto its own rolls (RE580 and Strata never share a roll — they're
@@ -3279,7 +3311,9 @@ function renderCutPlan(results) {
           : ""
       }
       <div class="cutplan-card__body">
-        <svg class="cutplan-card__plan" viewBox="0 0 400 260" preserveAspectRatio="xMidYMid meet"></svg>
+        <div class="cutplan-card__plan-scroll" tabindex="0" role="img" aria-label="Strip cut plan diagram, RL ${escapeHtml(r.rl) || "—"}">
+          <svg class="cutplan-card__plan" viewBox="0 0 400 260" preserveAspectRatio="xMidYMid meet"></svg>
+        </div>
         <ol class="cutplan-card__strips" tabindex="0"></ol>
       </div>
     `;
@@ -3342,8 +3376,22 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
   const xs = localPoly.map((p) => p.x), ys = localPoly.map((p) => p.y);
   const minX = Math.min(0, ...xs), maxX = Math.max(face.length, ...xs);
   const minY = Math.min(0, ...ys, ...(cutPlan.frontReach || [])), maxY = Math.max(...cutLengths, ...(cutPlan.extentsReach || []), ...ys);
-  const W = 400, H = 260, pad = 16;
-  const scale = Math.min((W - pad * 2) / Math.max(maxX - minX, 1e-6), (H - pad * 2) / Math.max(maxY - minY, 1e-6));
+  // Wide enough that every strip keeps a real minimum pixel budget for its roll-number circle — a
+  // fixed 400-wide canvas forces a dense (30+ strip) lift's circles/text down past what's legible no
+  // matter how they're sized. Growing the canvas instead (the card's plan-scroll wrapper lets it
+  // overflow and scroll horizontally) means the roll number always stays readable in the diagram
+  // itself, not just the strip list beside it.
+  const pad = 16;
+  const W = Math.max(400, cutLengths.length * 14);
+  const xExtent = Math.max(maxX - minX, 1e-6), yExtent = Math.max(maxY - minY, 1e-6);
+  // Scale is driven by X alone (never clamped down by depth) so a dense lift actually gets to use
+  // the wider canvas above instead of the old width/height minimum silently cancelling it back out —
+  // depth grows the canvas's height to match instead of the true shape being squashed to fit 260px.
+  const scale = (W - pad * 2) / xExtent;
+  const H = Math.max(260, pad * 2 + yExtent * scale);
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("width", W);
+  svg.setAttribute("height", H);
   const tx = (x) => pad + (x - minX) * scale;
   const ty = (y) => H - pad - (y - minY) * scale; // flip Y so deeper into the fill reads as "up"
 

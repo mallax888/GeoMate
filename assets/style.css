@@ -935,7 +935,12 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .cutplan-manual-ghost:hover { fill-opacity: 0.4; }
 .cutplan-card__body { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
 @media (max-width: 900px) { .cutplan-card__body { grid-template-columns: 1fr; } }
-.cutplan-card__plan { width: 100%; height: auto; border-radius: 4px; background: var(--surface); }
+/* The scroll wrapper lets the diagram grow wider than its column for a dense (30+ strip) lift — see
+   renderCutPlanSvg, which sizes the svg's own viewBox/width so every roll-number circle keeps enough
+   room to stay legible instead of shrinking text below what's readable. min-width (not width) on the
+   svg itself means a normal, un-dense lift still fills the column exactly as before. */
+.cutplan-card__plan-scroll { overflow-x: auto; border-radius: 4px; }
+.cutplan-card__plan { display: block; min-width: 100%; height: auto; border-radius: 4px; background: var(--surface); }
 .cutplan-card__strips {
   list-style: none;
   margin: 0;
