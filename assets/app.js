@@ -130,39 +130,35 @@ function calcLift(L, w, oMin) {
  * The "pack from one side" alternative to calcLift's default (spread the leftover evenly) and the
  * Extend-face-length setting (grow the reported face length): every strip is full width w — never
  * trimmed narrower, since cutting a roll down by however many mm on site to close a gap is real
- * lost time for no structural benefit — at exactly oMin overlap, starting flush against whichever
- * `side` is chosen (strip 1 is always the one flush against that side, the first the crew rolls
- * out). Full-width strips step in at the exact pitch as long as the next one still fits; the very
- * last strip is instead pinned flush against the OPPOSITE edge (still full width), so its overlap
- * with its neighbour absorbs whatever's left over instead of any strip's width changing — provably
- * always >= oMin, since it can only be pulled back at most one strip-width from where exact-pitch
- * placement would have put it. Every strip is genuinely full width; only that one seam's overlap
- * varies from the rest. Returns per-strip start/width arrays (used directly as station/width in
- * computeCutPlan, or just as widths for a manually-typed length, which has no boundary to clip
- * against).
+ * lost time for no structural benefit — and EVERY seam, including the last, sits at exactly oMin —
+ * never more, since overlapping extra past the minimum is itself wasted material and a crew
+ * shouldn't have to guess whether a wider-than-usual lap is intentional. Strips step in at the
+ * exact pitch from whichever `side` is chosen (strip 1 is always the one flush against that side,
+ * the first the crew rolls out) for as long as the next one doesn't yet reach the far end; the
+ * strip that does reach it is the last one, and it's left exactly where that placement puts it —
+ * simply running past the true far edge (of the design face length, or the boundary polyline for
+ * a DXF extents/benched/battered lift) by whatever's left over, rather than being pulled back to
+ * land flush and overlap its neighbour extra to make up the difference. That overshoot is real
+ * extra material past the design line, same as any other roll waste, not a hidden extra lap.
+ * Returns per-strip start/width arrays (used directly as station/width in computeCutPlan, or just
+ * as widths for a manually-typed length, which has no boundary to clip against).
  */
 function packStripsFromSide(L, w, oMin, side) {
   if (!(L > 0) || !(w > 0) || oMin < 0 || oMin >= w) return null;
   if (L <= w) return { n: 1, starts: [0], widths: [w], overlap: 0, materialWidth: w, excessWidth: w - L };
 
   const pitch = w - oMin;
-  const starts = [];
+  const starts = [0];
   let cursor = 0;
-  while (cursor + w <= L + 1e-9) {
-    starts.push(cursor);
+  while (cursor + w < L - 1e-9) {
     cursor += pitch;
-  }
-  const remaining = L - cursor;
-  if (remaining > 1e-6) {
-    // One more full-width strip, pulled back to sit flush with the far edge rather than trimmed —
-    // its overlap with the previous strip is whatever that takes, always >= oMin (see comment above).
-    starts.push(L - w);
+    starts.push(cursor);
   }
   const widths = starts.map(() => w);
   if (side === "right") {
     // Mirrors every strip's position about the face's midpoint, in place — index 0 stays "Strip 1"
-    // but its position flips from flush-left to flush-right, and the pulled-back last strip ends up
-    // flush against the opposite (left) side instead.
+    // but its position flips from flush-left to flush-right, and the overshooting last strip ends
+    // up running past the opposite (left/start) edge instead — a negative start, by design.
     for (let i = 0; i < starts.length; i++) starts[i] = L - starts[i] - w;
   }
   const materialWidth = starts.length * w;
@@ -1653,18 +1649,23 @@ function renderDiagram(svg, L, result, w, W = 240, H = 34) {
   const { n, overlap } = result;
   const pad = 2;
   const usableW = W - pad * 2;
-  const scale = usableW / Math.max(L, result.materialWidth);
-  const pitchPx = n > 1 ? (w - overlap) * scale : 0;
   const ns = "http://www.w3.org/2000/svg";
 
-  // "Pack from one side" (packStripsFromSide) can leave one strip — always at most one — narrower
-  // than the rest, with real per-strip positions in result.starts/widths; every other packing mode
-  // stays uniform, reconstructed from the single pitch same as always.
+  // "Pack from one side" (packStripsFromSide) can leave one strip — always at most one — starting
+  // before 0 or ending past L (see that function's overshoot behaviour, packed right against `side`
+  // with everything else at exactly the minimum overlap); every other packing mode stays uniform,
+  // reconstructed from the single pitch same as always and never leaves that range.
   const starts = result.starts || Array.from({ length: n }, (_, i) => i * (w - overlap));
   const widths = result.widths || Array.from({ length: n }, () => w);
+  // Origin/scale computed off the real drawn extent, not assumed to start at 0 — packStripsFromSide's
+  // "right" side mirrors the overshooting strip to a negative start, which would otherwise clip off
+  // the left edge of the diagram.
+  const minStart = Math.min(0, ...starts);
+  const maxEnd = Math.max(L, ...starts.map((s, i) => s + widths[i]));
+  const scale = usableW / Math.max(maxEnd - minStart, 1e-6);
 
   for (let i = 0; i < n; i++) {
-    const x = pad + starts[i] * scale;
+    const x = pad + (starts[i] - minStart) * scale;
     const stripPx = widths[i] * scale;
     const rect = document.createElementNS(ns, "rect");
     rect.setAttribute("x", x.toFixed(2));
@@ -1697,15 +1698,17 @@ function renderDiagram(svg, L, result, w, W = 240, H = 34) {
 
   // Face-length dimension line beneath the strips
   const dimY = 28;
+  const lineX1 = pad + (0 - minStart) * scale;
+  const lineX2 = pad + (L - minStart) * scale;
   const line = document.createElementNS(ns, "line");
-  line.setAttribute("x1", pad);
-  line.setAttribute("x2", (pad + L * scale).toFixed(2));
+  line.setAttribute("x1", lineX1.toFixed(2));
+  line.setAttribute("x2", lineX2.toFixed(2));
   line.setAttribute("y1", dimY);
   line.setAttribute("y2", dimY);
   line.setAttribute("stroke", "var(--graphite)");
   line.setAttribute("stroke-width", "1");
   svg.appendChild(line);
-  [pad, pad + L * scale].forEach((x) => {
+  [lineX1, lineX2].forEach((x) => {
     const tick = document.createElementNS(ns, "line");
     tick.setAttribute("x1", x.toFixed(2));
     tick.setAttribute("x2", x.toFixed(2));
