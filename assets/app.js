@@ -232,24 +232,38 @@ function chainEdges(poly, angleThresholdDeg = 20) {
  * the refDir-aligned orientation isn't a simple wall face at all (a return/wrap section, an L-shape),
  * and forcing it to match its siblings anyway collapses its whole depth to a sliver instead of fixing
  * its orientation. When that happens, this shape's own natural longest-chain pick is trusted instead. */
+function backFor(sorted, face) {
+  const rest = sorted.filter((c) => c !== face);
+  let back = rest[0] || null, bestDot = back ? face.dir.x * back.dir.x + face.dir.y * back.dir.y : 1;
+  for (let i = 1; i < rest.length; i++) {
+    const c = rest[i];
+    if (c.length < face.length * 0.15) continue;
+    const dot = face.dir.x * c.dir.x + face.dir.y * c.dir.y;
+    if (dot < bestDot) { bestDot = dot; back = c; }
+  }
+  return { back, bestDot };
+}
+
+/** "Swap face/back" on a lift's Cut Plan card no longer just toggles between two options — it
+ * cycles through EVERY edge chain, longest first, as a candidate face (wrapping back around once
+ * it's been through them all). Most shapes only ever need the first click (the classic face/back
+ * swap), but an unusual boundary — a narrow return/wrap section where the "natural" long edge
+ * genuinely isn't the intended face — needs to reach an edge neither the automatic pick nor a
+ * single swap can land on. `back` is picked the same anti-parallel way regardless of which edge
+ * ends up as face, so a clean quad still pairs the right two edges together whichever one is chosen. */
+function pickFaceByIndex(chains, index) {
+  const sorted = chains.slice().sort((a, b) => b.length - a.length);
+  const face = sorted[((index % sorted.length) + sorted.length) % sorted.length];
+  const { back } = backFor(sorted, face);
+  return { face, back };
+}
+
 function pickFaceAndBack(chains, refDir = null) {
   const sorted = chains.slice().sort((a, b) => b.length - a.length);
 
-  function backFor(face) {
-    const rest = sorted.filter((c) => c !== face);
-    let back = rest[0] || null, bestDot = back ? face.dir.x * back.dir.x + face.dir.y * back.dir.y : 1;
-    for (let i = 1; i < rest.length; i++) {
-      const c = rest[i];
-      if (c.length < face.length * 0.15) continue;
-      const dot = face.dir.x * c.dir.x + face.dir.y * c.dir.y;
-      if (dot < bestDot) { bestDot = dot; back = c; }
-    }
-    return { back, bestDot };
-  }
-
   const naturalFace = sorted[0];
   let face = naturalFace;
-  let { back, bestDot } = backFor(face);
+  let { back, bestDot } = backFor(sorted, face);
 
   if (refDir) {
     let bestAlign = -1, bestChain = null;
@@ -262,7 +276,7 @@ function pickFaceAndBack(chains, refDir = null) {
     // alignment means this shape genuinely doesn't share its siblings' orientation, so trust its
     // own longest-chain pick instead of forcing a bad match.
     if (bestChain && bestAlign >= 0.85 && bestChain !== face) {
-      const alt = backFor(bestChain);
+      const alt = backFor(sorted, bestChain);
       // requireBack: only take the sibling-matched face if it still has a real opposite (clearly
       // anti-parallel, not just "not the same direction") — otherwise this shape genuinely isn't a
       // plain wall face in that orientation, and the natural pick above is the correct one to keep.
@@ -407,12 +421,11 @@ function stripBoundaryReach(station, w, poly, face, inward, vertexStations) {
   return { cutLength, farReach, nearReach, stitches };
 }
 
-function computeCutPlan(rawPoints, w, oMin, swapped, refDir = null) {
+function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null) {
   const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
   const chains = chainEdges(poly);
   if (chains.length < 2) return null;
-  let { face, back } = pickFaceAndBack(chains, refDir);
-  if (swapped && back) { const t = face; face = back; back = t; }
+  const { face, back } = faceCycle ? pickFaceByIndex(chains, faceCycle) : pickFaceAndBack(chains, refDir);
 
   const result = calcLift(face.length, w, oMin);
   if (!result) return null;
@@ -471,7 +484,7 @@ function computeCutPlan(rawPoints, w, oMin, swapped, refDir = null) {
  * does (n, cutLengths, stitches, extentsReach, frontReach, polygonArea, face, back) plus per-strip
  * product/geometry arrays the uniform layout has no need for.
  */
-function computeManualCutPlan(rawPoints, manualStrips, productSpecs, swapped, refDir = null) {
+function computeManualCutPlan(rawPoints, manualStrips, productSpecs, faceCycle, refDir = null) {
   // manualStrips may be an empty array — that's "build mode is on, nothing placed yet" — still worth
   // computing the boundary/face so the Cut Plan tab has something to draw the first click-node
   // against, rather than showing nothing until the first strip exists.
@@ -479,8 +492,7 @@ function computeManualCutPlan(rawPoints, manualStrips, productSpecs, swapped, re
   const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
   const chains = chainEdges(poly);
   if (chains.length < 2) return null;
-  let { face, back } = pickFaceAndBack(chains, refDir);
-  if (swapped && back) { const t = face; face = back; back = t; }
+  const { face, back } = faceCycle ? pickFaceByIndex(chains, faceCycle) : pickFaceAndBack(chains, refDir);
 
   const inward = inwardNormal(face.dir);
   const faceOrigin = face.edges[0].from;
@@ -956,7 +968,7 @@ function packRollsDetailed(pieces, rollLength) {
       const totalParts = Math.ceil(piece.length / rollLength);
       while (remaining > 1e-9) {
         const cut = Math.min(rollLength, remaining);
-        rolls.push({ remaining: rollLength - cut, pieces: [{ label: `${piece.label} (${part}/${totalParts})`, length: cut, extra: 0, seq: piece.seq }] });
+        rolls.push({ remaining: rollLength - cut, pieces: [{ label: `${piece.label} (${part}/${totalParts})`, key: piece.key, length: cut, extra: 0, seq: piece.seq }] });
         remaining -= cut;
         part++;
       }
@@ -964,12 +976,12 @@ function packRollsDetailed(pieces, rollLength) {
     }
     for (const roll of rolls) {
       if (roll.remaining >= piece.length - 1e-9) {
-        roll.pieces.push({ label: piece.label, length: piece.length, extra: 0, seq: piece.seq });
+        roll.pieces.push({ label: piece.label, key: piece.key, length: piece.length, extra: 0, seq: piece.seq });
         roll.remaining -= piece.length;
         return;
       }
     }
-    rolls.push({ remaining: rollLength - piece.length, pieces: [{ label: piece.label, length: piece.length, extra: 0, seq: piece.seq }] });
+    rolls.push({ remaining: rollLength - piece.length, pieces: [{ label: piece.label, key: piece.key, length: piece.length, extra: 0, seq: piece.seq }] });
   });
 
   // Use up every roll fully: whatever's left after packing goes onto that roll's last (smallest)
@@ -1000,11 +1012,17 @@ function buildRollPieces(results, productId) {
       const stripProduct = (r.stripProductIds && r.stripProductIds[i]) || r.product;
       if (stripProduct !== productId) return;
       const seq = buildIndex * 1000 + i;
-      if (len > 1e-6) pieces.push({ label: `RL ${r.rl} · Strip ${i + 1}`, length: len, seq });
+      // `label` is the human-readable "RL <rl> · Strip <n>" text shown on Roll schedule cards and
+      // printed sheets — fine to collide, since several rows can legitimately share an RL (several
+      // products/sections on one physical lift). `key` exists purely so buildRollLookup's reverse
+      // "which roll is this strip on" map doesn't collide the same way: it folds in the row's own
+      // liftId, which is unique even when the RL text isn't.
+      const liftId = r.row.dataset.liftId;
+      if (len > 1e-6) pieces.push({ label: `RL ${r.rl} · Strip ${i + 1}`, key: `${liftId}::strip${i + 1}`, length: len, seq });
       if (r.cutPlan) {
         (r.cutPlan.stitches[i] || []).forEach((s, si) => {
           const suffix = r.cutPlan.stitches[i].length > 1 ? `.${si + 1}` : "";
-          pieces.push({ label: `RL ${r.rl} · Strip ${i + 1}${suffix} stitch`, length: s.length, seq });
+          pieces.push({ label: `RL ${r.rl} · Strip ${i + 1}${suffix} stitch`, key: `${liftId}::strip${i + 1}${suffix}::stitch`, length: s.length, seq });
         });
       }
     });
@@ -1371,7 +1389,7 @@ function addLiftRow(rl = "", faceLength = "", embed = "", insertBeforeNode = nul
 function applyExtents(row, points) {
   row._extentsPoints = points;
   row._extentsPointsSaved = points;
-  row._extentsSwapped = false;
+  row._faceCycle = 0;
   row.dataset.mode = "extents";
   row.querySelector(".face-input__length").hidden = true;
   row.querySelector(".face-coords").hidden = true;
@@ -1820,10 +1838,10 @@ function computeAndRender() {
       const refDir = rl ? rlFaceDir.get(rl) || null : null;
       let cp;
       if (row._manualStrips) {
-        cp = computeManualCutPlan(row._extentsPoints, row._manualStrips, productSpecs, row._extentsSwapped, refDir);
+        cp = computeManualCutPlan(row._extentsPoints, row._manualStrips, productSpecs, row._faceCycle, refDir);
       } else {
         const p = productFor(row);
-        cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._extentsSwapped, refDir) : null;
+        cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle, refDir) : null;
       }
       if (cp) {
         cutPlanByRow.set(row, cp);
@@ -2295,29 +2313,33 @@ staggerToggle.addEventListener("change", computeAndRender);
 document.getElementById("printSequenceBtn").addEventListener("click", () => window.print());
 
 /**
- * Reverse-map each roll's pieces back to "which roll did this strip come from", keyed by the same
- * label buildRollPieces uses ("RL <rl> · Strip <n>"). A piece longer than one roll is split across
- * several ("... (1/2)", "... (2/2)") — those collapse back onto one strip with multiple roll numbers.
+ * Reverse-map each roll's pieces back to "which roll did this strip come from", keyed by each
+ * piece's own `key` (buildRollPieces — liftId + strip index, NOT the "RL <rl> · Strip <n>" display
+ * label, which several rows can legitimately share when they're different products/sections on the
+ * same physical lift; keying by that text alone would silently merge their roll numbers together).
+ * A piece longer than one roll is split across several ("... (1/2)", "... (2/2)") but keeps the same
+ * key throughout, so those still collapse back onto one strip with multiple roll numbers.
  */
 function buildRollLookup(rolls) {
   const map = new Map();
   rolls.forEach((roll, idx) => {
     roll.pieces.forEach((piece) => {
-      const baseLabel = piece.label.replace(/\s*\(\d+\/\d+\)$/, "");
-      if (!map.has(baseLabel)) map.set(baseLabel, new Set());
-      map.get(baseLabel).add(idx + 1);
+      if (!piece.key) return;
+      if (!map.has(piece.key)) map.set(piece.key, new Set());
+      map.get(piece.key).add(idx + 1);
     });
   });
   return map;
 }
 
-function rollNumbersForLabel(label, rollLookup) {
-  const rolls = rollLookup.get(label);
+function rollNumbersForLabel(key, rollLookup) {
+  const rolls = rollLookup.get(key);
   return rolls ? Array.from(rolls).sort((a, b) => a - b).join(",") : "";
 }
 
 function stripRollNumbersFor(r, rollLookup) {
-  return r.stripLengths.map((_, i) => rollNumbersForLabel(`RL ${r.rl} · Strip ${i + 1}`, rollLookup));
+  const liftId = r.row.dataset.liftId;
+  return r.stripLengths.map((_, i) => rollNumbersForLabel(`${liftId}::strip${i + 1}`, rollLookup));
 }
 
 /** Renders the same small plan diagram as the on-screen Cut Plan card, as a standalone SVG string. */
@@ -2368,7 +2390,7 @@ function buildCutPlanPrintPages(results, project) {
           const stitchRows = (r.cutPlan.stitches[i] || [])
             .map((s, si) => {
               const suffix = r.cutPlan.stitches[i].length > 1 ? `.${si + 1}` : "";
-              const stitchRolls = rollNumbersForLabel(`RL ${r.rl} · Strip ${i + 1}${suffix} stitch`, rollLookup);
+              const stitchRolls = rollNumbersForLabel(`${r.row.dataset.liftId}::strip${i + 1}${suffix}::stitch`, rollLookup);
               stitchRolls.split(",").filter(Boolean).forEach((n) => rollsUsed.add(+n));
               return `<tr class="is-stitch"><td>${i + 1}${suffix}</td><td>${fmt.m(s.length)} m</td><td>${stitchRolls}</td><td>Stitch, starts ${fmt.m(s.offset)} m back</td></tr>`;
             })
@@ -2977,7 +2999,10 @@ cutPlanList.addEventListener("click", (e) => {
   if (swapBtn) {
     const row = window.__geogridRowsById.get(swapBtn.dataset.rowId);
     if (row) {
-      row._extentsSwapped = !row._extentsSwapped;
+      // Cycles through every edge as a candidate face (see pickFaceByIndex) rather than a plain
+      // on/off swap — most shapes only need one click, but an unusual boundary can need more to
+      // reach the edge that's actually the right one.
+      row._faceCycle = (row._faceCycle || 0) + 1;
       computeAndRender();
     }
     return;
@@ -3148,7 +3173,7 @@ function fillRemainder(row, productId, productSpecs) {
   if (!spec || !(spec.w > 0)) return;
   let guard = 0;
   while (guard++ < 500) {
-    const cp = computeManualCutPlan(row._extentsPoints, row._manualStrips, productSpecs, row._extentsSwapped);
+    const cp = computeManualCutPlan(row._extentsPoints, row._manualStrips, productSpecs, row._faceCycle);
     if (!cp) break;
     const lastEnd = cp.stripEnds.length ? cp.stripEnds[cp.stripEnds.length - 1] : 0;
     if (lastEnd >= cp.faceLength - 1e-6) break;
@@ -4369,7 +4394,7 @@ function buildStateSnapshot() {
     coords: row.querySelector(".face-coords").value,
     embed: row.querySelector(".embed-length").value,
     extentsPoints: row._extentsPoints || null,
-    extentsSwapped: !!row._extentsSwapped,
+    faceCycle: row._faceCycle || 0,
     batteredLevel: !!row._batteredLevel,
     product: row.querySelector(".product-select").value,
     // A manually built mixed-product sequence — null when the row is on ordinary automatic layout.
@@ -4465,7 +4490,10 @@ function applyStateSnapshot(state) {
       modeBtn.title = "Pasted-coordinate arc length — click to switch to a straight length";
     } else if (r.mode === "extents" && Array.isArray(r.extentsPoints) && r.extentsPoints.length) {
       applyExtents(row, r.extentsPoints);
-      row._extentsSwapped = !!r.extentsSwapped;
+      // faceCycle is the current field; extentsSwapped is what a project saved before "Swap
+      // face/back" became a full cycle (see pickFaceByIndex) used — true meant exactly one swap,
+      // which is what faceCycle 1 still means, so it maps across losslessly.
+      row._faceCycle = r.faceCycle != null ? r.faceCycle : r.extentsSwapped ? 1 : 0;
       row._batteredLevel = !!r.batteredLevel;
       if (Array.isArray(r.manualStrips)) row._manualStrips = r.manualStrips;
       if (Array.isArray(r.manualStripsSaved)) row._manualStripsSaved = r.manualStripsSaved;
