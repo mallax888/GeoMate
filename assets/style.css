@@ -933,6 +933,27 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 .cutplan-manual-ghost { cursor: pointer; }
 .cutplan-manual-ghost:hover { fill-opacity: 0.4; }
+.cutplan-card__face-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.cutplan-card__face-select {
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.3rem 0.5rem;
+  text-transform: none;
+  letter-spacing: normal;
+}
 .cutplan-card__body { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
 @media (max-width: 900px) { .cutplan-card__body { grid-template-columns: 1fr; } }
 /* The scroll wrapper lets the diagram grow wider than its column for a dense (30+ strip) lift — see

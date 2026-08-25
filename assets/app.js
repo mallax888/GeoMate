@@ -297,6 +297,16 @@ function pickFaceByIndex(chains, index) {
   return { face, back };
 }
 
+/** Every candidate face chain for one lift's boundary, longest first — same sort pickFaceByIndex
+ *  uses, so an option's position in this list IS its faceCycle index. Powers the Cut Plan card's
+ *  "Face" picker: rather than clicking "Swap face/back" blind and checking the result each time,
+ *  jump straight to the edge you actually want by its length. */
+function candidateFaceChains(extentsPoints) {
+  const poly = ensureCCW(extentsPoints.map((p) => ({ x: p.x, y: p.y })));
+  const chains = chainEdges(poly);
+  return chains.slice().sort((a, b) => b.length - a.length);
+}
+
 function pickFaceAndBack(chains, refDir = null) {
   const sorted = chains.slice().sort((a, b) => b.length - a.length);
 
@@ -3176,18 +3186,6 @@ document.getElementById("rebuildBatteredBtn").addEventListener("click", () => {
 });
 
 cutPlanList.addEventListener("click", (e) => {
-  const swapBtn = e.target.closest(".cutplan-card__swap");
-  if (swapBtn) {
-    const row = window.__geogridRowsById.get(swapBtn.dataset.rowId);
-    if (row) {
-      // Cycles through every edge as a candidate face (see pickFaceByIndex) rather than a plain
-      // on/off swap — most shapes only need one click, but an unusual boundary can need more to
-      // reach the edge that's actually the right one.
-      row._faceCycle = (row._faceCycle || 0) + 1;
-      computeAndRender();
-    }
-    return;
-  }
 
   const toggleBtn = e.target.closest(".cutplan-card__manual-toggle");
   if (toggleBtn) {
@@ -3248,6 +3246,16 @@ cutPlanList.addEventListener("click", (e) => {
 });
 
 cutPlanList.addEventListener("change", (e) => {
+  const faceSelect = e.target.closest(".cutplan-card__face-select");
+  if (faceSelect) {
+    const row = window.__geogridRowsById.get(faceSelect.dataset.rowId);
+    if (row) {
+      row._faceCycle = parseInt(faceSelect.value, 10) || 0;
+      computeAndRender();
+    }
+    return;
+  }
+
   const select = e.target.closest(".cutplan-card__active-product");
   if (!select) return;
   const row = window.__geogridRowsById.get(select.dataset.rowId);
@@ -3289,11 +3297,22 @@ function renderCutPlan(results) {
     }
     r.row._manualActiveProduct = activeProductId; // remembered across renders
 
+    // Every candidate edge, longest first — an option's position here IS its faceCycle index (see
+    // pickFaceByIndex), so picking one directly jumps to that edge instead of clicking "Swap
+    // face/back" blind and checking the result each time. Listed by length since that's usually
+    // enough to tell candidates apart at a glance (the diagram/meta line confirms which one landed).
+    const faceChains = candidateFaceChains(r.row._extentsPoints);
+    const faceIdx = ((r.row._faceCycle || 0) % faceChains.length + faceChains.length) % faceChains.length;
+
     card.innerHTML = `
       <div class="cutplan-card__head">
         <span class="cutplan-card__rl">RL ${escapeHtml(r.rl) || "—"}</span>
         <span class="cutplan-card__meta">${metaParts.join(" · ")}</span>
-        <button type="button" class="btn btn--ghost cutplan-card__swap" data-row-id="${id}">Swap face/back</button>
+        <label class="cutplan-card__face-label">Face
+          <select class="cutplan-card__face-select" data-row-id="${id}">
+            ${faceChains.map((c, i) => `<option value="${i}" ${i === faceIdx ? "selected" : ""}>${fmt.m(c.length)} m${i === 0 ? " · longest" : ""}</option>`).join("")}
+          </select>
+        </label>
         <button type="button" class="btn btn--ghost cutplan-card__manual-toggle" data-row-id="${id}">${isManual ? "Auto layout" : "Build manually"}</button>
       </div>
       ${
