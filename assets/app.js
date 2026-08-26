@@ -2135,7 +2135,11 @@ function computeAndRender() {
         cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle, refDir, packSide, stripSide) : null;
         // How many stitch patches EVERY candidate face would produce, not just the active one — lets
         // the Face picker show the consequence of each option up front (see renderCutPlan) instead of
-        // the user clicking through them blind to find the one with zero patches.
+        // the user clicking through them blind to find the one with zero patches. Also records each
+        // candidate's TRUE length after extendFaceToFullExtent, not the raw pre-extension chain length
+        // candidateFaceChains reports — a corner poking out past a chain's own last vertex can add a
+        // real amount onto it (see extendFaceToFullExtent), and showing the raw figure next to a
+        // stitch count computed on the extended one told two different stories about the same option.
         if (cp) {
           const chains = candidateFaceChains(row._extentsPoints);
           // With nothing explicitly clicked (_faceCycle null), cp comes from pickFaceAndBack, which
@@ -2143,9 +2147,12 @@ function computeAndRender() {
           // longest") on its own — cp.faceIndex is what it actually used, so that's the one this
           // loop should skip recomputing, not blindly index 0.
           const activeIdx = row._faceCycle != null ? ((row._faceCycle % chains.length) + chains.length) % chains.length : cp.faceIndex ?? 0;
-          row._faceStitchCounts = chains.map((_, i) => {
+          row._faceStitchCounts = [];
+          row._faceLengths = [];
+          chains.forEach((_, i) => {
             const altCp = i === activeIdx ? cp : computeCutPlan(row._extentsPoints, p.w, p.oMin, i, refDir, packSide, stripSide);
-            return altCp.stitches.reduce((s, arr) => s + arr.length, 0);
+            row._faceStitchCounts.push(altCp.stitches.reduce((s, arr) => s + arr.length, 0));
+            row._faceLengths.push(altCp.faceLength);
           });
         }
       }
@@ -3583,6 +3590,7 @@ function renderCutPlan(results) {
       ? ((r.row._faceCycle % faceChains.length) + faceChains.length) % faceChains.length
       : r.cutPlan.faceIndex ?? 0;
     const faceStitchCounts = r.row._faceStitchCounts;
+    const faceLengths = r.row._faceLengths;
 
     card.innerHTML = `
       <div class="cutplan-card__head">
@@ -3594,7 +3602,11 @@ function renderCutPlan(results) {
               .map((c, i) => {
                 const sc = faceStitchCounts ? faceStitchCounts[i] : null;
                 const stitchLabel = sc == null ? "" : sc === 0 ? " · 0 stitches" : ` · ${sc} stitch${sc === 1 ? "" : "es"}`;
-                return `<option value="${i}" ${i === faceIdx ? "selected" : ""}>${fmt.m(c.length)} m${i === 0 ? " · longest" : ""}${stitchLabel}</option>`;
+                // The TRUE length once extendFaceToFullExtent runs (matches what the header/diagram
+                // actually shows if this option is picked), not the raw pre-extension chain length —
+                // a corner poking out past this candidate's own last vertex can add a real amount.
+                const length = faceLengths ? faceLengths[i] : c.length;
+                return `<option value="${i}" ${i === faceIdx ? "selected" : ""}>${fmt.m(length)} m${i === 0 ? " · longest" : ""}${stitchLabel}</option>`;
               })
               .join("")}
           </select>
