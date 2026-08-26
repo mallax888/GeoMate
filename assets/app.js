@@ -2779,10 +2779,7 @@ function buildCutPlanSvgMarkup(cutPlan, w, stripRollNumbers) {
   svg.setAttribute("viewBox", "0 0 400 260");
   svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
   svg.setAttribute("class", "cutplan-print-page__plan");
-  // Roll colouring is a screen-only convenience backed by the legend chip row next to the card — the
-  // printed sheet has no room for that legend and already lists roll numbers in its own table below
-  // (see cutplan-print-page__rolls), so this keeps the original per-strip circles instead.
-  renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers, false);
+  renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers);
   return svg.outerHTML;
 }
 
@@ -3656,11 +3653,8 @@ function renderCutPlan(results) {
           : ""
       }
       <div class="cutplan-card__body">
-        <div class="cutplan-card__plan-col">
-          ${isManual ? "" : `<div class="cutplan-card__roll-legend" hidden></div>`}
-          <div class="cutplan-card__plan-scroll" tabindex="0" role="img" aria-label="Strip cut plan diagram, RL ${escapeHtml(r.rl) || "—"}">
-            <svg class="cutplan-card__plan" viewBox="0 0 400 260" preserveAspectRatio="xMidYMid meet"></svg>
-          </div>
+        <div class="cutplan-card__plan-scroll" tabindex="0" role="img" aria-label="Strip cut plan diagram, RL ${escapeHtml(r.rl) || "—"}">
+          <svg class="cutplan-card__plan" viewBox="0 0 400 260" preserveAspectRatio="xMidYMid meet"></svg>
         </div>
         <ol class="cutplan-card__strips" tabindex="0"></ol>
       </div>
@@ -3707,19 +3701,7 @@ function renderCutPlan(results) {
     if (isManual) {
       renderCutPlanSvgManual(svgEl, r.cutPlan, productSpecs, activeProductId, id);
     } else {
-      const rollColors = renderCutPlanSvg(svgEl, r.cutPlan, r.w, stripRollNumbersFor(r, rollLookup));
-      const legendEl = card.querySelector(".cutplan-card__roll-legend");
-      if (legendEl) {
-        legendEl.hidden = !rollColors.useRollColor;
-        legendEl.innerHTML = rollColors.useRollColor
-          ? rollColors.uniqueRolls
-              .map(
-                (rn) =>
-                  `<span class="cutplan-card__roll-chip"><span class="cutplan-card__roll-chip-dot" style="background:${rollColors.rollColorOf[rn]}"></span>roll ${escapeHtml(rn)}</span>`
-              )
-              .join("")
-          : "";
-      }
+      renderCutPlanSvg(svgEl, r.cutPlan, r.w, stripRollNumbersFor(r, rollLookup));
     }
   });
   // A dense lift's diagram (see renderCutPlanSvg's W) can need more room than the plan/strip-list
@@ -3762,29 +3744,10 @@ function fillRemainder(row, productId, productSpecs) {
   }
 }
 
-// Qualitative palette for colouring strips by which roll they're cut from (see renderCutPlanSvg) —
-// deliberately its own token set, not a reuse of --id-1.."--id-4 (already means "product") or the
-// warn/critical hues, so a roll's colour never gets misread as a status or a product identity.
-const ROLL_COLOR_VARS = ["--roll-1", "--roll-2", "--roll-3", "--roll-4", "--roll-5", "--roll-6", "--roll-7", "--roll-8"];
-
-function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers, enableRollColor = true) {
+function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
   const ns = "http://www.w3.org/2000/svg";
   const { face, cutLengths } = cutPlan;
   const inward = inwardNormal(face.dir);
-
-  // Colour-by-roll only kicks in when it can actually stay legible: no roll data yet, or more unique
-  // rolls than the palette has distinct colours for (they'd start repeating and stop meaning
-  // anything), falls back to the original alternating accent/clay fill + per-strip roll circles.
-  const uniqueRolls = [];
-  {
-    const seen = new Set();
-    (stripRollNumbers || []).forEach((r) => {
-      if (r && !seen.has(r)) { seen.add(r); uniqueRolls.push(r); }
-    });
-  }
-  const useRollColor = enableRollColor && uniqueRolls.length > 0 && uniqueRolls.length <= ROLL_COLOR_VARS.length;
-  const rollColorOf = {};
-  if (useRollColor) uniqueRolls.forEach((r, idx) => { rollColorOf[r] = `var(${ROLL_COLOR_VARS[idx]})`; });
 
   // Face-aligned local frame: x = arc-length station along the face (left to right, strip order),
   // y = depth into the fill — every boundary point snapped to its true position relative to the face
@@ -3903,17 +3866,11 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers, enableRollColor = t
       "points",
       `${xLeft.toFixed(1)},${yNearL.toFixed(1)} ${xLeft.toFixed(1)},${yFar.toFixed(1)} ${xRight.toFixed(1)},${yFar.toFixed(1)} ${xRight.toFixed(1)},${yNearR.toFixed(1)}`
     );
-    // Coloured by roll when that stays legible (see useRollColor above) — every strip cut from the
-    // same roll shares one colour, so a roll's footprint across the wall reads at a glance instead of
-    // needing the per-strip circles below. Otherwise falls back to the original alternating fill,
-    // which just needs adjacent strips to read as separate, not to mean anything on its own.
-    const rollLabelForColor = (stripRollNumbers && stripRollNumbers[i]) || "";
-    const rollColor = useRollColor ? rollColorOf[rollLabelForColor] : null;
-    const fillColor = rollColor || (i % 2 === 0 ? "var(--accent)" : "var(--clay)");
-    const strokeColor = rollColor || (i % 2 === 0 ? "var(--accent-strong)" : "var(--clay)");
-    stripShape.setAttribute("fill", fillColor);
-    stripShape.setAttribute("fill-opacity", rollColor ? "0.82" : "0.75");
-    stripShape.setAttribute("stroke", strokeColor);
+    // Alternating between two distinct colours (not just one colour's opacity) so adjacent strips
+    // are clearly separable at a glance, even across a long dense run of similar-height rectangles.
+    stripShape.setAttribute("fill", i % 2 === 0 ? "var(--accent)" : "var(--clay)");
+    stripShape.setAttribute("fill-opacity", "0.75");
+    stripShape.setAttribute("stroke", i % 2 === 0 ? "var(--accent-strong)" : "var(--clay)");
     stripShape.setAttribute("stroke-width", "1");
     svg.appendChild(stripShape);
 
@@ -3956,11 +3913,9 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers, enableRollColor = t
     // Roll number, circled, at the bottom of the strip (near the face) — which physical roll to pull
     // this piece from, per the Roll schedule tab's packing. Pooled packing mixes lifts by length, so
     // this can jump around between neighbouring strips; use "Group rolls across N lifts" in the spec
-    // panel if you want it to stay within a band of nearby lifts instead. Skipped when the strip's
-    // own fill colour already says which roll it is (see useRollColor) — the legend above the
-    // diagram covers it instead, and the circles would just be redundant.
+    // panel if you want it to stay within a band of nearby lifts instead.
     const rollLabel = (stripRollNumbers && stripRollNumbers[i]) || "";
-    if (!useRollColor && rollLabel) {
+    if (rollLabel) {
       const margin = 6;
       const ccx = Math.max(margin + rollCircleR, Math.min(W - margin - rollCircleR, tx(station)));
       const ccy = Math.max(margin + rollCircleR, Math.min(H - margin - rollCircleR, yNear - rollCircleR - 2));
@@ -4008,8 +3963,6 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers, enableRollColor = t
       }
     }
   });
-
-  return { useRollColor, uniqueRolls, rollColorOf };
 }
 
 /**
