@@ -484,7 +484,11 @@ const STITCH_MIN = 0.05;
 
 // Reported strip/stitch lengths are rounded up to this step — practical site numbers, never a raw
 // CAD-precision decimal. Always UP: rounding must never leave a strip shorter than the design requires.
-const ROUND_STEP = 0.5;
+// Was 500mm; that coarse a step could flatten several genuinely-different true reaches (say 10.3m and
+// 10.4m) to the same reported number and then jump a full half-metre to the next one, which read as
+// arbitrary/inconsistent lengths even on a perfectly smooth boundary. 100mm still rounds to an easy
+// site number (a standard tape reads to the mm anyway) while actually tracking the true DXF shape.
+const ROUND_STEP = 0.1;
 // A raw length within this of the step below is DXF/survey noise (vertex-picking, triangulation),
 // not a real few-mm-longer requirement — snap down to the clean number instead of bumping a full
 // step up for it.
