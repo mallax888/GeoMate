@@ -3733,39 +3733,34 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
   const { face, cutLengths } = cutPlan;
   const inward = inwardNormal(face.dir);
 
-  // Face-aligned local frame: x = arc-length station along the face, y = depth into the fill — every
-  // boundary point snapped to its true position relative to the face itself (see faceAlignedFootprint),
-  // not a single straight-line projection, so a face with several segments still draws as one flat
-  // line the strips visibly tie up to. Screen orientation is rotated from that local frame: station
-  // maps to the screen's Y axis (strip 1 at the bottom, running up — reads as an elevation, the way
-  // the wall actually stands, not a plan-view strip laid flat left to right) and depth maps to the
-  // screen's X axis, face edge on the RIGHT, running left into the fill — matching how a real
-  // installer works this out: no strip runs parallel to the face, every one is still perpendicular to
-  // it, only the on-screen direction that reads as "into the fill" changed from up to left.
+  // Face-aligned local frame: x = arc-length station along the face (left to right, strip order),
+  // y = depth into the fill — every boundary point snapped to its true position relative to the face
+  // itself (see faceAlignedFootprint), not a single straight-line projection, so a face with several
+  // segments still draws as one flat baseline that the strips visibly tie up to.
   const localPoly = faceAlignedFootprint(cutPlan);
-  const stations = localPoly.map((p) => p.x), depths = localPoly.map((p) => p.y);
-  const minStation = Math.min(0, ...stations), maxStation = Math.max(face.length, ...stations);
-  const minDepth = Math.min(0, ...depths, ...(cutPlan.frontReach || [])), maxDepth = Math.max(...cutLengths, ...(cutPlan.extentsReach || []), ...depths);
-  // Tall enough that every strip keeps a real minimum pixel budget for its roll-number circle — a
-  // fixed 400-tall canvas forces a dense (30+ strip) lift's circles/text down past what's legible no
+  const xs = localPoly.map((p) => p.x), ys = localPoly.map((p) => p.y);
+  const minX = Math.min(0, ...xs), maxX = Math.max(face.length, ...xs);
+  const minY = Math.min(0, ...ys, ...(cutPlan.frontReach || [])), maxY = Math.max(...cutLengths, ...(cutPlan.extentsReach || []), ...ys);
+  // Wide enough that every strip keeps a real minimum pixel budget for its roll-number circle — a
+  // fixed 400-wide canvas forces a dense (30+ strip) lift's circles/text down past what's legible no
   // matter how they're sized. Growing the canvas instead (the card's plan-scroll wrapper lets it
-  // overflow and scroll) means the roll number always stays readable in the diagram itself, not just
-  // the strip list beside it.
+  // overflow and scroll horizontally) means the roll number always stays readable in the diagram
+  // itself, not just the strip list beside it.
   const pad = 16;
-  const H = Math.max(400, cutLengths.length * 14);
-  const stationExtent = Math.max(maxStation - minStation, 1e-6), depthExtent = Math.max(maxDepth - minDepth, 1e-6);
-  // Scale is driven by strip count alone (never clamped down by depth) so a dense lift actually gets
-  // to use the taller canvas above instead of the old width/height minimum silently cancelling it back
-  // out — depth grows the canvas's width to match instead of the true shape being squashed to fit.
-  const scale = (H - pad * 2) / stationExtent;
-  const W = Math.max(260, pad * 2 + depthExtent * scale);
+  const W = Math.max(400, cutLengths.length * 14);
+  const xExtent = Math.max(maxX - minX, 1e-6), yExtent = Math.max(maxY - minY, 1e-6);
+  // Scale is driven by X alone (never clamped down by depth) so a dense lift actually gets to use
+  // the wider canvas above instead of the old width/height minimum silently cancelling it back out —
+  // depth grows the canvas's height to match instead of the true shape being squashed to fit 260px.
+  const scale = (W - pad * 2) / xExtent;
+  const H = Math.max(260, pad * 2 + yExtent * scale);
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   svg.setAttribute("width", W);
   svg.setAttribute("height", H);
-  const sy = (station) => H - pad - (station - minStation) * scale; // station 0 at the bottom, rising
-  const dx = (depth) => pad + (maxDepth - depth) * scale; // face/near (small depth) on the right
+  const tx = (x) => pad + (x - minX) * scale;
+  const ty = (y) => H - pad - (y - minY) * scale; // flip Y so deeper into the fill reads as "up"
 
-  const poly2d = localPoly.map((p) => `${dx(p.y).toFixed(1)},${sy(p.x).toFixed(1)}`).join(" ");
+  const poly2d = localPoly.map((p) => `${tx(p.x).toFixed(1)},${ty(p.y).toFixed(1)}`).join(" ");
   const polyEl = document.createElementNS(ns, "polygon");
   polyEl.setAttribute("points", poly2d);
   polyEl.setAttribute("fill", "var(--accent-tint)");
@@ -3802,7 +3797,7 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
   // of true gap: technically not touching, but reading as one solid overlapping blob on screen. The
   // lower floor (was 3, now 2.2) matters just as much — without it, an even denser lift hits the
   // floor and overlaps outright instead of continuing to shrink.
-  const avgStripPx = (H - pad * 2) / Math.max(cutLengths.length, 1);
+  const avgStripPx = (W - pad * 2) / Math.max(cutLengths.length, 1);
   const rollCircleR = Math.max(2.2, Math.min(7.5, avgStripPx / 2 - 1.3));
 
   cutLengths.forEach((len, i) => {
@@ -3841,19 +3836,19 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
     // hidden behind a tidied-up flat baseline.
     const farReach = (cutPlan.extentsReach || [])[i] ?? len;
     const nearReach = (cutPlan.frontReach || [])[i] ?? 0;
-    const yLeftSeam = sy(leftSeam), yRightSeam = sy(rightSeam);
+    const xLeft = tx(leftSeam), xRight = tx(rightSeam);
     const depthLeft = faceDepthAtStation(face, inward, leftSeam);
     const depthRight = faceDepthAtStation(face, inward, rightSeam);
     const depthCenter = faceDepthAtStation(face, inward, station);
-    const xFar = dx(depthCenter + farReach);
-    const xNearL = dx(depthLeft + nearReach);
-    const xNearR = dx(depthRight + nearReach);
-    const xNear = (xNearL + xNearR) / 2; // used below for label/roll-circle placement only
+    const yFar = ty(depthCenter + farReach);
+    const yNearL = ty(depthLeft + nearReach);
+    const yNearR = ty(depthRight + nearReach);
+    const yNear = (yNearL + yNearR) / 2; // used below for label/roll-circle placement only
 
     const stripShape = document.createElementNS(ns, "polygon");
     stripShape.setAttribute(
       "points",
-      `${xFar.toFixed(1)},${yLeftSeam.toFixed(1)} ${xFar.toFixed(1)},${yRightSeam.toFixed(1)} ${xNearR.toFixed(1)},${yRightSeam.toFixed(1)} ${xNearL.toFixed(1)},${yLeftSeam.toFixed(1)}`
+      `${xLeft.toFixed(1)},${yNearL.toFixed(1)} ${xLeft.toFixed(1)},${yFar.toFixed(1)} ${xRight.toFixed(1)},${yFar.toFixed(1)} ${xRight.toFixed(1)},${yNearR.toFixed(1)}`
     );
     // Alternating between two distinct colours (not just one colour's opacity) so adjacent strips
     // are clearly separable at a glance, even across a long dense run of similar-height rectangles.
@@ -3867,12 +3862,12 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
     // main strip's single straight cut can't reach in one piece. Drawn dashed so it reads as its
     // own patch, not a continuation of the main strip.
     (cutPlan.stitches[i] || []).forEach((s) => {
-      const sx1 = dx(depthCenter + s.offset), sx2 = dx(depthCenter + s.offset + s.length);
+      const sy1 = ty(depthCenter + s.offset), sy2 = ty(depthCenter + s.offset + s.length);
       const stitchLine = document.createElementNS(ns, "line");
-      stitchLine.setAttribute("x1", sx1.toFixed(1));
-      stitchLine.setAttribute("y1", sy(station).toFixed(1));
-      stitchLine.setAttribute("x2", sx2.toFixed(1));
-      stitchLine.setAttribute("y2", sy(station).toFixed(1));
+      stitchLine.setAttribute("x1", tx(station).toFixed(1));
+      stitchLine.setAttribute("y1", sy1.toFixed(1));
+      stitchLine.setAttribute("x2", tx(station).toFixed(1));
+      stitchLine.setAttribute("y2", sy2.toFixed(1));
       stitchLine.setAttribute("stroke", "var(--accent-strong)");
       stitchLine.setAttribute("stroke-width", "2");
       stitchLine.setAttribute("stroke-linecap", "round");
@@ -3880,14 +3875,14 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
       svg.appendChild(stitchLine);
     });
 
-    // Small per-strip label — the strip's own sequence number (1, 2, 3…), bottom to top, always in
+    // Small per-strip label — the strip's own sequence number (1, 2, 3…), left-to-right, always in
     // order, every strip (a dense diagram shrinks the font instead of skipping numbers, so there's
     // never a confusing gap in the sequence).
     {
       const margin = 6;
       const label = document.createElementNS(ns, "text");
-      const lx = Math.max(margin, Math.min(W - margin, xFar - 8));
-      const ly = Math.max(margin, Math.min(H - margin, sy(station)));
+      const lx = Math.max(margin, Math.min(W - margin, tx(station)));
+      const ly = Math.max(margin, Math.min(H - margin, yFar - 8));
       label.setAttribute("x", lx.toFixed(1));
       label.setAttribute("y", ly.toFixed(1));
       label.setAttribute("font-size", labelFontSize.toFixed(1));
@@ -3895,20 +3890,19 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
       label.setAttribute("font-weight", "700");
       label.setAttribute("fill", "var(--ink)");
       label.setAttribute("text-anchor", "middle");
-      label.setAttribute("dominant-baseline", "central");
       label.textContent = String(i + 1);
       svg.appendChild(label);
     }
 
-    // Roll number, circled, at the face side of the strip (now the right) — which physical roll to
-    // pull this piece from, per the Roll schedule tab's packing. Pooled packing mixes lifts by
-    // length, so this can jump around between neighbouring strips; use "Group rolls across N lifts"
-    // in the spec panel if you want it to stay within a band of nearby lifts instead.
+    // Roll number, circled, at the bottom of the strip (near the face) — which physical roll to pull
+    // this piece from, per the Roll schedule tab's packing. Pooled packing mixes lifts by length, so
+    // this can jump around between neighbouring strips; use "Group rolls across N lifts" in the spec
+    // panel if you want it to stay within a band of nearby lifts instead.
     const rollLabel = (stripRollNumbers && stripRollNumbers[i]) || "";
     if (rollLabel) {
       const margin = 6;
-      const ccy = Math.max(margin + rollCircleR, Math.min(H - margin - rollCircleR, sy(station)));
-      const ccx = Math.max(margin + rollCircleR, Math.min(W - margin - rollCircleR, xNear - rollCircleR - 2));
+      const ccx = Math.max(margin + rollCircleR, Math.min(W - margin - rollCircleR, tx(station)));
+      const ccy = Math.max(margin + rollCircleR, Math.min(H - margin - rollCircleR, yNear - rollCircleR - 2));
 
       // Longer roll numbers (rolls run into the hundreds on a big job) need a smaller font to still
       // fit inside a small circle — sized relative to digit count, not a single fixed size. But once
@@ -3998,24 +3992,20 @@ function renderCutPlanSvgManual(svg, cutPlan, productSpecs, activeProductId, row
     ghostReach = stripBoundaryReach(station, ghostW, cutPlan.poly, face, inward, vertexStations);
   }
 
-  // Same rotated screen frame as the automatic diagram (see renderCutPlanSvg) — station maps to the
-  // screen's Y axis (strip 1 at the bottom, rising) and depth maps to the screen's X axis, face on
-  // the right running left into the fill — so switching a lift in or out of "Build manually" doesn't
-  // flip its diagram's orientation.
   const localPoly = faceAlignedFootprint(cutPlan);
-  const stations = localPoly.map((p) => p.x), depths = localPoly.map((p) => p.y);
-  const minStation = Math.min(0, ...stations), maxStation = Math.max(face.length, ghostEnd, ...stations);
+  const xs = localPoly.map((p) => p.x), ys = localPoly.map((p) => p.y);
+  const minX = Math.min(0, ...xs), maxX = Math.max(face.length, ghostEnd, ...xs);
   const ghostFar = ghostReach ? ghostReach.farReach : 0;
   const ghostNear = ghostReach ? ghostReach.nearReach : 0;
-  const minDepth = Math.min(0, ...depths, ...frontReach, ghostNear);
-  const maxDepth = Math.max(0, ...extentsReach, ...depths, ghostFar);
+  const minY = Math.min(0, ...ys, ...frontReach, ghostNear);
+  const maxY = Math.max(0, ...extentsReach, ...ys, ghostFar);
   const W = 400, H = 260, pad = 16;
-  const scale = Math.min((W - pad * 2) / Math.max(maxDepth - minDepth, 1e-6), (H - pad * 2) / Math.max(maxStation - minStation, 1e-6));
-  const sy = (station) => H - pad - (station - minStation) * scale;
-  const dx = (depth) => pad + (maxDepth - depth) * scale;
+  const scale = Math.min((W - pad * 2) / Math.max(maxX - minX, 1e-6), (H - pad * 2) / Math.max(maxY - minY, 1e-6));
+  const tx = (x) => pad + (x - minX) * scale;
+  const ty = (y) => H - pad - (y - minY) * scale;
 
   svg.innerHTML = "";
-  const poly2d = localPoly.map((p) => `${dx(p.y).toFixed(1)},${sy(p.x).toFixed(1)}`).join(" ");
+  const poly2d = localPoly.map((p) => `${tx(p.x).toFixed(1)},${ty(p.y).toFixed(1)}`).join(" ");
   const polyEl = document.createElementNS(ns, "polygon");
   polyEl.setAttribute("points", poly2d);
   polyEl.setAttribute("fill", "var(--accent-tint)");
@@ -4038,14 +4028,14 @@ function renderCutPlanSvgManual(svg, cutPlan, productSpecs, activeProductId, row
     const colorVar = spec && spec.colorSlot ? `var(--${spec.colorSlot})` : "var(--accent)";
     const farReach = extentsReach[i] ?? 0;
     const nearReach = frontReach[i] ?? 0;
-    const yStart = sy(start), yEnd = sy(end);
-    const xFar = dx(farReach), xNear = dx(nearReach);
+    const xLeft = tx(start), xRight = tx(end);
+    const yFar = ty(farReach), yNear = ty(nearReach);
 
     const rect = document.createElementNS(ns, "rect");
-    rect.setAttribute("x", Math.min(xFar, xNear).toFixed(1));
-    rect.setAttribute("y", Math.min(yStart, yEnd).toFixed(1));
-    rect.setAttribute("width", Math.abs(xNear - xFar).toFixed(1));
-    rect.setAttribute("height", Math.abs(yEnd - yStart).toFixed(1));
+    rect.setAttribute("x", Math.min(xLeft, xRight).toFixed(1));
+    rect.setAttribute("y", yFar.toFixed(1));
+    rect.setAttribute("width", Math.abs(xRight - xLeft).toFixed(1));
+    rect.setAttribute("height", Math.max(0, yNear - yFar).toFixed(1));
     rect.setAttribute("fill", colorVar);
     // Colour still identifies the PRODUCT (mixed-product builds need that), but adjacent strips of
     // the very same product otherwise blend into one solid block with no visible seam between them —
@@ -4058,12 +4048,12 @@ function renderCutPlanSvgManual(svg, cutPlan, productSpecs, activeProductId, row
 
     (cutPlan.stitches[i] || []).forEach((s) => {
       const station = (start + end) / 2;
-      const sx1 = dx(s.offset), sx2 = dx(s.offset + s.length);
+      const sy1 = ty(s.offset), sy2 = ty(s.offset + s.length);
       const stitchLine = document.createElementNS(ns, "line");
-      stitchLine.setAttribute("x1", sx1.toFixed(1));
-      stitchLine.setAttribute("y1", sy(station).toFixed(1));
-      stitchLine.setAttribute("x2", sx2.toFixed(1));
-      stitchLine.setAttribute("y2", sy(station).toFixed(1));
+      stitchLine.setAttribute("x1", tx(station).toFixed(1));
+      stitchLine.setAttribute("y1", sy1.toFixed(1));
+      stitchLine.setAttribute("x2", tx(station).toFixed(1));
+      stitchLine.setAttribute("y2", sy2.toFixed(1));
       stitchLine.setAttribute("stroke", colorVar);
       stitchLine.setAttribute("stroke-width", "2");
       stitchLine.setAttribute("stroke-linecap", "round");
@@ -4072,8 +4062,8 @@ function renderCutPlanSvgManual(svg, cutPlan, productSpecs, activeProductId, row
     });
 
     const label = document.createElementNS(ns, "text");
-    const lx = Math.max(6, Math.min(W - 6, xFar - 8));
-    const ly = Math.max(6, Math.min(H - 6, sy((start + end) / 2)));
+    const lx = Math.max(6, Math.min(W - 6, tx((start + end) / 2)));
+    const ly = Math.max(6, Math.min(H - 6, yFar - 8));
     label.setAttribute("x", lx.toFixed(1));
     label.setAttribute("y", ly.toFixed(1));
     label.setAttribute("font-size", labelFontSize.toFixed(1));
@@ -4081,23 +4071,22 @@ function renderCutPlanSvgManual(svg, cutPlan, productSpecs, activeProductId, row
     label.setAttribute("font-weight", "700");
     label.setAttribute("fill", "var(--ink)");
     label.setAttribute("text-anchor", "middle");
-    label.setAttribute("dominant-baseline", "central");
     label.textContent = String(i + 1);
     svg.appendChild(label);
   });
 
   if (ghostW > 0 && ghostReach) {
-    const yStart = sy(ghostStart), yEnd = sy(ghostEnd);
-    const xFar = dx(ghostReach.farReach), xNear = dx(ghostReach.nearReach);
+    const xLeft = tx(ghostStart), xRight = tx(ghostEnd);
+    const yFar = ty(ghostReach.farReach), yNear = ty(ghostReach.nearReach);
     const colorVar = activeSpec.colorSlot ? `var(--${activeSpec.colorSlot})` : "var(--accent)";
 
     const ghost = document.createElementNS(ns, "rect");
     ghost.setAttribute("class", "cutplan-manual-ghost");
     ghost.setAttribute("data-row-id", rowId);
-    ghost.setAttribute("x", Math.min(xFar, xNear).toFixed(1));
-    ghost.setAttribute("y", Math.min(yStart, yEnd).toFixed(1));
-    ghost.setAttribute("width", Math.abs(xNear - xFar).toFixed(1));
-    ghost.setAttribute("height", Math.abs(yEnd - yStart).toFixed(1));
+    ghost.setAttribute("x", Math.min(xLeft, xRight).toFixed(1));
+    ghost.setAttribute("y", yFar.toFixed(1));
+    ghost.setAttribute("width", Math.abs(xRight - xLeft).toFixed(1));
+    ghost.setAttribute("height", Math.max(0, yNear - yFar).toFixed(1));
     ghost.setAttribute("fill", colorVar);
     ghost.setAttribute("fill-opacity", "0.22");
     ghost.setAttribute("stroke", colorVar);
@@ -4111,17 +4100,16 @@ function renderCutPlanSvgManual(svg, cutPlan, productSpecs, activeProductId, row
     // strip numbers. Size it off the same scale, and once even that's too wide for a narrow ghost
     // strip, fall back to a short "+" instead of letting the text run over its neighbours.
     const hintFontSize = Math.min(8, labelFontSize);
-    const ghostPxWidth = Math.abs(xNear - xFar);
+    const ghostPxWidth = Math.abs(xRight - xLeft);
     const fullHintText = "click to place";
     const fitsFull = fullHintText.length * hintFontSize * 0.62 <= ghostPxWidth + 24;
     const hint = document.createElementNS(ns, "text");
-    hint.setAttribute("x", xFar.toFixed(1));
-    hint.setAttribute("y", Math.max(8, sy((ghostStart + ghostEnd) / 2)).toFixed(1));
+    hint.setAttribute("x", tx((ghostStart + ghostEnd) / 2).toFixed(1));
+    hint.setAttribute("y", Math.max(8, ty(ghostReach.farReach) - 6).toFixed(1));
     hint.setAttribute("font-size", hintFontSize.toFixed(1));
     hint.setAttribute("font-family", "var(--font-mono)");
     hint.setAttribute("fill", colorVar);
-    hint.setAttribute("text-anchor", "start");
-    hint.setAttribute("dominant-baseline", "central");
+    hint.setAttribute("text-anchor", "middle");
     hint.setAttribute("pointer-events", "none");
     hint.textContent = fitsFull ? fullHintText : "+";
     svg.appendChild(hint);
