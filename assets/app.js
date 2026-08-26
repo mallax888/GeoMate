@@ -325,10 +325,73 @@ function candidateFaceChains(extentsPoints) {
   return chains.slice().sort((a, b) => b.length - a.length);
 }
 
-function pickFaceAndBack(chains, refDir = null) {
+// How far behind its own plane a candidate face is allowed to leave part of the true boundary
+// before it's rejected as unsafe (see pickFaceAndBack) — every strip only ever samples FORWARD
+// (positive) from the face, so anything behind it structurally gets zero strips, not even an
+// over-length one. Real boundaries are rarely perfectly straight, so a small dip (a survey kink, a
+// slight step) is left alone rather than fighting the natural pick over noise; only a genuine
+// return/wrap section — several metres, not centimetres — trips this.
+const SEVERE_BEHIND_FACE_TOL = 1.5;
+
+function facePlaneMinDepth(chain, poly) {
+  const inward = inwardNormal(chain.dir);
+  const origin = chain.edges[0].from;
+  return Math.min(...poly.map((p) => (p.x - origin.x) * inward.x + (p.y - origin.y) * inward.y));
+}
+
+/** Total stitch count a candidate face would produce — used to break ties between several
+ *  coverage-safe candidates (see pickFaceAndBack) in favour of the tidier layout, not just
+ *  whichever happens to be longest. Same calcLift + stripBoundaryReach sweep computeCutPlan itself
+ *  runs (extendFaceToFullExtent included — skipping it would size/pitch strips against the wrong,
+ *  shorter face and total up a stitch count nothing downstream would ever actually produce), just
+ *  totalled instead of kept per-strip. */
+function countStitchesForFace(poly, rawChain, w, oMin) {
+  const chain = extendFaceToFullExtent(rawChain, poly);
+  const result = calcLift(chain.length, w, oMin);
+  if (!result) return Infinity;
+  const pitch = result.n > 1 ? w - result.overlap : 0;
+  const inward = inwardNormal(chain.dir);
+  const origin = chain.edges[0].from;
+  const vertexStations = poly
+    .map((p) => (p.x - origin.x) * chain.dir.x + (p.y - origin.y) * chain.dir.y)
+    .filter((s) => s >= 0 && s <= chain.length)
+    .sort((a, b) => a - b);
+  let stitches = 0;
+  for (let i = 0; i < result.n; i++) {
+    const station = Math.max(0, Math.min(chain.length, i * pitch + w / 2));
+    stitches += stripBoundaryReach(station, w, poly, chain, inward, vertexStations).stitches.length;
+  }
+  return stitches;
+}
+
+function pickFaceAndBack(chains, refDir = null, poly = null, w = null, oMin = null) {
   const sorted = chains.slice().sort((a, b) => b.length - a.length);
 
-  const naturalFace = sorted[0];
+  let naturalFace = sorted[0];
+  // The longest edge is the obvious face pick, but if the true boundary swings badly behind ITS OWN
+  // plane — a real return/wrap section, confirmed on real DXF data to otherwise leave that whole
+  // pocket with zero strip coverage while strips elsewhere over-reach to compensate — prefer a
+  // candidate that doesn't, over blindly taking the longest regardless. Among the coverage-safe
+  // candidates, the one with the fewest stitch patches wins (ties broken toward the longer one,
+  // sorted's own order) rather than just the first/longest safe option, which real DXF data showed
+  // can still be a needlessly patchy pick even once it's a coverage-safe one. Falls back to the
+  // natural pick if nothing safer exists (some shapes genuinely have no clean option).
+  if (poly && facePlaneMinDepth(naturalFace, poly) < -SEVERE_BEHIND_FACE_TOL) {
+    const safeCandidates = sorted.filter((c) => c.length >= naturalFace.length * 0.15 && facePlaneMinDepth(c, poly) >= -SEVERE_BEHIND_FACE_TOL);
+    if (safeCandidates.length) {
+      if (w > 0 && oMin != null) {
+        let best = safeCandidates[0], bestStitches = countStitchesForFace(poly, best, w, oMin);
+        for (let i = 1; i < safeCandidates.length; i++) {
+          const n = countStitchesForFace(poly, safeCandidates[i], w, oMin);
+          if (n < bestStitches) { best = safeCandidates[i]; bestStitches = n; }
+        }
+        naturalFace = best;
+      } else {
+        naturalFace = safeCandidates[0];
+      }
+    }
+  }
+
   let face = naturalFace;
   let { back, bestDot } = backFor(sorted, face);
 
@@ -353,7 +416,12 @@ function pickFaceAndBack(chains, refDir = null) {
       }
     }
   }
-  return { face, back };
+  // Which candidate (in the same longest-first order the Face picker dropdown lists them) this
+  // actually landed on — so the dropdown can show what's REALLY driving the diagram/stitch count
+  // below it, not just default to showing "longest" selected whenever nothing was explicitly
+  // clicked, even on a lift where the safety check above just silently picked something else.
+  const chosenIndex = sorted.indexOf(face);
+  return { face, back, chosenIndex };
 }
 
 function pointAtStation(chain, station) {
@@ -536,7 +604,7 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
   const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
   const chains = chainEdges(poly);
   if (chains.length < 2) return null;
-  const { face: pickedFace, back } = faceCycle ? pickFaceByIndex(chains, faceCycle) : pickFaceAndBack(chains, refDir);
+  const { face: pickedFace, back, chosenIndex } = faceCycle != null ? pickFaceByIndex(chains, faceCycle) : pickFaceAndBack(chains, refDir, poly, w, oMin);
   const face = extendFaceToFullExtent(pickedFace, poly);
 
   const packed = packSide ? packStripsFromSide(face.length, w, oMin, packSide) : null;
@@ -591,6 +659,7 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     poly,
     face,
     back,
+    faceIndex: chosenIndex,
     faceLength: face.length,
     n: result.n,
     overlap: result.overlap,
@@ -623,7 +692,7 @@ function computeManualCutPlan(rawPoints, manualStrips, productSpecs, faceCycle, 
   const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
   const chains = chainEdges(poly);
   if (chains.length < 2) return null;
-  const { face, back } = faceCycle ? pickFaceByIndex(chains, faceCycle) : pickFaceAndBack(chains, refDir);
+  const { face, back, chosenIndex } = faceCycle != null ? pickFaceByIndex(chains, faceCycle) : pickFaceAndBack(chains, refDir, poly);
 
   const inward = inwardNormal(face.dir);
   const faceOrigin = face.edges[0].from;
@@ -681,6 +750,7 @@ function computeManualCutPlan(rawPoints, manualStrips, productSpecs, faceCycle, 
     poly,
     face,
     back,
+    faceIndex: chosenIndex,
     faceLength: face.length,
     n: stripProductIds.length,
     cutLengths,
@@ -1395,6 +1465,13 @@ document.getElementById("addProductBtn").addEventListener("click", (e) => {
   document.getElementById("productsDetails").open = true;
   addProduct();
 });
+// The products panel now stays permanently open — collapsing it hid the project details/usage
+// panel beside the table too, which are meant to be visible at a glance, not tucked behind a
+// disclosure toggle. Cancelling <summary>'s own default click behaviour (rather than removing the
+// element) keeps every existing #productsDetails.open reference above still doing something sane.
+document.getElementById("productsSummaryHeading").addEventListener("click", (e) => {
+  e.preventDefault();
+});
 productSpecBody.addEventListener("click", (e) => {
   const btn = e.target.closest(".product-delete-btn");
   if (btn) deleteProduct(btn.dataset.id);
@@ -1547,7 +1624,11 @@ function addLiftRow(rl = "", faceLength = "", embed = "", insertBeforeNode = nul
 function applyExtents(row, points) {
   row._extentsPoints = points;
   row._extentsPointsSaved = points;
-  row._faceCycle = 0;
+  // null, not 0 — "no explicit Face pick, run the automatic one" needs to stay distinguishable from
+  // "explicitly picked candidate index 0," since those can now legitimately land on different edges
+  // (see pickFaceAndBack's negative-depth safety check). 0 used to double as both, which was
+  // harmless when the automatic pick always agreed with index 0 anyway; it no longer always does.
+  row._faceCycle = null;
   row.dataset.mode = "extents";
   row.querySelector(".face-input__length").hidden = true;
   row.querySelector(".face-coords").hidden = true;
@@ -2021,7 +2102,11 @@ function computeAndRender() {
         // the user clicking through them blind to find the one with zero patches.
         if (cp) {
           const chains = candidateFaceChains(row._extentsPoints);
-          const activeIdx = ((row._faceCycle || 0) % chains.length + chains.length) % chains.length;
+          // With nothing explicitly clicked (_faceCycle null), cp comes from pickFaceAndBack, which
+          // since the negative-depth safety check can land on a candidate other than index 0 ("the
+          // longest") on its own — cp.faceIndex is what it actually used, so that's the one this
+          // loop should skip recomputing, not blindly index 0.
+          const activeIdx = row._faceCycle != null ? ((row._faceCycle % chains.length) + chains.length) % chains.length : cp.faceIndex ?? 0;
           row._faceStitchCounts = chains.map((_, i) => {
             const altCp = i === activeIdx ? cp : computeCutPlan(row._extentsPoints, p.w, p.oMin, i, refDir, packSide, stripSide);
             return altCp.stitches.reduce((s, arr) => s + arr.length, 0);
@@ -2866,10 +2951,6 @@ function switchTab(which) {
   });
   document.getElementById("addLiftBtn").hidden = which !== "takeoff";
   if (which === "view3d" && window.__geogridResults) render3D(window.__geogridResults);
-  // Cut Plan cards can be built while this tab is hidden (e.g. an autosaved project restoring on
-  // page load) — refreshCutPlanStacking's width check can't measure anything real until the tab is
-  // actually visible, so redo it now that it is.
-  if (which === "cutplan") refreshCutPlanStacking();
 }
 
 function renderSequence(results) {
@@ -3368,7 +3449,8 @@ cutPlanList.addEventListener("change", (e) => {
   if (faceSelect) {
     const row = window.__geogridRowsById.get(faceSelect.dataset.rowId);
     if (row) {
-      row._faceCycle = parseInt(faceSelect.value, 10) || 0;
+      const parsed = parseInt(faceSelect.value, 10);
+      row._faceCycle = Number.isNaN(parsed) ? null : parsed;
       computeAndRender();
     }
     return;
@@ -3449,7 +3531,14 @@ function renderCutPlan(results) {
     // face/back" blind and checking the result each time. Listed by length since that's usually
     // enough to tell candidates apart at a glance (the diagram/meta line confirms which one landed).
     const faceChains = candidateFaceChains(r.row._extentsPoints);
-    const faceIdx = ((r.row._faceCycle || 0) % faceChains.length + faceChains.length) % faceChains.length;
+    // Not just row._faceCycle||0 — a lift with nothing explicitly clicked (_faceCycle unset) runs the
+    // automatic pick (pickFaceAndBack), which since the negative-depth safety check can now land on
+    // something other than index 0 ("longest") on its own. Showing r.cutPlan.faceIndex (what actually
+    // got used) instead of blindly defaulting to 0 keeps the dropdown truthful about which edge is
+    // really driving the diagram/stitch count below it.
+    const faceIdx = r.row._faceCycle != null
+      ? ((r.row._faceCycle % faceChains.length) + faceChains.length) % faceChains.length
+      : r.cutPlan.faceIndex ?? 0;
     const faceStitchCounts = r.row._faceStitchCounts;
 
     card.innerHTML = `
@@ -3537,24 +3626,25 @@ function renderCutPlan(results) {
   });
   // A dense lift's diagram (see renderCutPlanSvg's W) can need more room than the plan/strip-list
   // side-by-side split leaves it — rather than force horizontal scrolling to see the rest of it,
-  // drop the strip list below instead so the diagram gets the card's FULL width to lay out in. Done
-  // as a separate pass over the finished cards (not measured inline above) because this whole render
-  // can run while the Cut Plan tab itself is hidden (e.g. restoring an autosaved project on page
-  // load lands on the Takeoff table tab first) — a hidden ancestor collapses clientWidth to 0 for
-  // EVERY card, which used to make every single one stack regardless of how many strips it had. See
-  // switchTab, which re-runs this once the tab is actually visible to measure and lay out.
+  // drop the strip list below instead so the diagram gets the card's FULL width to lay out in.
   refreshCutPlanStacking();
 }
 
+// Matches renderCutPlanSvg's own W = Math.max(400, cutLengths.length * 14) — a diagram only ever
+// grows past its 400px floor once it needs the room, so comparing against that fixed number (not
+// the side-by-side column's own current pixel width) means two lifts with a similar strip count
+// always get the same layout. Comparing against the column's actual width instead used to stack
+// whichever lift's column happened to be a few px narrower at that moment and leave a similar,
+// similarly-dense lift cramped in the un-stacked layout right next to it — same strip count,
+// different treatment, for no reason a person looking at the page could see.
+const CUTPLAN_STACK_WIDTH = 400;
 function refreshCutPlanStacking() {
   document.querySelectorAll(".cutplan-card").forEach((card) => {
-    const scrollWrap = card.querySelector(".cutplan-card__plan-scroll");
     const svgEl = card.querySelector(".cutplan-card__plan");
     const body = card.querySelector(".cutplan-card__body");
-    if (!scrollWrap || !svgEl || !body) return;
-    if (scrollWrap.clientWidth === 0) return; // still hidden/unlaid-out — nothing reliable to measure yet
+    if (!svgEl || !body) return;
     const svgWidth = parseFloat(svgEl.getAttribute("width")) || 0;
-    body.classList.toggle("cutplan-card__body--stacked", svgWidth > scrollWrap.clientWidth + 1);
+    body.classList.toggle("cutplan-card__body--stacked", svgWidth > CUTPLAN_STACK_WIDTH);
   });
 }
 
@@ -4864,7 +4954,10 @@ function buildStateSnapshot() {
     coords: row.querySelector(".face-coords").value,
     embed: row.querySelector(".embed-length").value,
     extentsPoints: row._extentsPoints || null,
-    faceCycle: row._faceCycle || 0,
+    // null (not 0) means "no explicit Face pick, run the automatic one" — see applyExtents. Saved as
+    // an explicit null (JSON keeps that, unlike an omitted key), so a reloaded project can still
+    // tell that apart from an old save that never had this field at all — see applyStateSnapshot.
+    faceCycle: row._faceCycle,
     batteredLevel: !!row._batteredLevel,
     product: row.querySelector(".product-select").value,
     // A manually built mixed-product sequence — null when the row is on ordinary automatic layout.
@@ -4980,8 +5073,11 @@ function applyStateSnapshot(state) {
       applyExtents(row, r.extentsPoints);
       // faceCycle is the current field; extentsSwapped is what a project saved before "Swap
       // face/back" became a full cycle (see pickFaceByIndex) used — true meant exactly one swap,
-      // which is what faceCycle 1 still means, so it maps across losslessly.
-      row._faceCycle = r.faceCycle != null ? r.faceCycle : r.extentsSwapped ? 1 : 0;
+      // which is what faceCycle 1 still means, so it maps across losslessly. !== undefined (not
+      // != null) — a project saved by THIS version can have faceCycle explicitly null, meaning "run
+      // the automatic pick," which must survive the round-trip rather than being treated the same
+      // as a genuinely old save that never had this field and needs the extentsSwapped migration.
+      row._faceCycle = r.faceCycle !== undefined ? r.faceCycle : r.extentsSwapped ? 1 : 0;
       row._batteredLevel = !!r.batteredLevel;
       if (Array.isArray(r.manualStrips)) row._manualStrips = r.manualStrips;
       if (Array.isArray(r.manualStripsSaved)) row._manualStripsSaved = r.manualStripsSaved;
