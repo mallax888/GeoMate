@@ -1004,12 +1004,14 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
    svgWidth check in renderCutPlan — so it drops to full width, strip list below, instead of the
    diagram being forced to scroll horizontally to see the rest of it. */
 .cutplan-card__body--stacked { grid-template-columns: 1fr; }
-/* The scroll wrapper lets the diagram grow wider than its column for a dense (30+ strip) lift — see
-   renderCutPlanSvg, which sizes the svg's own viewBox/width so every roll-number circle keeps enough
-   room to stay legible instead of shrinking text below what's readable. min-width (not width) on the
-   svg itself means a normal, un-dense lift still fills the column exactly as before. */
-.cutplan-card__plan-scroll { overflow-x: auto; border-radius: 4px; }
-.cutplan-card__plan { display: block; min-width: 100%; height: auto; border-radius: 4px; background: var(--surface); }
+/* The diagram is drawn as an elevation now (see renderCutPlanSvg) — a dense lift grows TALLER, not
+   wider, so it renders at its own natural pixel size (max-width only shrinks it for a narrow column,
+   never stretches it up to fill a wide one — that used to be safe when width tracked strip count, but
+   would now blow a tall diagram's height out proportionally too). The scroll wrapper caps how tall
+   any one diagram gets on screen and scrolls internally past that, so a 40+ strip lift's card doesn't
+   dominate the whole page. */
+.cutplan-card__plan-scroll { overflow: auto; max-height: 70vh; border-radius: 4px; }
+.cutplan-card__plan { display: block; max-width: 100%; height: auto; border-radius: 4px; background: var(--surface); }
 .cutplan-card__strips {
   list-style: none;
   margin: 0;
