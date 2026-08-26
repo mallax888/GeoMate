@@ -403,11 +403,13 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 
 /* ---------- Products panel — full-width, collapsed below the 3-column layout ---------- */
 /* The product table needs real horizontal room (8 columns) that the 17rem sidebar never had —
-   spanning the whole grid instead of sitting in one track fixes that, and staying collapsed by
-   default means the Takeoff table you look at every day isn't pushed down to make room for it. */
+   spanning the whole grid instead of sitting in one track fixes that. Still built on <details> (see
+   index.html) for its free semantics/structure, but it's always open now — the project
+   details/usage panel beside the table is meant to be visible at a glance, not tucked behind a
+   disclosure toggle — so <summary> no longer has anything to click for; no pointer cursor, no
+   disclosure triangle implying it does. */
 .panel--products-full { grid-column: 1 / -1; padding: 0; position: relative; }
 .products-summary {
-  cursor: pointer;
   list-style: none;
   display: flex;
   align-items: center;
@@ -415,17 +417,6 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   padding: 1rem 8.5rem 1rem 1.2rem; /* right padding clears .products-panel__add, pinned over this row */
 }
 .products-summary::-webkit-details-marker { display: none; }
-.products-summary::before {
-  content: "";
-  width: 0;
-  height: 0;
-  border-style: solid;
-  border-width: 5px 0 5px 6px;
-  border-color: transparent transparent transparent var(--ink-muted);
-  transition: transform 0.15s ease;
-  flex: none;
-}
-#productsDetails[open] .products-summary::before { transform: rotate(90deg); }
 .products-summary__heading { margin: 0; }
 .products-count-badge {
   font-family: var(--font-mono);
