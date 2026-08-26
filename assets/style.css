@@ -418,13 +418,26 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   gap: 2.6rem; /* matches .products-full-body's own gap, so the divider below continues in a
     straight line up into this row instead of jogging sideways at the header/body seam */
   padding: 1rem 8.5rem 1rem 1.2rem; /* right padding clears .products-panel__add, pinned over this row */
+  /* One continuous rule under the whole row instead of each heading drawing its own — the two
+     headings' own .panel__heading border-bottom is cancelled below so this is the only line,
+     tying "Product list" and "Project details" together instead of leaving a gap over the divider. */
+  border-bottom: 1px solid var(--line);
 }
 .products-summary::-webkit-details-marker { display: none; }
 /* Bolder/brighter than the standard muted-grey panel heading — this one's meant to stand out more.
    flex/max-width mirror .products-panel__main exactly (same container width, padding and gap as
    .products-full-body below) so "Product list" lands at the identical width as the table column,
-   which in turn puts "Project details" at the identical x-offset as .products-panel__side. */
-.products-summary__heading { margin: 0; font-weight: 800; color: var(--ink); flex: 1 1 auto; max-width: 760px; }
+   which in turn puts "Project details" at the identical x-offset as .products-panel__side.
+   border/padding-bottom cancelled — .products-summary draws the one shared underline instead. */
+.products-summary__heading {
+  margin: 0;
+  font-weight: 900;
+  color: var(--ink);
+  flex: 1 1 auto;
+  max-width: 760px;
+  border-bottom: none;
+  padding-bottom: 0;
+}
 /* Second heading in the row — same look as "Product list", positioned via the same padding-left +
    border-left + width constraints as .products-panel__side so its divider lines up with the one
    below it and both headings sit on one continuous top-aligned row. */
