@@ -540,7 +540,7 @@ function roundToPracticalLength(value, step) {
  * builder below, which picks each strip's station and width strip-by-strip instead of from one
  * uniform pitch.
  */
-function stripBoundaryReach(station, w, poly, face, inward, vertexStations) {
+function stripBoundaryReach(station, w, poly, face, inward, vertexStations, avoidStitches = false) {
   const pt = pointAtStation(face, station);
   const segments = insideSegments(pt, inward, poly);
   const main = segments.find((s) => s.start <= 1e-6);
@@ -571,6 +571,10 @@ function stripBoundaryReach(station, w, poly, face, inward, vertexStations) {
       farReach = Math.max(farReach, m.end);
       nearReach = Math.min(nearReach, m.start);
     }
+    // Avoiding stitches: there's no separate "supplementary patch" for a pocket past a gap — the
+    // strip's own single cut has to bridge straight through it, so the far reach has to extend to
+    // the end of the LAST segment on the ray (past the gap), not just the first one.
+    if (avoidStitches && segs.length) farReach = Math.max(farReach, segs[segs.length - 1].end);
   });
 
   // Reported/cut length: the true reach rounded up to a practical site number, never below
@@ -579,9 +583,11 @@ function stripBoundaryReach(station, w, poly, face, inward, vertexStations) {
   // wasted material past the design boundary, shown separately in the diagram rather than folded
   // silently into this number.
   const cutLength = roundToPracticalLength(farReach, ROUND_STEP);
-  const stitches = segments
-    .filter((s) => s !== main && s.end - s.start > STITCH_MIN)
-    .map((s) => ({ offset: roundUpToStep(s.start, ROUND_STEP), length: roundToPracticalLength(s.end - s.start, ROUND_STEP) }));
+  const stitches = avoidStitches
+    ? []
+    : segments
+        .filter((s) => s !== main && s.end - s.start > STITCH_MIN)
+        .map((s) => ({ offset: roundUpToStep(s.start, ROUND_STEP), length: roundToPracticalLength(s.end - s.start, ROUND_STEP) }));
 
   return { cutLength, farReach, nearReach, stitches };
 }
@@ -618,7 +624,7 @@ function extendFaceToFullExtent(face, poly) {
   return { edges, length: maxStation - minStation, dir: face.dir };
 }
 
-function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide = null, stripSide = null) {
+function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide = null, stripSide = null, avoidStitches = false) {
   const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
   const chains = chainEdges(poly);
   if (chains.length < 2) return null;
@@ -664,7 +670,7 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     // not reflect the coordinate itself, or it's a no-op.
     const start = packed ? packed.starts[i] : (mirror ? result.n - 1 - i : i) * pitch;
     const station = Math.max(0, Math.min(face.length, start + width / 2));
-    const r = stripBoundaryReach(station, width, poly, face, inward, vertexStations);
+    const r = stripBoundaryReach(station, width, poly, face, inward, vertexStations, avoidStitches);
     cutLengths.push(r.cutLength);
     stitches.push(r.stitches);
     extentsReach.push(r.farReach);
@@ -1298,6 +1304,7 @@ const settingsInputs = {
   extendFace: document.getElementById("extendFaceToggle"),
   packSide: document.getElementById("packSideToggle"),
   packSideValue: document.getElementById("packSide"),
+  avoidStitches: document.getElementById("avoidStitchesToggle"),
 };
 
 const packSideHint = document.getElementById("packSideHint");
@@ -1306,6 +1313,7 @@ settingsInputs.packSide.addEventListener("change", () => {
   computeAndRender();
 });
 settingsInputs.packSideValue.addEventListener("change", computeAndRender);
+settingsInputs.avoidStitches.addEventListener("change", computeAndRender);
 
 /* ============================================================
    Products — an open-ended, editable list of rolled products (RE580, Strata, or whatever a job
@@ -1583,6 +1591,7 @@ function readSettings() {
     // changes packStripsFromSide's own behaviour.
     stripSide: settingsInputs.packSideValue.value,
     packSide: settingsInputs.packSide.checked ? settingsInputs.packSideValue.value : null,
+    avoidStitches: settingsInputs.avoidStitches.checked,
   };
 }
 
@@ -2086,7 +2095,7 @@ function validateProductSpec(p, rollLengthRawStr) {
 }
 
 function computeAndRender() {
-  const { rollGroupSize, installRate, baseLevel, extendFace, packSide, stripSide } = readSettings();
+  const { rollGroupSize, installRate, baseLevel, extendFace, packSide, stripSide, avoidStitches } = readSettings();
   const productSpecs = readProductSpecs();
   const fallbackProduct = productSpecs[products[0]?.id];
   const productFor = (row) => {
@@ -2132,7 +2141,7 @@ function computeAndRender() {
         cp = computeManualCutPlan(row._extentsPoints, row._manualStrips, productSpecs, row._faceCycle, refDir);
       } else {
         const p = productFor(row);
-        cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle, refDir, packSide, stripSide) : null;
+        cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle, refDir, packSide, stripSide, avoidStitches) : null;
         // How many stitch patches EVERY candidate face would produce, not just the active one — lets
         // the Face picker show the consequence of each option up front (see renderCutPlan) instead of
         // the user clicking through them blind to find the one with zero patches. Also records each
@@ -2150,7 +2159,7 @@ function computeAndRender() {
           row._faceStitchCounts = [];
           row._faceLengths = [];
           chains.forEach((_, i) => {
-            const altCp = i === activeIdx ? cp : computeCutPlan(row._extentsPoints, p.w, p.oMin, i, refDir, packSide, stripSide);
+            const altCp = i === activeIdx ? cp : computeCutPlan(row._extentsPoints, p.w, p.oMin, i, refDir, packSide, stripSide, avoidStitches);
             row._faceStitchCounts.push(altCp.stitches.reduce((s, arr) => s + arr.length, 0));
             row._faceLengths.push(altCp.faceLength);
           });
@@ -5048,6 +5057,7 @@ function buildStateSnapshot() {
       extendFace: settingsInputs.extendFace.checked,
       packSide: settingsInputs.packSide.checked,
       packSideValue: settingsInputs.packSideValue.value,
+      avoidStitches: settingsInputs.avoidStitches.checked,
     },
     products: snapshotProductRows(),
     rows,
@@ -5087,6 +5097,7 @@ function applyStateSnapshot(state) {
     settingsInputs.packSide.checked = !!s.packSide;
     packSideHint.hidden = !s.packSide;
   }
+  if (s.avoidStitches != null) settingsInputs.avoidStitches.checked = !!s.avoidStitches;
 
   // A project saved before the product list became editable (version 1) stored RE580's spec as
   // fixed settings.* fields and Strata's as a separate top-level strata block instead of a products
@@ -5329,6 +5340,7 @@ document.getElementById("newProjectBtn").addEventListener("click", () => {
   settingsInputs.packSide.checked = false;
   settingsInputs.packSideValue.value = "left";
   packSideHint.hidden = true;
+  settingsInputs.avoidStitches.checked = false;
 
   renderProductTable(defaultProductRows());
   resetLinerInputs();
