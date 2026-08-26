@@ -357,7 +357,7 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .spec-table td .field__unit input { width: 100%; text-align: right; }
 .product-name-col { display: flex; align-items: center; gap: 0.4rem; }
 .product-row-num { font-family: var(--font-mono); font-size: 0.72rem; color: var(--ink-muted); flex: none; }
-.product-name-input { width: 100%; min-width: 7rem; font-family: var(--font-display); font-weight: 600; border: none; background: none; color: var(--ink); padding: 0.4rem 0.1rem; }
+.product-name-input { width: 100%; min-width: 7rem; font-family: var(--font-display); font-weight: 800; font-size: 1.05em; border: none; background: none; color: var(--ink); padding: 0.4rem 0.1rem; }
 .product-name-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
 .product-swatch-col { width: 1.4rem; }
 /* Pinned to the right edge of the table's own scroll container — a narrow sidebar can't fit every
@@ -421,23 +421,27 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .products-summary::-webkit-details-marker { display: none; }
 /* Bolder/brighter than the standard muted-grey panel heading — this one's meant to stand out more. */
 .products-summary__heading { margin: 0; font-weight: 800; color: var(--ink); }
-.products-count-badge {
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  font-weight: 600;
-  color: var(--ink-muted);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 0.15rem 0.55rem;
-}
 /* Same slot "+ Add lift" sits in above the Takeoff table — one consistent place to look for
  * "add a row" everywhere in the app. A sibling of <details>, not nested inside <summary> (see the
  * HTML comment above it), positioned to land in the same corner it'd occupy if it were inline. */
 .products-panel__add { position: absolute; top: 0.85rem; right: 1.2rem; z-index: 1; }
-.products-full-body { display: flex; gap: 1.75rem; align-items: flex-start; padding: 0 1.2rem 1.3rem; border-top: 1px solid var(--line); margin-top: -1px; padding-top: 1rem; }
+.products-full-body { display: flex; gap: 2.6rem; align-items: flex-start; padding: 0 1.2rem 1.3rem; border-top: 1px solid var(--line); margin-top: -1px; padding-top: 1rem; }
 .products-panel__main { flex: 1 1 auto; min-width: 0; max-width: 760px; }
-.products-panel__side { flex: 1 1 320px; min-width: 280px; max-width: 520px; display: flex; flex-direction: column; gap: 1.3rem; }
+/* border-left + top padding pull this column's own top edge down to line up with the first product
+   ROW (not the table header above it) and give it a clear visual break from the table beside it —
+   the padding figure matches the table header row's own height (see .spec-table th) so "Project
+   details" and the first product name sit on the same line. */
+.products-panel__side {
+  flex: 1 1 320px;
+  min-width: 280px;
+  max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  gap: 1.3rem;
+  padding-top: 2.55rem;
+  padding-left: 2.6rem;
+  border-left: 1px solid var(--line);
+}
 @media (max-width: 1080px) {
   /* align-items: flex-start (set above for the side-by-side row layout, keeping the shorter side
      panel from stretching to match the table's height) applies to the CROSS axis either way — once
@@ -446,7 +450,10 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
      stretch, the product spec table's natural (wide) content width wins instead of the container's,
      and .table-scroll's overflow-x:auto has nothing narrower than that to actually clip against. */
   .products-full-body { flex-direction: column; align-items: stretch; }
-  .products-panel__side { max-width: none; }
+  /* The side-by-side treatment (left border, top padding matched to the table header) only makes
+     sense next to the table — stacked into one column it reads as an odd stray line and dead space
+     above nothing, so it's replaced with a plain top border and normal padding instead. */
+  .products-panel__side { max-width: none; padding-top: 1.3rem; padding-left: 0; border-left: none; border-top: 1px solid var(--line); }
 }
 @media (max-width: 760px) {
   .products-panel__add { position: static; display: block; width: calc(100% - 2.4rem); margin: 1rem auto 0; }
