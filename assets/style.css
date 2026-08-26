@@ -415,22 +415,36 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   list-style: none;
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 2.6rem; /* matches .products-full-body's own gap, so the divider below continues in a
+    straight line up into this row instead of jogging sideways at the header/body seam */
   padding: 1rem 8.5rem 1rem 1.2rem; /* right padding clears .products-panel__add, pinned over this row */
 }
 .products-summary::-webkit-details-marker { display: none; }
-/* Bolder/brighter than the standard muted-grey panel heading — this one's meant to stand out more. */
-.products-summary__heading { margin: 0; font-weight: 800; color: var(--ink); }
+/* Bolder/brighter than the standard muted-grey panel heading — this one's meant to stand out more.
+   flex/max-width mirror .products-panel__main exactly (same container width, padding and gap as
+   .products-full-body below) so "Product list" lands at the identical width as the table column,
+   which in turn puts "Project details" at the identical x-offset as .products-panel__side. */
+.products-summary__heading { margin: 0; font-weight: 800; color: var(--ink); flex: 1 1 auto; max-width: 760px; }
+/* Second heading in the row — same look as "Product list", positioned via the same padding-left +
+   border-left + width constraints as .products-panel__side so its divider lines up with the one
+   below it and both headings sit on one continuous top-aligned row. */
+.products-summary__heading--details {
+  flex: 1 1 320px;
+  min-width: 280px;
+  max-width: 520px;
+  padding-left: 2.6rem;
+  border-left: 1px solid var(--line);
+}
 /* Same slot "+ Add lift" sits in above the Takeoff table — one consistent place to look for
  * "add a row" everywhere in the app. A sibling of <details>, not nested inside <summary> (see the
  * HTML comment above it), positioned to land in the same corner it'd occupy if it were inline. */
 .products-panel__add { position: absolute; top: 0.85rem; right: 1.2rem; z-index: 1; }
 .products-full-body { display: flex; gap: 2.6rem; align-items: flex-start; padding: 0 1.2rem 1.3rem; border-top: 1px solid var(--line); margin-top: -1px; padding-top: 1rem; }
 .products-panel__main { flex: 1 1 auto; min-width: 0; max-width: 760px; }
-/* border-left + top padding pull this column's own top edge down to line up with the first product
-   ROW (not the table header above it) and give it a clear visual break from the table beside it —
-   the padding figure matches the table header row's own height (see .spec-table th) so "Project
-   details" and the first product name sit on the same line. */
+/* Its own heading now lives up in .products-summary (next to "Product list") instead of repeating
+   here, so this column just starts flush with .products-panel__main's table — both already share
+   the same top padding via .products-full-body. border-left + padding-left continue the divider
+   started by .products-summary__heading--details directly above, in one unbroken line. */
 .products-panel__side {
   flex: 1 1 320px;
   min-width: 280px;
@@ -438,7 +452,6 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   display: flex;
   flex-direction: column;
   gap: 1.3rem;
-  padding-top: 2.55rem;
   padding-left: 2.6rem;
   border-left: 1px solid var(--line);
 }
@@ -458,6 +471,10 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 @media (max-width: 760px) {
   .products-panel__add { position: static; display: block; width: calc(100% - 2.4rem); margin: 1rem auto 0; }
   .products-summary { padding-right: 1.2rem; flex-wrap: wrap; }
+  /* Once "Project details" wraps onto its own line below "Product list", the divider it borrows
+     from .products-panel__side no longer connects to anything beside it — drop the indent/border
+     here so it just reads as a second plain heading stacked underneath, same as it appears below. */
+  .products-summary__heading--details { padding-left: 0; border-left: none; max-width: none; }
 }
 .project-details__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem 0.9rem; }
 .project-details__grid input {
