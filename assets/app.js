@@ -1404,8 +1404,8 @@ function productFieldEl(id, field) {
 function buildProductRowHtml(row) {
   return `
     <tr class="product-row" data-id="${row.id}">
-      <td class="product-swatch-col"><span class="swatch swatch--${row.colorSlot}"></span></td>
-      <td class="product-name-col"><span class="product-row-num" aria-hidden="true"></span><input class="product-name-input" data-field="name" value="${escapeHtml(row.name)}" placeholder="Product name" aria-label="Product name" /></td>
+      <td class="product-swatch-col"><span class="product-swatch-wrap"><span class="swatch swatch--${row.colorSlot}"></span><span class="product-row-num" aria-hidden="true"></span></span></td>
+      <td class="product-name-col"><input class="product-name-input" data-field="name" value="${escapeHtml(row.name)}" placeholder="Product name" aria-label="Product name" /></td>
       <td class="num"><div class="field__unit"><input type="number" data-field="w" min="0.1" step="0.05" value="${escapeHtml(row.w)}" aria-label="Roll width" /><em>m</em></div></td>
       <td class="num"><div class="field__unit"><input type="number" data-field="oMinMm" min="0" step="10" value="${escapeHtml(row.oMinMm)}" aria-label="Minimum overlap" /><em>mm</em></div></td>
       <td class="num"><div class="field__unit"><input type="number" data-field="rollLength" min="1" step="1" value="${escapeHtml(row.rollLength)}" aria-label="Roll length" /><em>m</em></div></td>

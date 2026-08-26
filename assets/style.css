@@ -356,10 +356,14 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .spec-table td .field__unit { width: 100%; min-width: 5.4rem; }
 .spec-table td .field__unit input { width: 100%; text-align: right; }
 .product-name-col { display: flex; align-items: center; gap: 0.4rem; }
-.product-row-num { font-family: var(--font-mono); font-size: 0.72rem; color: var(--ink-muted); flex: none; }
 .product-name-input { width: 100%; min-width: 7rem; font-family: var(--font-display); font-weight: 800; font-size: 1.05em; border: none; background: none; color: var(--ink); padding: 0.4rem 0.1rem; }
 .product-name-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
-.product-swatch-col { width: 1.4rem; }
+/* "#" header (was an sr-only "Colour" label) is now a real, centered column — the row number sits
+   paired with the colour dot underneath it instead of inline before the product name. */
+.product-num-col { text-align: center; }
+.product-swatch-col { width: 2.4rem; text-align: center; }
+.product-swatch-wrap { display: inline-flex; align-items: center; gap: 0.35rem; }
+.product-row-num { font-family: var(--font-mono); font-size: 0.72rem; color: var(--ink-muted); flex: none; }
 /* Pinned to the right edge of the table's own scroll container — a narrow sidebar can't fit every
    column at once (see .table-scroll), and a delete button that only exists off-screen at some
    scroll position a user has no reason to know about isn't discoverable. Sticky keeps it reachable
