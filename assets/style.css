@@ -690,6 +690,11 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   background: var(--accent-tint);
   border-color: var(--accent-tint);
 }
+/* An odd number of stats leaves the last one alone in its row, with an empty gap beside it where
+   its sibling would sit. Span it across both columns instead so every row is a full rectangle —
+   this only fires when the last stat really is the odd one out (nth-child position is odd), so it
+   self-corrects if a stat is ever added or removed. */
+.stat:last-child:nth-child(odd) { grid-column: 1 / -1; }
 .stat--highlight .stat__label { color: var(--accent-strong); opacity: 0.85; }
 .stat--highlight .stat__value { color: var(--accent-strong); font-size: 1.4rem; }
 .stat__label {
