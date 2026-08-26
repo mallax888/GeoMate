@@ -325,7 +325,16 @@ h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
   border: none;
   background: transparent;
   min-width: 0;
+  color: var(--ink);
 }
+/* Without an explicit colour, a typed value falls back to the browser's default form-control text
+   while an empty field's placeholder falls back to the browser's own much fainter native grey — a
+   real, unset "0" (like an untyped cost/roll) reads as a barely-visible ghost next to any sibling
+   field that already has a value, making that value look like it's "shouting" by comparison purely
+   from the contrast, not from anything actually different about it. Both ends pinned to the app's
+   own ink/ink-muted tokens instead keeps every field in a row reading at a consistent weight
+   regardless of which ones happen to be filled in yet. */
+.field__unit input::placeholder { color: var(--ink-muted); opacity: 1; }
 .field__unit em {
   font-style: normal;
   font-family: var(--font-mono);
