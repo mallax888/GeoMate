@@ -767,6 +767,14 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
      the value down to consume the leftover space keeps every value in a row lined up on one baseline
      regardless of how its own label happened to wrap. */
   margin-top: auto;
+  /* A big enough total (material cost on a large job, a six-figure roll count) can render wider than
+     the tile in this narrow sidebar even though it fits fine in ordinary testing — a webfont that
+     fails to load and falls back to a wider system monospace, real browser zoom, a bigger number than
+     usual. Without this the number just spills straight past the card's own border instead of
+     adjusting. Wrapping it (a `$` and thousands-comma string has no natural break point otherwise) is
+     safe here — .stat is a flex column, so a wrapped value just makes its own box a little taller
+     instead of ever overflowing sideways. */
+  overflow-wrap: anywhere;
 }
 .stat__value small { font-size: 0.65rem; font-weight: 400; color: var(--ink-muted); }
 /* Every stat now carries a hint slot (see index.html), even boxes that never show one — reserving
