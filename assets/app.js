@@ -444,6 +444,20 @@ function pointAtStation(chain, station) {
 }
 
 /**
+ * True perpendicular depth of the REAL wall at an arbitrary station along the face, relative to the
+ * fixed average-bearing line every strip is square-cut against — walks the actual DXF vertices (via
+ * pointAtStation), not the averaged direction, so it captures exactly how far forward/back the true
+ * boundary sits at that point. 0 for a wall that really is dead straight there; a genuine survey
+ * wobble or slight dogleg between vertices shows up as a small nonzero value. Positive = further
+ * into the fill than the average line.
+ */
+function faceDepthAtStation(face, inward, station) {
+  const origin = face.edges[0].from;
+  const pt = pointAtStation(face, station);
+  return (pt.x - origin.x) * inward.x + (pt.y - origin.y) * inward.y;
+}
+
+/**
  * All "inside the polygon" intervals along a ray from `origin` in direction `dir`, found via the
  * even-odd rule (count boundary crossings; odd = inside). This is deliberately global — every edge
  * of the polygon is tested, not just a designated "back" chain — and even-odd is well-defined even
@@ -2449,9 +2463,16 @@ function faceAlignedFootprint(cutPlan) {
   });
 
   const flattened = cutPlan.poly.map((p) => {
-    if (faceStations.has(p)) return { x: faceStations.get(p), y: 0 };
     const rx = p.x - faceOrigin.x, ry = p.y - faceOrigin.y;
-    return { x: rx * face.dir.x + ry * face.dir.y, y: rx * inward.x + ry * inward.y };
+    // x (station) still comes from the exact arc-length walk for a face vertex — consistent with
+    // how every strip's own position along the face is placed (see pointAtStation) — rather than a
+    // straight-line projection, which would drift slightly for a point off the average bearing.
+    // y (depth) is the true perpendicular position now, not forced to 0: a face that isn't
+    // perfectly straight (survey noise, or a real slight dogleg between vertices) really does sit a
+    // little off the average line the strips are square-cut to, and the outline should show that
+    // rather than silently drawing it dead flat.
+    const x = faceStations.has(p) ? faceStations.get(p) : rx * face.dir.x + ry * face.dir.y;
+    return { x, y: rx * inward.x + ry * inward.y };
   });
 
   const trueArea = cutPlan.polygonArea;
@@ -3683,6 +3704,7 @@ function fillRemainder(row, productId, productSpecs) {
 function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
   const ns = "http://www.w3.org/2000/svg";
   const { face, cutLengths } = cutPlan;
+  const inward = inwardNormal(face.dir);
 
   // Face-aligned local frame: x = arc-length station along the face (left to right, strip order),
   // y = depth into the fill — every boundary point snapped to its true position relative to the face
@@ -3779,32 +3801,41 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
       leftSeam = Math.min(prevSeam, nextSeam);
       rightSeam = Math.max(prevSeam, nextSeam);
     }
-    // Strips are drawn as real rectangles — square cut, same convention as the manual takeoffs —
-    // running from the true front boundary out to the true far boundary (sampled across the strip's
-    // own width in computeCutPlan), so there's never a gap between the grid and the extents on either side.
+    // Strips are drawn as square-cut shapes — flat top (one straight cut, same convention as the
+    // manual takeoffs), but the NEAR edge follows the true wall position at each seam instead of a
+    // flat line: a wall that isn't perfectly straight (survey/vertex noise, or a real slight dogleg)
+    // means neighbouring strips' true tie-in points genuinely sit at very slightly different depths,
+    // and that's exactly what needs to be readable straight off this diagram on site rather than
+    // hidden behind a tidied-up flat baseline.
     const farReach = (cutPlan.extentsReach || [])[i] ?? len;
     const nearReach = (cutPlan.frontReach || [])[i] ?? 0;
     const xLeft = tx(leftSeam), xRight = tx(rightSeam);
-    const yFar = ty(farReach), yNear = ty(nearReach);
+    const depthLeft = faceDepthAtStation(face, inward, leftSeam);
+    const depthRight = faceDepthAtStation(face, inward, rightSeam);
+    const depthCenter = faceDepthAtStation(face, inward, station);
+    const yFar = ty(depthCenter + farReach);
+    const yNearL = ty(depthLeft + nearReach);
+    const yNearR = ty(depthRight + nearReach);
+    const yNear = (yNearL + yNearR) / 2; // used below for label/roll-circle placement only
 
-    const rect = document.createElementNS(ns, "rect");
-    rect.setAttribute("x", Math.min(xLeft, xRight).toFixed(1));
-    rect.setAttribute("y", yFar.toFixed(1));
-    rect.setAttribute("width", Math.abs(xRight - xLeft).toFixed(1));
-    rect.setAttribute("height", Math.max(0, yNear - yFar).toFixed(1));
+    const stripShape = document.createElementNS(ns, "polygon");
+    stripShape.setAttribute(
+      "points",
+      `${xLeft.toFixed(1)},${yNearL.toFixed(1)} ${xLeft.toFixed(1)},${yFar.toFixed(1)} ${xRight.toFixed(1)},${yFar.toFixed(1)} ${xRight.toFixed(1)},${yNearR.toFixed(1)}`
+    );
     // Alternating between two distinct colours (not just one colour's opacity) so adjacent strips
     // are clearly separable at a glance, even across a long dense run of similar-height rectangles.
-    rect.setAttribute("fill", i % 2 === 0 ? "var(--accent)" : "var(--clay)");
-    rect.setAttribute("fill-opacity", "0.75");
-    rect.setAttribute("stroke", i % 2 === 0 ? "var(--accent-strong)" : "var(--clay)");
-    rect.setAttribute("stroke-width", "1");
-    svg.appendChild(rect);
+    stripShape.setAttribute("fill", i % 2 === 0 ? "var(--accent)" : "var(--clay)");
+    stripShape.setAttribute("fill-opacity", "0.75");
+    stripShape.setAttribute("stroke", i % 2 === 0 ? "var(--accent-strong)" : "var(--clay)");
+    stripShape.setAttribute("stroke-width", "1");
+    svg.appendChild(stripShape);
 
     // Stitch patches — a separate small piece further back along the same line, past a gap the
     // main strip's single straight cut can't reach in one piece. Drawn dashed so it reads as its
     // own patch, not a continuation of the main strip.
     (cutPlan.stitches[i] || []).forEach((s) => {
-      const sy1 = ty(s.offset), sy2 = ty(s.offset + s.length);
+      const sy1 = ty(depthCenter + s.offset), sy2 = ty(depthCenter + s.offset + s.length);
       const stitchLine = document.createElementNS(ns, "line");
       stitchLine.setAttribute("x1", tx(station).toFixed(1));
       stitchLine.setAttribute("y1", sy1.toFixed(1));
