@@ -1393,10 +1393,16 @@ function buildProductRowHtml(row) {
   `;
 }
 
-/** The count badge next to the Products heading — the one hint of what's in there at a glance. */
+/** The count badge next to the Products heading — the one hint of what's in there at a glance. Just
+ *  the number visually: the heading right beside it already says "Products", so spelling the word
+ *  out again here ("2 products" next to "Products") was pure redundancy, not extra information. The
+ *  full "N products" still goes on aria-label, since a screen reader announcing the heading then a
+ *  bare number loses that context sighted users get for free from the adjacent heading text. */
 function updateProductsCountBadge() {
   const badge = document.getElementById("productsCountBadge");
-  if (badge) badge.textContent = `${products.length} product${products.length === 1 ? "" : "s"}`;
+  if (!badge) return;
+  badge.textContent = String(products.length);
+  badge.setAttribute("aria-label", `${products.length} product${products.length === 1 ? "" : "s"}`);
 }
 
 /** Numbers each product row 1, 2, 3… by its current position in the table — a plain DOM-order pass
