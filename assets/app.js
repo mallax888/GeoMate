@@ -2017,6 +2017,11 @@ function renderDiagramManual(svg, L, cutPlan, productSpecs, W = 240, H = 34) {
 const fmt = {
   int: (v) => v.toLocaleString(undefined, { maximumFractionDigits: 0 }),
   m: (v) => v.toLocaleString(undefined, { maximumFractionDigits: 2 }),
+  // Always exactly one decimal, even for a whole number — cut lengths are already rounded to the
+  // nearest 100mm (see ROUND_STEP), so a fixed single decimal never hides or invents precision; it
+  // just stops "13 m" and "13.3 m" sitting in the same list looking like two different kinds of
+  // number when they're really the same kind, one just happened to round off cleaner.
+  m1: (v) => v.toFixed(1),
   mm: (v) => Math.round(v * 1000).toLocaleString(),
   pct: (v) => `${v.toFixed(1)}%`,
   // No currency symbol/code assumed — the input's own "$" unit label already says what's being
@@ -3682,26 +3687,27 @@ function renderCutPlan(results) {
       // the running end-of-sequence position, which its width feeds into) exactly the same way
       // inserting or undoing one already does — computeManualCutPlan always rebuilds the whole
       // sequence from _manualStrips, so this is just as safe as any other edit to the list.
-      const productBit = isManual
-        ? ` — <select class="cutplan-card__strip-product" aria-label="Strip ${i + 1} product" data-row-id="${id}" data-strip-index="${i}">${products
+      const midBit = isManual
+        ? `<select class="cutplan-card__strip-product" aria-label="Strip ${i + 1} product" data-row-id="${id}" data-strip-index="${i}">${products
             .map((p) => `<option value="${p.id}" ${p.id === r.stripProductIds[i] ? "selected" : ""}>${escapeHtml((productSpecs[p.id] && productSpecs[p.id].label) || p.id)}</option>`)
             .join("")}</select>`
-        : "";
-      const rollBit = rollNumsForList && rollNumsForList[i] ? ` — roll ${escapeHtml(rollNumsForList[i])}` : "";
+        : rollNumsForList && rollNumsForList[i]
+        ? `<span class="cutplan-card__roll-pill">roll ${escapeHtml(rollNumsForList[i])}</span>`
+        : "<span></span>";
       // A manually built strip's length is otherwise entirely computed from where it lands against
       // the boundary — no way to say "actually, cut this one to 8 m" if the crew's real cut differs
       // from that. An explicit override (see computeManualCutPlan) lets any placed strip, finished
       // build or not, be corrected directly here instead of undoing back to it and re-placing.
       const lenBit = isManual
-        ? `cut to <input type="number" class="cutplan-card__strip-len" aria-label="Strip ${i + 1} cut length, metres" data-row-id="${id}" data-strip-index="${i}" value="${len.toFixed(2)}" step="0.05" min="0.05"> m`
-        : `cut to ${fmt.m(len)} m`;
-      li.innerHTML = `<span>Strip ${i + 1}${productBit}${rollBit}</span><span>${lenBit}</span>`;
+        ? `<input type="number" class="cutplan-card__strip-len" aria-label="Strip ${i + 1} cut length, metres" data-row-id="${id}" data-strip-index="${i}" value="${len.toFixed(2)}" step="0.05" min="0.05"> m`
+        : `${fmt.m1(len)} m`;
+      li.innerHTML = `<span class="cutplan-card__strip-label">Strip</span><span class="cutplan-card__strip-chip">${i + 1}</span>${midBit}<span class="cutplan-card__strip-cut">${lenBit}</span>`;
       stripsList.appendChild(li);
 
       (r.cutPlan.stitches[i] || []).forEach((s, si) => {
         const stitchLi = document.createElement("li");
         stitchLi.classList.add("is-stitch");
-        stitchLi.innerHTML = `<span>Strip ${i + 1} — stitch${(r.cutPlan.stitches[i].length > 1 ? " " + (si + 1) : "")}</span><span>${fmt.m(s.length)} m, starts ${fmt.m(s.offset)} m back from face</span>`;
+        stitchLi.innerHTML = `<span>Strip ${i + 1} — stitch${(r.cutPlan.stitches[i].length > 1 ? " " + (si + 1) : "")}</span><span>${fmt.m1(s.length)} m, starts ${fmt.m1(s.offset)} m back from face</span>`;
         stripsList.appendChild(stitchLi);
       });
     });

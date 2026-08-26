@@ -1019,17 +1019,49 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   font-variant-numeric: tabular-nums;
   max-height: 160px;
   overflow-y: auto;
+  overflow-x: auto;
   border: 1px solid var(--line);
   border-radius: 4px;
 }
 .cutplan-card__strips li {
   display: flex;
-  justify-content: space-between;
-  padding: 0.25rem 0.5rem;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.6rem;
   border-bottom: 1px solid var(--line);
+  /* Manual mode adds a product picker into this same row (see renderCutPlan) — on a narrow column
+     that plus the strip chip/label and the cut-length field can genuinely need more width than the
+     column has. Scrolling the one row horizontally keeps every field intact and readable instead of
+     shrinking any of them down past legible, or worse, clipping the cut length out of view. */
+  min-width: max-content;
 }
 .cutplan-card__strips li:last-child { border-bottom: none; }
-.cutplan-card__strips li.is-stitch { color: var(--accent-strong); background: var(--accent-tint); font-style: italic; }
+.cutplan-card__strips li.is-stitch { justify-content: space-between; color: var(--accent-strong); background: var(--accent-tint); font-style: italic; }
+.cutplan-card__strip-label { flex: none; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-muted); }
+.cutplan-card__strip-chip {
+  flex: none;
+  min-width: 1.6em;
+  height: 1.6em;
+  padding: 0 0.3rem;
+  border-radius: 5px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.72rem;
+}
+.cutplan-card__roll-pill {
+  flex: none;
+  font-size: 0.66rem;
+  color: var(--ink-muted);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.08rem 0.5rem;
+}
+.cutplan-card__strip-cut { flex: none; margin-left: auto; font-weight: 700; color: var(--accent-strong); white-space: nowrap; }
 .cutplan-card__strip-len {
   width: 3.6em;
   font: inherit;
@@ -1049,6 +1081,7 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   border: 1px solid var(--line);
   border-radius: 3px;
   padding: 0.05rem 0.25rem;
+  flex: none;
   max-width: 8em;
 }
 .cutplan-card__finished-badge {
