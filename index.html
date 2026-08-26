@@ -54,32 +54,50 @@
         <span id="productsCountBadge" class="products-count-badge"></span>
       </summary>
       <div class="products-full-body">
-        <div class="table-scroll">
-          <table class="spec-table" id="productSpecTable">
-            <thead>
-              <tr>
-                <th scope="col"><span class="sr-only">Colour</span></th>
-                <th scope="col">Name</th>
-                <th scope="col" class="num">Roll width</th>
-                <th scope="col" class="num">Min overlap</th>
-                <th scope="col" class="num">Roll length</th>
-                <th scope="col" class="num">Cost/roll</th>
-                <th scope="col" class="num">Wrap/lap</th>
-                <th scope="col"><span class="sr-only">Actions</span></th>
-              </tr>
-            </thead>
-            <tbody id="productSpecBody"></tbody>
-          </table>
+        <div class="products-panel__main">
+          <div class="table-scroll">
+            <table class="spec-table" id="productSpecTable">
+              <thead>
+                <tr>
+                  <th scope="col"><span class="sr-only">Colour</span></th>
+                  <th scope="col">Name</th>
+                  <th scope="col" class="num">Roll width</th>
+                  <th scope="col" class="num">Min overlap</th>
+                  <th scope="col" class="num">Roll length</th>
+                  <th scope="col" class="num">Cost/roll</th>
+                  <th scope="col" class="num">Wrap/lap</th>
+                  <th scope="col"><span class="sr-only">Actions</span></th>
+                </tr>
+              </thead>
+              <tbody id="productSpecBody"></tbody>
+            </table>
+          </div>
+          <p class="generator__hint">
+            Each product is its own roll spec — width, minimum overlap, roll length, cost, and an optional
+            wrap/lap allowance (extra length folded onto every strip's cut length, e.g. a wrap around the
+            compacted face and a lap under the next lift up — not modelled as a strip diagram detail, just
+            added straight onto the material length; leave at 0 for a product that doesn't need it). Pick
+            the product per lift with the selector next to its RL. A product already used on a lift can't
+            be deleted — reassign or delete those lifts first.
+          </p>
+          <p id="productSpecWarning" class="warning-text" hidden></p>
         </div>
-        <p class="generator__hint">
-          Each product is its own roll spec — width, minimum overlap, roll length, cost, and an optional
-          wrap/lap allowance (extra length folded onto every strip's cut length, e.g. a wrap around the
-          compacted face and a lap under the next lift up — not modelled as a strip diagram detail, just
-          added straight onto the material length; leave at 0 for a product that doesn't need it). Pick
-          the product per lift with the selector next to its RL. A product already used on a lift can't
-          be deleted — reassign or delete those lifts first.
-        </p>
-        <p id="productSpecWarning" class="warning-text" hidden></p>
+        <div class="products-panel__side">
+          <div class="project-details">
+            <h3 class="panel__subheading">Project details</h3>
+            <div class="project-details__grid">
+              <label class="field"><span>Site / job name</span><input type="text" id="projSiteJobName" /></label>
+              <label class="field"><span>PO / job number</span><input type="text" id="projPoNumber" /></label>
+              <label class="field"><span>Prepared by</span><input type="text" id="projPreparedBy" /></label>
+              <label class="field"><span>Date</span><input type="date" id="projDate" /></label>
+            </div>
+            <p class="generator__hint">Feeds the PDF/CSV export cover sheet automatically.</p>
+          </div>
+          <div class="product-usage">
+            <h3 class="panel__subheading">Product usage this project</h3>
+            <div id="productUsageList" class="product-usage__list"></div>
+          </div>
+        </div>
       </div>
     </details>
   </section>

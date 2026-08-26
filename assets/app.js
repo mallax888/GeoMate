@@ -2472,6 +2472,63 @@ function renderSummary(results, productSpecs, rollGroupSize, installRate, baseLe
   }
 
   updateProgressStats();
+  renderProductUsage(results, rolls, productSpecs);
+}
+
+/** Live per-product breakdown (share of area, roll count, cost) shown beside the product spec table
+ *  — area is summed strip-by-strip off each result's own stripProductIds (right for a mixed manual
+ *  lift, not just a single-product automatic one), rolls/cost straight off the already-packed rolls
+ *  (which are already correctly partitioned per product — see packRollsForProduct). */
+function renderProductUsage(results, rolls, productSpecs) {
+  const list = document.getElementById("productUsageList");
+  if (!list) return;
+
+  const areaByProduct = new Map();
+  results.forEach((r) => {
+    r.stripLengths.forEach((len, i) => {
+      const pid = r.stripProductIds[i];
+      areaByProduct.set(pid, (areaByProduct.get(pid) || 0) + len * r.stripWidths[i]);
+    });
+    if (r.cutPlan && r.cutPlan.stitches) {
+      r.cutPlan.stitches.forEach((group, i) => {
+        const pid = r.stripProductIds[i];
+        group.forEach((s) => areaByProduct.set(pid, (areaByProduct.get(pid) || 0) + s.length * r.stripWidths[i]));
+      });
+    }
+  });
+  const rollsByProduct = new Map();
+  const costByProduct = new Map();
+  rolls.forEach((roll) => {
+    rollsByProduct.set(roll.product, (rollsByProduct.get(roll.product) || 0) + 1);
+    if (roll.costPerRoll > 0) costByProduct.set(roll.product, (costByProduct.get(roll.product) || 0) + roll.costPerRoll);
+  });
+  const totalArea = Array.from(areaByProduct.values()).reduce((s, v) => s + v, 0);
+
+  const usedProducts = products.filter((p) => (areaByProduct.get(p.id) || 0) > 1e-9);
+  if (!usedProducts.length) {
+    list.innerHTML = `<p class="empty-state">No lifts yet — usage appears once you add some.</p>`;
+    return;
+  }
+  list.innerHTML = usedProducts
+    .map((p) => {
+      const area = areaByProduct.get(p.id) || 0;
+      const rollCount = rollsByProduct.get(p.id) || 0;
+      const cost = costByProduct.get(p.id) || 0;
+      const pct = totalArea > 0 ? (area / totalArea) * 100 : 0;
+      const label = (productSpecs[p.id] && productSpecs[p.id].label) || p.id;
+      const colorVar = p.colorSlot ? `var(--${p.colorSlot})` : "var(--accent)";
+      const costBit = cost > 0 ? ` · ${fmt.cost(cost)}` : "";
+      return `
+        <div class="product-usage__row">
+          <div class="product-usage__head">
+            <span class="product-usage__name"><span class="product-usage__dot" style="background:${colorVar}"></span>${escapeHtml(label)}</span>
+            <span class="product-usage__stats">${fmt.pct(pct)} · ${fmt.m(area)} m² · ${fmt.int(rollCount)} roll${rollCount === 1 ? "" : "s"}${costBit}</span>
+          </div>
+          <div class="product-usage__bar"><div class="product-usage__bar-fill" style="width:${pct.toFixed(1)}%;background:${colorVar}"></div></div>
+        </div>
+      `;
+    })
+    .join("");
 }
 
 /* ============================================================
@@ -2685,10 +2742,20 @@ window.addEventListener("afterprint", () => {
 document.getElementById("exportFullPdfBtn").addEventListener("click", () => {
   const results = window.__geogridResults || [];
   const project = document.getElementById("projectName").value || "GeoMate";
+  const projectDetailsBits = [
+    ["Site / job", document.getElementById("projSiteJobName").value],
+    ["PO / job #", document.getElementById("projPoNumber").value],
+    ["Prepared by", document.getElementById("projPreparedBy").value],
+    ["Date", document.getElementById("projDate").value],
+  ].filter(([, v]) => v);
+  const projectDetailsLine = projectDetailsBits.length
+    ? `<p class="export-sheet__meta">${projectDetailsBits.map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(v)}`).join(" &nbsp;·&nbsp; ")}</p>`
+    : "";
 
   const coverSheet = `
     <section class="export-sheet">
       <h2>${escapeHtml(project)} — material schedule</h2>
+      ${projectDetailsLine}
       <dl class="export-sheet__stats">
         <div><dt>Lifts</dt><dd>${fmt.int(document.querySelectorAll("#liftTableBody .lift-row").length)}</dd></div>
         <div><dt>Total strips</dt><dd>${document.getElementById("statStrips").textContent}</dd></div>
@@ -4527,9 +4594,18 @@ document.getElementById("exportBtn").addEventListener("click", () => {
   const { rollGroupSize, installRate, baseLevel } = readSettings();
   const productSpecs = readProductSpecs();
   const project = document.getElementById("projectName").value || "geomate";
+  const projectDetailsLines = [
+    ["Site / job name", document.getElementById("projSiteJobName").value],
+    ["PO / job number", document.getElementById("projPoNumber").value],
+    ["Prepared by", document.getElementById("projPreparedBy").value],
+    ["Date", document.getElementById("projDate").value],
+  ]
+    .filter(([, v]) => v)
+    .map(([k, v]) => `${csvEscape(k)},${csvEscape(v)}`);
 
   const lines = [
     `Project,${csvEscape(project)}`,
+    ...projectDetailsLines,
     "",
     "Products",
     "Name,Roll width (m),Min overlap (mm),Roll length (m),Cost per roll,Wrap/lap allowance (m)",
@@ -4801,6 +4877,12 @@ function buildStateSnapshot() {
   return {
     version: 2,
     projectName: document.getElementById("projectName").value,
+    projectDetails: {
+      siteJobName: document.getElementById("projSiteJobName").value,
+      poNumber: document.getElementById("projPoNumber").value,
+      preparedBy: document.getElementById("projPreparedBy").value,
+      date: document.getElementById("projDate").value,
+    },
     settings: {
       rollGroupSize: settingsInputs.rollGroupSize.value,
       installRate: settingsInputs.installRate.value,
@@ -4832,6 +4914,11 @@ function applyStateSnapshot(state) {
   if (!state || (!hasRows && !hasLiner)) return false;
 
   if (state.projectName != null) document.getElementById("projectName").value = state.projectName;
+  const pd = state.projectDetails || {};
+  document.getElementById("projSiteJobName").value = pd.siteJobName || "";
+  document.getElementById("projPoNumber").value = pd.poNumber || "";
+  document.getElementById("projPreparedBy").value = pd.preparedBy || "";
+  document.getElementById("projDate").value = pd.date || "";
   const s = state.settings || {};
   if (s.rollGroupSize != null) settingsInputs.rollGroupSize.value = s.rollGroupSize;
   if (s.installRate != null) settingsInputs.installRate.value = s.installRate;
@@ -5059,6 +5146,9 @@ document.getElementById("importProjectInput").addEventListener("change", async (
 
 document.getElementById("projectName").addEventListener("input", saveAutosave);
 document.getElementById("projectName").addEventListener("input", refreshProjectList);
+["projSiteJobName", "projPoNumber", "projPreparedBy", "projDate"].forEach((id) => {
+  document.getElementById(id).addEventListener("input", saveAutosave);
+});
 
 /** Clears the table, settings, and liner inputs back to their defaults — the working autosave slot
  *  reflects that empty state again too (computeAndRender saves it), so reopening this same page
@@ -5068,6 +5158,9 @@ document.getElementById("newProjectBtn").addEventListener("click", () => {
   if (!window.confirm("Clear everything and start a new blank project? Anything not saved under a project name will be lost.")) return;
 
   document.getElementById("projectName").value = "Untitled cut-face reinforcement";
+  ["projSiteJobName", "projPoNumber", "projPreparedBy", "projDate"].forEach((id) => {
+    document.getElementById(id).value = "";
+  });
   settingsInputs.rollGroupSize.value = "";
   settingsInputs.installRate.value = "";
   settingsInputs.baseLevel.value = "";
