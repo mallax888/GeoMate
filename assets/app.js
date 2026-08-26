@@ -364,7 +364,7 @@ function countStitchesForFace(poly, rawChain, w, oMin) {
   return stitches;
 }
 
-function pickFaceAndBack(chains, refDir = null, poly = null, w = null, oMin = null) {
+function pickFaceAndBack(chains, refDir = null, poly = null, w = null, oMin = null, neighborDir = null) {
   const sorted = chains.slice().sort((a, b) => b.length - a.length);
 
   let naturalFace = sorted[0];
@@ -372,14 +372,27 @@ function pickFaceAndBack(chains, refDir = null, poly = null, w = null, oMin = nu
   // plane — a real return/wrap section, confirmed on real DXF data to otherwise leave that whole
   // pocket with zero strip coverage while strips elsewhere over-reach to compensate — prefer a
   // candidate that doesn't, over blindly taking the longest regardless. Among the coverage-safe
-  // candidates, the one with the fewest stitch patches wins (ties broken toward the longer one,
-  // sorted's own order) rather than just the first/longest safe option, which real DXF data showed
-  // can still be a needlessly patchy pick even once it's a coverage-safe one. Falls back to the
-  // natural pick if nothing safer exists (some shapes genuinely have no clean option).
+  // candidates: if one lines up with `neighborDir` (the previous elevation's own pick — real DXF
+  // data: more than one safe candidate can exist, and the fewest-stitch tiebreak alone picked one
+  // running a genuinely different direction from every neighbouring level, not the SAME continuous
+  // wall run they all agree on), that one wins; otherwise the fewest stitch patches wins (ties
+  // broken toward the longer one, sorted's own order) rather than just the first/longest safe
+  // option. Falls back to the natural pick if nothing safer exists (some shapes genuinely have no
+  // clean option).
   if (poly && facePlaneMinDepth(naturalFace, poly) < -SEVERE_BEHIND_FACE_TOL) {
     const safeCandidates = sorted.filter((c) => c.length >= naturalFace.length * 0.15 && facePlaneMinDepth(c, poly) >= -SEVERE_BEHIND_FACE_TOL);
     if (safeCandidates.length) {
-      if (w > 0 && oMin != null) {
+      let neighborMatch = null;
+      if (neighborDir) {
+        let bestAlign = 0.85; // same "real match" bar as the refDir block below — a middling alignment isn't a genuine match
+        safeCandidates.forEach((c) => {
+          const align = Math.abs(c.dir.x * neighborDir.x + c.dir.y * neighborDir.y);
+          if (align >= bestAlign) { bestAlign = align; neighborMatch = c; }
+        });
+      }
+      if (neighborMatch) {
+        naturalFace = neighborMatch;
+      } else if (w > 0 && oMin != null) {
         let best = safeCandidates[0], bestStitches = countStitchesForFace(poly, best, w, oMin);
         for (let i = 1; i < safeCandidates.length; i++) {
           const n = countStitchesForFace(poly, safeCandidates[i], w, oMin);
@@ -410,7 +423,9 @@ function pickFaceAndBack(chains, refDir = null, poly = null, w = null, oMin = nu
       // requireBack: only take the sibling-matched face if it still has a real opposite (clearly
       // anti-parallel, not just "not the same direction") — otherwise this shape genuinely isn't a
       // plain wall face in that orientation, and the natural pick above is the correct one to keep.
-      if (alt.back && alt.bestDot < -0.3) {
+      // Also re-checks the SAME coverage-safety condition as the natural pick above — cheap defence
+      // in depth in case a sibling's alignment ever happened to match an unsafe candidate.
+      if (alt.back && alt.bestDot < -0.3 && (!poly || facePlaneMinDepth(bestChain, poly) >= -SEVERE_BEHIND_FACE_TOL)) {
         face = bestChain;
         back = alt.back;
       }
@@ -624,11 +639,11 @@ function extendFaceToFullExtent(face, poly) {
   return { edges, length: maxStation - minStation, dir: face.dir };
 }
 
-function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide = null, stripSide = null, avoidStitches = false) {
+function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide = null, stripSide = null, avoidStitches = false, neighborDir = null) {
   const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
   const chains = chainEdges(poly);
   if (chains.length < 2) return null;
-  const { face: pickedFace, back, chosenIndex } = faceCycle != null ? pickFaceByIndex(chains, faceCycle) : pickFaceAndBack(chains, refDir, poly, w, oMin);
+  const { face: pickedFace, back, chosenIndex } = faceCycle != null ? pickFaceByIndex(chains, faceCycle) : pickFaceAndBack(chains, refDir, poly, w, oMin, neighborDir);
   const face = extendFaceToFullExtent(pickedFace, poly);
 
   const packed = packSide ? packStripsFromSide(face.length, w, oMin, packSide) : null;
@@ -708,7 +723,7 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
  * does (n, cutLengths, stitches, extentsReach, frontReach, polygonArea, face, back) plus per-strip
  * product/geometry arrays the uniform layout has no need for.
  */
-function computeManualCutPlan(rawPoints, manualStrips, productSpecs, faceCycle, refDir = null) {
+function computeManualCutPlan(rawPoints, manualStrips, productSpecs, faceCycle, refDir = null, neighborDir = null) {
   // manualStrips may be an empty array — that's "build mode is on, nothing placed yet" — still worth
   // computing the boundary/face so the Cut Plan tab has something to draw the first click-node
   // against, rather than showing nothing until the first strip exists.
@@ -716,7 +731,7 @@ function computeManualCutPlan(rawPoints, manualStrips, productSpecs, faceCycle, 
   const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
   const chains = chainEdges(poly);
   if (chains.length < 2) return null;
-  const { face, back, chosenIndex } = faceCycle != null ? pickFaceByIndex(chains, faceCycle) : pickFaceAndBack(chains, refDir, poly);
+  const { face, back, chosenIndex } = faceCycle != null ? pickFaceByIndex(chains, faceCycle) : pickFaceAndBack(chains, refDir, poly, null, null, neighborDir);
 
   const inward = inwardNormal(face.dir);
   const faceOrigin = face.edges[0].from;
@@ -2132,16 +2147,25 @@ function computeAndRender() {
   // reference direction (in table order, top to bottom); every later row at that same RL is biased
   // toward matching it (see pickFaceAndBack) instead of picking blind.
   const rlFaceDir = new Map();
+  // Falls back to the PREVIOUS row's own face direction when this RL has no same-RL sibling to bias
+  // from yet — real DXF data: a lift whose natural face gets safety-rejected (see pickFaceAndBack)
+  // can have more than one candidate that's individually coverage-safe, and without this the tie
+  // isn't broken toward the one that's actually the same continuous wall run every neighbouring
+  // elevation already agrees on, only toward whichever has the fewest stitches in isolation. Only
+  // ever nudges a lift whose OWN candidates include a genuinely well-aligned, still-coverage-safe
+  // match (see the alignment/back-edge/depth checks in pickFaceAndBack) — a real corner two
+  // elevations apart simply won't have one, and falls straight back to its own natural pick.
+  let prevFaceDir = null;
   rows.forEach((row) => {
     if (row.dataset.mode === "extents" && row._extentsPoints) {
       const rl = row.querySelector(".rl-input").value.trim();
       const refDir = rl ? rlFaceDir.get(rl) || null : null;
       let cp;
       if (row._manualStrips) {
-        cp = computeManualCutPlan(row._extentsPoints, row._manualStrips, productSpecs, row._faceCycle, refDir);
+        cp = computeManualCutPlan(row._extentsPoints, row._manualStrips, productSpecs, row._faceCycle, refDir, prevFaceDir);
       } else {
         const p = productFor(row);
-        cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle, refDir, packSide, stripSide, avoidStitches) : null;
+        cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle, refDir, packSide, stripSide, avoidStitches, prevFaceDir) : null;
         // How many stitch patches EVERY candidate face would produce, not just the active one — lets
         // the Face picker show the consequence of each option up front (see renderCutPlan) instead of
         // the user clicking through them blind to find the one with zero patches. Also records each
@@ -2168,6 +2192,7 @@ function computeAndRender() {
       if (cp) {
         cutPlanByRow.set(row, cp);
         if (rl && !rlFaceDir.has(rl)) rlFaceDir.set(rl, cp.face.dir);
+        prevFaceDir = cp.face.dir;
       }
     }
   });
