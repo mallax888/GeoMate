@@ -1364,7 +1364,7 @@ function buildProductRowHtml(row) {
   return `
     <tr class="product-row" data-id="${row.id}">
       <td class="product-swatch-col"><span class="swatch swatch--${row.colorSlot}"></span></td>
-      <td><input class="product-name-input" data-field="name" value="${escapeHtml(row.name)}" placeholder="Product name" aria-label="Product name" /></td>
+      <td class="product-name-col"><span class="product-row-num" aria-hidden="true"></span><input class="product-name-input" data-field="name" value="${escapeHtml(row.name)}" placeholder="Product name" aria-label="Product name" /></td>
       <td class="num"><div class="field__unit"><input type="number" data-field="w" min="0.1" step="0.05" value="${escapeHtml(row.w)}" aria-label="Roll width" /><em>m</em></div></td>
       <td class="num"><div class="field__unit"><input type="number" data-field="oMinMm" min="0" step="10" value="${escapeHtml(row.oMinMm)}" aria-label="Minimum overlap" /><em>mm</em></div></td>
       <td class="num"><div class="field__unit"><input type="number" data-field="rollLength" min="1" step="1" value="${escapeHtml(row.rollLength)}" aria-label="Roll length" /><em>m</em></div></td>
@@ -1375,11 +1375,20 @@ function buildProductRowHtml(row) {
   `;
 }
 
-/** The count badge next to the (collapsed by default) Products summary — the one hint of what's in
- *  there without having to open it. */
+/** The count badge next to the Products heading — the one hint of what's in there at a glance. */
 function updateProductsCountBadge() {
   const badge = document.getElementById("productsCountBadge");
   if (badge) badge.textContent = `${products.length} product${products.length === 1 ? "" : "s"}`;
+}
+
+/** Numbers each product row 1, 2, 3… by its current position in the table — a plain DOM-order pass
+ *  rather than baking the index into buildProductRowHtml, so it stays correct after any add/delete
+ *  without every call site needing to know its own position in the full list. */
+function renumberProductRows() {
+  productSpecBody.querySelectorAll(".product-row").forEach((tr, i) => {
+    const num = tr.querySelector(".product-row-num");
+    if (num) num.textContent = `${i + 1}`;
+  });
 }
 
 /** Full rebuild from a list of complete row specs — used at boot and when restoring a saved/
@@ -1390,6 +1399,7 @@ function renderProductTable(rows) {
   productSpecBody.innerHTML = rows.map(buildProductRowHtml).join("");
   populateProductSelects();
   updateProductsCountBadge();
+  renumberProductRows();
 }
 
 function addProduct() {
@@ -1398,6 +1408,7 @@ function addProduct() {
   productSpecBody.insertAdjacentHTML("beforeend", buildProductRowHtml(row));
   populateProductSelects();
   updateProductsCountBadge();
+  renumberProductRows();
   computeAndRender();
   productFieldEl(row.id, "name")?.focus();
 }
@@ -1410,6 +1421,7 @@ function deleteProduct(id) {
   productRowEl(id)?.remove();
   populateProductSelects();
   updateProductsCountBadge();
+  renumberProductRows();
   computeAndRender();
 }
 

@@ -355,6 +355,8 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .spec-table tbody tr:hover { background: var(--surface-2); }
 .spec-table td .field__unit { width: 100%; min-width: 5.4rem; }
 .spec-table td .field__unit input { width: 100%; text-align: right; }
+.product-name-col { display: flex; align-items: center; gap: 0.4rem; }
+.product-row-num { font-family: var(--font-mono); font-size: 0.72rem; color: var(--ink-muted); flex: none; }
 .product-name-input { width: 100%; min-width: 7rem; font-family: var(--font-display); font-weight: 600; border: none; background: none; color: var(--ink); padding: 0.4rem 0.1rem; }
 .product-name-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
 .product-swatch-col { width: 1.4rem; }
