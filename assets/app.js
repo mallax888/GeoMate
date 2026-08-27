@@ -848,20 +848,22 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     };
   }
 
-  // A genuine corner within the face (see splitFaceIntoCornerSegments): every segment but the one
-  // built LAST is laid at a plain full-width grid, anchored at its OWN starting end (the corner it's
-  // approached from, or a true end of the wall for whichever segment is built first) — its last
-  // strip is free to run past the NEXT corner uncut, same as a crew would just keep going rather than
-  // stop short for a precise cut. Only the segment built LAST fits its strips exactly to what's left
-  // (today's ordinary calcLift behaviour), since that end is a true end of the wall, not another
-  // corner to run past. Segments are normally walked in the face's own direction (segment 0 first, at
-  // the true face origin) — "Strip 1 starts from Right" flips which physical end the build actually
-  // starts from, so a mirrored lift walks cornerSegments in reverse and, within each one, measures
-  // and steps from that segment's own FAR end instead of its near one (reverseChain), while every
-  // real-world boundary lookup still uses the segment's true, unflipped inward normal — a mirrored
-  // direction changes which end strips are numbered/anchored from, never which side is "into the fill".
+  // A genuine corner within the face (see splitFaceIntoCornerSegments): every segment is fitted
+  // exactly between its own two boundaries — a true end of the wall, or the corner shared with its
+  // neighbour on either side — the same evenly-spread-overlap fit (calcLift) already used for an
+  // ordinary straight lift. Strips stay full width always (never a narrow custom cut); a segment
+  // shorter than one strip just gets one strip's worth of harmless excess past its own far end,
+  // exactly like calcLift already handles for any short straight lift. Building every segment flush
+  // at BOTH ends this way means a corner is just a normal seam between two anchored strips — no strip
+  // barrels through into its neighbour's territory uncut, which is what the earlier "may overrun"
+  // design did and which left a redundant, wasted strip wherever a segment was short. Segments are
+  // walked in the face's own direction by default (segment 0 first, at the true face origin) —
+  // "Strip 1 starts from Right" flips which physical end the build actually starts from, so a
+  // mirrored lift walks cornerSegments in reverse and, within each one, measures/steps from that
+  // segment's own FAR end instead of its near one (reverseChain), while every real-world boundary
+  // lookup still uses the segment's true, unflipped inward normal — a mirrored direction changes
+  // which end strips are numbered/anchored from, never which side is "into the fill".
   const mirror = stripSide === "right";
-  let overallOverlap = oMin;
   let overallResultN = 0;
   const cutLengths = [];
   const stitches = [];
@@ -876,7 +878,9 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
   // consumer that just needs a sane, non-crashing single-axis number.
   const stripSegmentIndex = []; // which corner segment (its ORIGINAL index) each strip belongs to.
   const cornerStations = []; // flattened station of each corner (there's one fewer than segments).
-  let flatOffset = 0; // running total of true (not overrun) segment lengths, for a flattened stripStarts
+  const segOverlaps = []; // each segment's own evenly-spread overlap — not necessarily equal across
+  // segments of different lengths, unlike a plain straight lift's single flat number.
+  let flatOffset = 0; // running total of true segment lengths, for a flattened stripStarts
   // approximation — the diagram itself doesn't yet draw a real bend (see renderCutPlanSvg), so this
   // just keeps every existing consumer of stripStarts fed a sane, non-crashing number until it does.
   const installOrder = mirror
@@ -892,22 +896,18 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     const rawChain = { edges: seg.edges, length: segLen, dir: segDir };
     const workChain = mirror ? reverseChain(rawChain) : rawChain;
 
-    let segN, segStarts, segFace;
-    if (isLastInstalled) {
-      const segResult = calcLift(segLen, w, oMin);
-      if (!segResult) return;
-      overallOverlap = segResult.overlap;
-      segN = segResult.n;
-      const segPitch = segN > 1 ? w - segResult.overlap : 0;
-      segStarts = Array.from({ length: segN }, (_, i) => i * segPitch);
-      segFace = workChain;
-    } else {
-      const pitch = Math.max(w - oMin, 0.01);
-      segN = segLen <= w ? 1 : Math.max(1, Math.ceil((segLen - w) / pitch) + 1);
-      segStarts = Array.from({ length: segN }, (_, i) => i * pitch);
-      const overrunLen = segStarts[segStarts.length - 1] + w;
-      segFace = extendChainToStation(workChain, overrunLen);
-    }
+    const segResult = calcLift(segLen, w, oMin);
+    if (!segResult) return;
+    segOverlaps.push(segResult.overlap);
+    const segN = segResult.n;
+    const segPitch = segN > 1 ? w - segResult.overlap : 0;
+    const segStarts = Array.from({ length: segN }, (_, i) => i * segPitch);
+    // A segment shorter than one strip width still only gets ONE strip (calcLift's own n=1 case),
+    // which then harmlessly overhangs past this segment's own far end — extending the chain so that
+    // overhang's boundary-reach sampling is still a real, correctly-extrapolated position rather than
+    // clamped to this segment's last vertex.
+    const overrunLen = Math.max(segLen, segStarts[segStarts.length - 1] + w);
+    const segFace = extendChainToStation(workChain, overrunLen);
 
     const segFaceOrigin = segFace.edges[0].from;
     const segVertexStations = poly
@@ -927,9 +927,7 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
       stripStarts.push(flatOffset + start);
       // A mirrored strip's `start` is local to workChain (measured from the segment's far end) — the
       // renderer reads this against the segment's ORIGINAL orientation instead, so it needs
-      // converting back; that can legitimately land below zero for a strip overrunning towards the
-      // segment's near end rather than its far one, which is exactly the mirrored counterpart of the
-      // existing "last strip may overrun past segLen" case.
+      // converting back.
       stripLocalStarts.push(mirror ? segLen - start - w : start);
       stripSegmentIndex.push(segIdx);
       overallResultN++;
@@ -937,6 +935,12 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     flatOffset += segLen;
     if (!isLastInstalled) cornerStations.push(flatOffset);
   });
+
+  // Each segment's own overlap is only reported as one flat number when every segment actually landed
+  // on the same value (short lifts of near-identical length aren't unusual) — otherwise this reads
+  // exactly like a mixed-product lift's "lapping each strip by its own product's overlap" case, which
+  // every existing consumer (summary text, roll schedule, CSV) already knows how to fall back to.
+  const overallOverlap = segOverlaps.every((o) => Math.abs(o - segOverlaps[0]) < 1e-6) ? segOverlaps[0] : null;
 
   return {
     poly,
@@ -4317,22 +4321,6 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
   svg.innerHTML = "";
   svg.appendChild(polyEl);
 
-  // A small precise dot right where the true boundary actually bends — the bend itself is now the
-  // main visual cue (no full-height line needed the way the flat diagram's marker did), this just
-  // pins down exactly where.
-  cornerSegments.slice(0, -1).forEach((seg) => {
-    const cornerPt = seg.edges[seg.edges.length - 1].to;
-    const s = screenOf(cornerPt);
-    const dot = document.createElementNS(ns, "circle");
-    dot.setAttribute("cx", s.x.toFixed(1));
-    dot.setAttribute("cy", s.y.toFixed(1));
-    dot.setAttribute("r", "4");
-    dot.setAttribute("fill", "var(--ink)");
-    dot.setAttribute("stroke", "var(--surface)");
-    dot.setAttribute("stroke-width", "2");
-    svg.appendChild(dot);
-  });
-
   const labelFontSize = Math.max(4.5, Math.min(7, 165 / Math.max(cutLengths.length, 1)));
   const avgStripPx = (W - pad * 2) / Math.max(cutLengths.length, 1);
   const rollCircleR = Math.max(2.2, Math.min(7.5, avgStripPx / 2 - 1.3));
@@ -4344,6 +4332,7 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
   // from the strip's far edge (alternating "lanes") until it clears — same idea as bar-chart label
   // decluttering, just triggered locally instead of applied to the whole row.
   const recentStripLabels = [];
+  const recentRollCircles = []; // same idea, for the roll-number circles near each strip's near edge.
 
   cutLengths.forEach((len, i) => {
     const g = stripGeoms[i];
@@ -4421,7 +4410,23 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
       const margin = 6;
       const cn = screenOf(g.centerNear);
       const ccx = Math.max(margin + rollCircleR, Math.min(W - margin - rollCircleR, cn.x));
-      const ccy = Math.max(margin + rollCircleR, Math.min(H - margin - rollCircleR, cn.y - rollCircleR - 2));
+      const baseCcy = Math.max(margin + rollCircleR, Math.min(H - margin - rollCircleR, cn.y - rollCircleR - 2));
+      // Same tight-corner-cluster problem as the strip-number labels above (several short segments
+      // back to back can pack more roll circles into a narrow span than their fixed radius leaves
+      // room for side by side) — lane-stack a colliding circle further from the strip's near edge
+      // instead of letting it land right on top of its neighbour.
+      const circlePad = 1.2;
+      let ccLane = 0;
+      let ccy = baseCcy;
+      while (
+        ccLane < 10 &&
+        recentRollCircles.some((b) => Math.abs(b.x - ccx) < b.r + rollCircleR + circlePad && Math.abs(b.y - ccy) < b.r + rollCircleR + circlePad)
+      ) {
+        ccLane++;
+        ccy = Math.max(margin + rollCircleR, baseCcy - ccLane * (rollCircleR * 2 + circlePad));
+      }
+      recentRollCircles.push({ x: ccx, y: ccy, r: rollCircleR });
+      if (recentRollCircles.length > 8) recentRollCircles.shift();
 
       const rollFontSize = rollLabel.length >= 3 ? rollCircleR * 0.82 : rollLabel.length === 2 ? rollCircleR * 0.98 : rollCircleR * 1.15;
       const MIN_LEGIBLE_FONT = 4.2;
@@ -4457,6 +4462,24 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
         svg.appendChild(circle);
       }
     }
+  });
+
+  // A small precise dot right where the true boundary actually bends — the bend itself is now the
+  // main visual cue (no full-height line needed the way the flat diagram's marker did), this just
+  // pins down exactly where. Drawn LAST, on top of every strip — a corner is exactly where two
+  // strips' shapes overlap most, so appending the dot earlier left it sitting underneath their
+  // fill and effectively invisible.
+  cornerSegments.slice(0, -1).forEach((seg) => {
+    const cornerPt = seg.edges[seg.edges.length - 1].to;
+    const s = screenOf(cornerPt);
+    const dot = document.createElementNS(ns, "circle");
+    dot.setAttribute("cx", s.x.toFixed(1));
+    dot.setAttribute("cy", s.y.toFixed(1));
+    dot.setAttribute("r", "4");
+    dot.setAttribute("fill", "var(--ink)");
+    dot.setAttribute("stroke", "var(--surface)");
+    dot.setAttribute("stroke-width", "2");
+    svg.appendChild(dot);
   });
 }
 

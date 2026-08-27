@@ -749,7 +749,11 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
    self-corrects if a stat is ever added or removed. */
 .stat:last-child:nth-child(odd) { grid-column: 1 / -1; }
 .stat--highlight .stat__label { color: var(--accent-strong); opacity: 0.85; }
-.stat--highlight .stat__value { color: var(--accent-strong); font-size: 1.4rem; }
+/* Was 1.4rem — Material cost shares this same two-column tile width as every other stat, and a real
+   material-cost total (tens of thousands of dollars, not just a roll count's 1-3 digits) needs
+   noticeably more of that narrow width per character than 1.4rem left it, wrapping even ordinary
+   totals. 1.2rem keeps the highlight look (still bigger than the 1.15rem base) while actually fitting. */
+.stat--highlight .stat__value { color: var(--accent-strong); font-size: 1.2rem; }
 .stat__label {
   font-size: 0.64rem;
   text-transform: uppercase;
@@ -758,7 +762,7 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 .stat__value {
   font-family: var(--font-mono);
-  font-size: 1.25rem;
+  font-size: 1.15rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--accent-strong);
@@ -769,15 +773,16 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
      the value down to consume the leftover space keeps every value in a row lined up on one baseline
      regardless of how its own label happened to wrap. */
   margin-top: auto;
-  /* A big enough total (material cost on a large job, a six-figure roll count) can render wider than
-     the tile in this narrow sidebar even though it fits fine in ordinary testing — a webfont that
-     fails to load and falls back to a wider system monospace, real browser zoom, a bigger number than
-     usual. Without this the number just spills straight past the card's own border instead of
-     adjusting. Wrapping it (a `$` and thousands-comma string has no natural break point otherwise) is
-     safe here — .stat is a flex column, so a wrapped value just makes its own box a little taller
-     instead of ever overflowing sideways. */
-  overflow-wrap: anywhere;
+  /* A figure reads as one unit — the number itself (a comma/period string with no spaces in it) has
+     no valid break point under plain `overflow-wrap: normal`, so it can never split its own digits
+     apart. A value WITH a trailing <small> unit (Grid area, Fill volume) already has one legitimate
+     break point — the space inside that unit — so a big total can drop just the unit to its own line
+     without ever touching the figure itself; :has(small) below leaves those alone. A value with NO
+     unit at all (Material cost's plain "$" figure) has no such break point to fall back on, so it's
+     the one case still given `anywhere` — a real safety net rather than the default behaviour, since
+     without it a large enough cost would just spill silently past the card's own border instead. */
 }
+.stat__value:not(:has(small)) { overflow-wrap: anywhere; }
 .stat__value small { font-size: 0.65rem; font-weight: 400; color: var(--ink-muted); }
 /* Every stat now carries a hint slot (see index.html), even boxes that never show one — reserving
    this height on every box (instead of only the ones with real hint text) means the value's offset
