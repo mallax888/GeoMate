@@ -981,6 +981,14 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 .cutplan-method__title svg { flex: none; opacity: 0.85; }
 .cutplan-method p { margin: 0 0 0.8rem; }
+.cutplan-method ul {
+  margin: 0 0 0.8rem;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.cutplan-method ul li::marker { color: var(--accent); }
 .cutplan-method .cutplan-upload:last-child { margin-bottom: 0; }
 .cutplan-upload { display: flex; align-items: flex-end; gap: 0.8rem; margin-bottom: 1rem; flex-wrap: wrap; }
 .cutplan-upload__product { flex: none; }

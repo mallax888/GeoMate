@@ -365,7 +365,11 @@
               <svg viewBox="0 0 16 16" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 11 5.5 3 12.5 4 14 11 9 14.5z"/></svg>
               Extents
             </h3>
-            <p>Upload one DXF containing a <strong>closed</strong> polyline per lift — the outer plan-view extents each strip has to fit inside. The tool finds the longest edge as the face and clips every strip against the boundary, so strips near a taper come back shorter with an exact cut length. Uploading a second file for a different product at the same RLs adds it alongside the first instead of replacing it — pick which product this file is for below first.</p>
+            <ul>
+              <li>One DXF per lift, a <strong>closed</strong> polyline — the outer extents each strip must fit inside.</li>
+              <li>Longest edge becomes the face; every strip is clipped to it, so tapered ends come back shorter with an exact cut length.</li>
+              <li>A second file for a different product at the same RLs adds alongside, not replaces — pick the product below first.</li>
+            </ul>
             <div class="cutplan-upload">
               <label class="field cutplan-upload__product">
                 <span class="sr-only">Product this upload is for</span>
@@ -384,7 +388,11 @@
               <svg viewBox="0 0 16 16" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 13.5h2.6v-3h2.6v-3h2.6v-3h2.6"/></svg>
               Benched
             </h3>
-            <p>Upload the raw cut surface as a triangulated mesh and the tool will find the flat bench at each lift's RL itself, matched onto the lift rows already in the table — no pre-built extents needed. DXF (3DFACE) or LandXML (Civil 3D's native surface export) both work.</p>
+            <ul>
+              <li>Upload the raw cut surface as a triangulated mesh.</li>
+              <li>The tool finds the flat bench at each lift's RL itself and matches it to the existing table rows — no pre-built extents needed.</li>
+              <li>DXF (3DFACE) or LandXML (Civil 3D's native export) both work.</li>
+            </ul>
             <div class="cutplan-upload">
               <label class="btn btn--primary btn--upload">
                 Upload benched surface DXF (mesh)
@@ -407,7 +415,11 @@
               <svg viewBox="0 0 16 16" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 2.5 5 10.5h6l3.5 -8"/></svg>
               Battered
             </h3>
-            <p>Upload a full excavation surface (already dug, sloped sides, no pre-existing lift rows needed) and the tool builds the rows itself: set a spacing below, then it reads the surface's own elevation range, slices it at every RL that fits, and lays one horizontal grid layer per lift out to the cut in every direction — a fill sequence, not one row per wall.</p>
+            <ul>
+              <li>Upload a full excavation surface — already dug, sloped sides, no lift rows needed.</li>
+              <li>Set a spacing below; the tool reads the surface's own elevation range and slices it at every RL that fits.</li>
+              <li>Lays one horizontal grid layer per lift out to the cut, in every direction — a fill sequence, not one row per wall.</li>
+            </ul>
             <div class="cutplan-upload">
               <label class="field field--compact">
                 <span>Start RL</span>
