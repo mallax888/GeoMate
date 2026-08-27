@@ -877,7 +877,6 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
   // segment's real world frame; stripStarts above stays a flattened approximation for every other
   // consumer that just needs a sane, non-crashing single-axis number.
   const stripSegmentIndex = []; // which corner segment (its ORIGINAL index) each strip belongs to.
-  const cornerStations = []; // flattened station of each corner (there's one fewer than segments).
   const segOverlaps = []; // each segment's own evenly-spread overlap — not necessarily equal across
   // segments of different lengths, unlike a plain straight lift's single flat number.
   let flatOffset = 0; // running total of true segment lengths, for a flattened stripStarts
@@ -886,9 +885,8 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
   const installOrder = mirror
     ? cornerSegments.map((_, i) => cornerSegments.length - 1 - i)
     : cornerSegments.map((_, i) => i);
-  installOrder.forEach((segIdx, orderPos) => {
+  installOrder.forEach((segIdx) => {
     const seg = cornerSegments[segIdx];
-    const isLastInstalled = orderPos === installOrder.length - 1;
     const segDir = seg.dir;
     const segInward = inwardNormal(segDir); // the segment's TRUE inward direction — never flipped,
     // even when workChain below walks its edges backward for a mirrored build.
@@ -933,7 +931,6 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
       overallResultN++;
     }
     flatOffset += segLen;
-    if (!isLastInstalled) cornerStations.push(flatOffset);
   });
 
   // Each segment's own overlap is only reported as one flat number when every segment actually landed
@@ -961,7 +958,6 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     cornerSegments,
     stripSegmentIndex,
     stripLocalStarts,
-    cornerStations,
   };
 }
 
