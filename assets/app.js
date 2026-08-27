@@ -248,16 +248,12 @@ function ensureCCW(poly) {
 }
 
 /** Merge consecutive polygon edges whose direction changes by less than the threshold into logical chains. */
-function chainEdges(poly, angleThresholdDeg = 20) {
-  const n = poly.length;
-  const dirs = [];
-  for (let i = 0; i < n; i++) {
-    const p = poly[i], q = poly[(i + 1) % n];
-    const dx = q.x - p.x, dy = q.y - p.y;
-    const len = Math.hypot(dx, dy);
-    if (len < 1e-9) continue;
-    dirs.push({ x: dx / len, y: dy / len, len, from: p, to: q });
-  }
+/** Shared by chainEdges (grouping a whole polygon's raw edges into wall-length chains at a loose
+ *  ~20° tolerance) and splitFaceIntoCornerSegments (re-grouping one already-picked face's own edges
+ *  at a much tighter tolerance, to find genuine corners within what chainEdges treated as one wall).
+ *  Walks consecutive edge directions, starting a new chain wherever the turn between them exceeds
+ *  the threshold, then reduces each chain to a single length-weighted average direction. */
+function groupDirsByAngle(dirs, angleThresholdDeg) {
   if (!dirs.length) return [];
   const chains = [];
   let cur = [dirs[0]];
@@ -276,6 +272,94 @@ function chainEdges(poly, angleThresholdDeg = 20) {
     const avgLen = Math.hypot(avgX, avgY) || 1;
     return { edges, length: totalLen, dir: { x: avgX / avgLen, y: avgY / avgLen } };
   });
+}
+
+function chainEdges(poly, angleThresholdDeg = 20) {
+  const n = poly.length;
+  const dirs = [];
+  for (let i = 0; i < n; i++) {
+    const p = poly[i], q = poly[(i + 1) % n];
+    const dx = q.x - p.x, dy = q.y - p.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-9) continue;
+    dirs.push({ x: dx / len, y: dy / len, len, from: p, to: q });
+  }
+  return groupDirsByAngle(dirs, angleThresholdDeg);
+}
+
+// Threshold for what counts as a genuine corner WITHIN an already-picked face, worth splitting the
+// lift's strips into two squared-off directions for, rather than just noise chainEdges' own looser
+// ~20° tolerance already absorbed into one wall. User-set: gentle enough to catch a real return,
+// without tripping on ordinary survey wobble along a straight run. This is a DIFFERENT question from
+// which edge gets picked as the face in the first place (pickFaceAndBack/refDir) — it only ever
+// fires on a genuine bend partway through a face that's already been chosen.
+const CORNER_SPLIT_ANGLE_DEG = 5;
+
+/** Real DXF vertex noise can produce a segment that's technically past the angle threshold but only
+ *  a few tens of centimetres long — not anything a crew could treat as its own direction. Merges any
+ *  segment shorter than this back into whichever neighbour it's more closely aligned with (repeating
+ *  until every segment clears the floor, or only one is left). Tied to strip width when known — a
+ *  segment has to be able to hold at least most of one strip to mean anything on its own; 1.5m is
+ *  just a sane floor for the rare case this runs before a product's width is known. */
+function mergeShortCornerSegments(segments, w) {
+  const minLen = w > 0 ? Math.max(w * 0.9, 0.5) : 1.5;
+  let segs = segments.slice();
+  let changed = true;
+  while (changed && segs.length > 1) {
+    changed = false;
+    for (let i = 0; i < segs.length; i++) {
+      if (segs[i].length >= minLen) continue;
+      const prev = i > 0 ? segs[i - 1] : null;
+      const next = i < segs.length - 1 ? segs[i + 1] : null;
+      let mergeIdx;
+      if (prev && next) {
+        const dotPrev = prev.dir.x * segs[i].dir.x + prev.dir.y * segs[i].dir.y;
+        const dotNext = next.dir.x * segs[i].dir.x + next.dir.y * segs[i].dir.y;
+        mergeIdx = dotPrev >= dotNext ? i - 1 : i + 1;
+      } else {
+        mergeIdx = prev ? i - 1 : i + 1;
+      }
+      const lo = Math.min(i, mergeIdx), hi = Math.max(i, mergeIdx);
+      const combinedEdges = segs[lo].edges.concat(segs[hi].edges);
+      // A 180° threshold never splits — this just reduces the combined edges back to one chain
+      // object with a freshly length-weighted length/dir, reusing groupDirsByAngle's own math
+      // rather than duplicating it.
+      const merged = groupDirsByAngle(combinedEdges, 180)[0];
+      segs.splice(lo, hi - lo + 1, merged);
+      changed = true;
+      break;
+    }
+  }
+  // Merging by length can leave two neighbours whose OWN overall directions turn out to be within
+  // the corner threshold after all — the oversized angle that triggered the original split lived
+  // inside the short sliver now folded into one of them, not between these two survivors. That's not
+  // a real corner either, so collapse any such pair back together too.
+  changed = true;
+  while (changed && segs.length > 1) {
+    changed = false;
+    for (let i = 0; i < segs.length - 1; i++) {
+      const dot = Math.max(-1, Math.min(1, segs[i].dir.x * segs[i + 1].dir.x + segs[i].dir.y * segs[i + 1].dir.y));
+      const angle = Math.acos(dot) * (180 / Math.PI);
+      if (angle > CORNER_SPLIT_ANGLE_DEG) continue;
+      const combinedEdges = segs[i].edges.concat(segs[i + 1].edges);
+      const merged = groupDirsByAngle(combinedEdges, 180)[0];
+      segs.splice(i, 2, merged);
+      changed = true;
+      break;
+    }
+  }
+  return segs;
+}
+
+/** Splits one already-picked, already-extended face into its genuine directional segments — most
+ *  faces come back as a single segment (nothing bent enough to count), same as before this existed.
+ *  Only the ANGLE (plus the length floor above) decides the split points here, never how the
+ *  resulting segments should overlap where they meet — that's entirely computeCutPlan's job once it
+ *  knows where the splits are. */
+function splitFaceIntoCornerSegments(face, w = null) {
+  const raw = groupDirsByAngle(face.edges, CORNER_SPLIT_ANGLE_DEG);
+  if (raw.length <= 1) return raw;
+  return mergeShortCornerSegments(raw, w);
 }
 
 /** Longest chain = face; the longest, most anti-parallel remaining chain = back.
@@ -639,6 +723,20 @@ function extendFaceToFullExtent(face, poly) {
   return { edges, length: maxStation - minStation, dir: face.dir };
 }
 
+// Pads a chain's edges further along its own direction, purely so pointAtStation/stripBoundaryReach
+// can sample past its natural end — used for a non-final corner segment's strips, which are allowed
+// to overrun into the next segment's territory uncut (see computeCutPlan). Same technique as
+// extendFaceToFullExtent, just reusable for any chain/target length rather than tied to the whole
+// face and the polygon's own vertex extent.
+function extendChainToStation(chain, targetLen) {
+  if (targetLen <= chain.length + 1e-6) return chain;
+  const lastTo = chain.edges[chain.edges.length - 1].to;
+  const extra = targetLen - chain.length;
+  const to = { x: lastTo.x + chain.dir.x * extra, y: lastTo.y + chain.dir.y * extra };
+  const edges = chain.edges.concat([{ x: chain.dir.x, y: chain.dir.y, len: extra, from: lastTo, to }]);
+  return { edges, length: targetLen, dir: chain.dir };
+}
+
 function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide = null, stripSide = null, avoidStitches = false, neighborDir = null) {
   const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
   const chains = chainEdges(poly);
@@ -647,52 +745,142 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
   const face = extendFaceToFullExtent(pickedFace, poly);
 
   const packed = packSide ? packStripsFromSide(face.length, w, oMin, packSide) : null;
-  const result = packed || calcLift(face.length, w, oMin);
-  if (!result) return null;
-  const pitch = !packed && result.n > 1 ? w - result.overlap : 0;
-  // packStripsFromSide already mirrors itself onto packSide (that's a real repositioning, since its
-  // strips sit at exact-minimum pitch, not the spread-evenly one below). The plain default layout
-  // below is uniform pitch either way — mirroring it doesn't move a single strip, it only changes
-  // which end is numbered "Strip 1" (and so which end rolls/labels count from), which is exactly
-  // what "Strip 1 starts from" is for on a lift that isn't also forcing same-length strips.
-  const mirror = !packed && stripSide === "right" && result.n > 1;
 
-  // Fixed for the whole lift, not recomputed per strip from a locally-varying tangent — every strip
-  // is parallel, which is what "grids can only ever be square" means in practice.
-  const inward = inwardNormal(face.dir);
+  // Corner segmentation only applies to the plain uniform-pitch layout below — packStripsFromSide's
+  // "force every strip to the same length from one side" is a separate, narrower feature, and nobody
+  // has asked how a forced-length strip should behave crossing a corner, so a packed lift keeps
+  // today's single-direction behaviour regardless of any corner within it.
+  const cornerSegments = packed ? [pickedFace] : splitFaceIntoCornerSegments(face, w);
 
-  // Every polygon vertex's approximate position along the face, as a station — used below so a strip
-  // never misses a boundary kink no matter how narrow, even one confined to a sliver of its width. An
-  // evenly-spaced sample sweep alone can straddle a kink and never land on it; the exact vertex station
-  // always does.
-  const faceOrigin = face.edges[0].from;
-  const vertexStations = poly
-    .map((p) => (p.x - faceOrigin.x) * face.dir.x + (p.y - faceOrigin.y) * face.dir.y)
-    .filter((s) => s >= 0 && s <= face.length)
-    .sort((a, b) => a - b);
+  if (cornerSegments.length <= 1) {
+    const result = packed || calcLift(face.length, w, oMin);
+    if (!result) return null;
+    const pitch = !packed && result.n > 1 ? w - result.overlap : 0;
+    // packStripsFromSide already mirrors itself onto packSide (that's a real repositioning, since its
+    // strips sit at exact-minimum pitch, not the spread-evenly one below). The plain default layout
+    // below is uniform pitch either way — mirroring it doesn't move a single strip, it only changes
+    // which end is numbered "Strip 1" (and so which end rolls/labels count from), which is exactly
+    // what "Strip 1 starts from" is for on a lift that isn't also forcing same-length strips.
+    const mirror = !packed && stripSide === "right" && result.n > 1;
 
+    // Fixed for the whole lift, not recomputed per strip from a locally-varying tangent — every strip
+    // is parallel, which is what "grids can only ever be square" means in practice.
+    const inward = inwardNormal(face.dir);
+
+    // Every polygon vertex's approximate position along the face, as a station — used below so a strip
+    // never misses a boundary kink no matter how narrow, even one confined to a sliver of its width. An
+    // evenly-spaced sample sweep alone can straddle a kink and never land on it; the exact vertex station
+    // always does.
+    const faceOrigin = face.edges[0].from;
+    const vertexStations = poly
+      .map((p) => (p.x - faceOrigin.x) * face.dir.x + (p.y - faceOrigin.y) * face.dir.y)
+      .filter((s) => s >= 0 && s <= face.length)
+      .sort((a, b) => a - b);
+
+    const cutLengths = [];
+    const stitches = [];
+    const extentsReach = [];
+    const frontReach = [];
+    const stripWidths = [];
+    const stripStarts = [];
+    for (let i = 0; i < result.n; i++) {
+      const width = packed ? packed.widths[i] : w;
+      // Uniform pitch spans exactly [0, face.length] end to end ((n-1)*pitch + w === face.length), so
+      // reflecting each position about the centre reproduces the very same set of positions — mirroring
+      // has to swap which INDEX gets which slot instead (Strip 1 takes the slot Strip n used to hold),
+      // not reflect the coordinate itself, or it's a no-op.
+      const start = packed ? packed.starts[i] : (mirror ? result.n - 1 - i : i) * pitch;
+      const station = Math.max(0, Math.min(face.length, start + width / 2));
+      const r = stripBoundaryReach(station, width, poly, face, inward, vertexStations, avoidStitches);
+      cutLengths.push(r.cutLength);
+      stitches.push(r.stitches);
+      extentsReach.push(r.farReach);
+      frontReach.push(r.nearReach);
+      stripWidths.push(width);
+      stripStarts.push(start);
+    }
+
+    return {
+      poly,
+      face,
+      back,
+      faceIndex: chosenIndex,
+      faceLength: face.length,
+      n: result.n,
+      overlap: result.overlap,
+      stripStarts,
+      materialWidth: result.materialWidth,
+      cutLengths,
+      stitches,
+      extentsReach,
+      frontReach,
+      stripWidths,
+      polygonArea: Math.abs(signedArea(poly)),
+    };
+  }
+
+  // A genuine corner within the face (see splitFaceIntoCornerSegments): every segment but the last
+  // is laid at a plain full-width grid, anchored at its OWN start (the true face origin for the first
+  // segment, the previous corner for every one after) — its last strip is free to run past the NEXT
+  // corner uncut, same as a crew installing left to right would just keep going rather than stop
+  // short for a precise cut. Only the FINAL segment fits its strips exactly to what's left (today's
+  // ordinary calcLift behaviour), since that end is the true end of the wall, not another corner to
+  // run past. "Strip 1 starts from Right"/"force same length" don't apply here — see the packed check
+  // above — a cornered lift is always numbered left to right, segment by segment, in installation order.
+  let overallOverlap = oMin;
+  let overallResultN = 0;
   const cutLengths = [];
   const stitches = [];
   const extentsReach = [];
   const frontReach = [];
   const stripWidths = [];
   const stripStarts = [];
-  for (let i = 0; i < result.n; i++) {
-    const width = packed ? packed.widths[i] : w;
-    // Uniform pitch spans exactly [0, face.length] end to end ((n-1)*pitch + w === face.length), so
-    // reflecting each position about the centre reproduces the very same set of positions — mirroring
-    // has to swap which INDEX gets which slot instead (Strip 1 takes the slot Strip n used to hold),
-    // not reflect the coordinate itself, or it's a no-op.
-    const start = packed ? packed.starts[i] : (mirror ? result.n - 1 - i : i) * pitch;
-    const station = Math.max(0, Math.min(face.length, start + width / 2));
-    const r = stripBoundaryReach(station, width, poly, face, inward, vertexStations, avoidStitches);
-    cutLengths.push(r.cutLength);
-    stitches.push(r.stitches);
-    extentsReach.push(r.farReach);
-    frontReach.push(r.nearReach);
-    stripWidths.push(width);
-    stripStarts.push(start);
-  }
+  let flatOffset = 0; // running total of true (not overrun) segment lengths, for a flattened stripStarts
+  // approximation — the diagram itself doesn't yet draw a real bend (see renderCutPlanSvg), so this
+  // just keeps every existing consumer of stripStarts fed a sane, non-crashing number until it does.
+  cornerSegments.forEach((seg, segIdx) => {
+    const isLast = segIdx === cornerSegments.length - 1;
+    const segDir = seg.dir;
+    const segInward = inwardNormal(segDir);
+    const segLen = seg.length;
+
+    let segN, segStarts, segFace;
+    if (isLast) {
+      const segResult = calcLift(segLen, w, oMin);
+      if (!segResult) return;
+      overallOverlap = segResult.overlap;
+      segN = segResult.n;
+      const segPitch = segN > 1 ? w - segResult.overlap : 0;
+      segStarts = Array.from({ length: segN }, (_, i) => i * segPitch);
+      segFace = { edges: seg.edges, length: segLen, dir: segDir };
+    } else {
+      const pitch = Math.max(w - oMin, 0.01);
+      segN = segLen <= w ? 1 : Math.max(1, Math.ceil((segLen - w) / pitch) + 1);
+      segStarts = Array.from({ length: segN }, (_, i) => i * pitch);
+      const overrunLen = segStarts[segStarts.length - 1] + w;
+      segFace = extendChainToStation({ edges: seg.edges, length: segLen, dir: segDir }, overrunLen);
+    }
+
+    const segFaceOrigin = segFace.edges[0].from;
+    const segVertexStations = poly
+      .map((p) => (p.x - segFaceOrigin.x) * segDir.x + (p.y - segFaceOrigin.y) * segDir.y)
+      .filter((s) => s >= 0 && s <= segFace.length)
+      .sort((a, b) => a - b);
+
+    for (let i = 0; i < segN; i++) {
+      const start = segStarts[i];
+      const station = Math.max(0, Math.min(segFace.length, start + w / 2));
+      const r = stripBoundaryReach(station, w, poly, segFace, segInward, segVertexStations, avoidStitches);
+      cutLengths.push(r.cutLength);
+      stitches.push(r.stitches);
+      extentsReach.push(r.farReach);
+      frontReach.push(r.nearReach);
+      stripWidths.push(w);
+      stripStarts.push(flatOffset + start);
+      overallResultN++;
+    }
+    flatOffset += segLen;
+  });
 
   return {
     poly,
@@ -700,16 +888,17 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     back,
     faceIndex: chosenIndex,
     faceLength: face.length,
-    n: result.n,
-    overlap: result.overlap,
+    n: overallResultN,
+    overlap: overallOverlap,
     stripStarts,
-    materialWidth: result.materialWidth,
+    materialWidth: w,
     cutLengths,
     stitches,
     extentsReach,
     frontReach,
     stripWidths,
     polygonArea: Math.abs(signedArea(poly)),
+    cornerSegments,
   };
 }
 
