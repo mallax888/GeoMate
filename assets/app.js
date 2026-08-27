@@ -4444,12 +4444,17 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
       // Same tight-corner-cluster problem as the strip-number labels above (several short segments
       // back to back can pack more roll circles into a narrow span than their fixed radius leaves
       // room for side by side) — lane-stack a colliding circle further from the strip's near edge
-      // instead of letting it land right on top of its neighbour.
+      // instead of letting it land right on top of its neighbour. Capped much lower than the strip
+      // labels' own lane budget, though: roll circles read as one continuous row along the strip's
+      // near edge, so drifting one 4+ lanes away to fully clear a crowded cluster makes it look
+      // detached from that row entirely — which end of the diagram does this number even belong to? —
+      // worse than the small, still-legible overlap a low cap leaves behind instead.
       const circlePad = 1.2;
+      const maxCcLane = 2;
       let ccLane = 0;
       let ccy = baseCcy;
       while (
-        ccLane < 10 &&
+        ccLane < maxCcLane &&
         recentRollCircles.some((b) => Math.abs(b.x - ccx) < b.r + rollCircleR + circlePad && Math.abs(b.y - ccy) < b.r + rollCircleR + circlePad)
       ) {
         ccLane++;
