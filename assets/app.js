@@ -4386,17 +4386,23 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
       const digits = String(i + 1).length;
       const halfW = (labelFontSize * 0.62 * digits) / 2 + 1.2;
       const laneStep = labelFontSize + 2;
+      // A pair of tight corners close together (several short segments back to back) can pack more
+      // than a handful of labels into a narrow span — a short lookback window or a low lane cap both
+      // let a label past the 4th or 5th nearby one land right back on top of an earlier one. Padding
+      // the required gap (not just "don't literally touch") also keeps every number legibly separated,
+      // not just non-overlapping by a fraction of a pixel.
+      const gapPad = 1.5;
       let lane = 0;
       let ly = baseLy;
       while (
-        lane < 5 &&
-        recentStripLabels.some((b) => Math.abs(b.x - lx) < b.halfW + halfW && Math.abs(b.y - ly) < labelFontSize + 2)
+        lane < 10 &&
+        recentStripLabels.some((b) => Math.abs(b.x - lx) < b.halfW + halfW + gapPad && Math.abs(b.y - ly) < labelFontSize + 2)
       ) {
         lane++;
         ly = Math.max(margin, baseLy - lane * laneStep);
       }
       recentStripLabels.push({ x: lx, y: ly, halfW });
-      if (recentStripLabels.length > 4) recentStripLabels.shift();
+      if (recentStripLabels.length > 8) recentStripLabels.shift();
 
       const label = document.createElementNS(ns, "text");
       label.setAttribute("x", lx.toFixed(1));
