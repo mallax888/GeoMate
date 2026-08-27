@@ -230,8 +230,9 @@ h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
     min-width:690px, scrollable on its own via .table-scroll) blow the whole page wider than the
     viewport instead of scrolling internally — this lets the panel actually shrink to its track. */
 }
-.panel--summary, .panel--settings { position: sticky; top: 1.1rem; }
-@media (max-width: 1080px) { .panel--summary, .panel--settings { position: static; } }
+/* Both side panels scroll with the page instead of pinning in place — a tall panel (a long
+   settings or summary list) was otherwise stuck at the top with its lower half unreachable, since
+   scrolling the page doesn't move a sticky element until its own bottom edge is reached. */
 
 .panel__heading {
   font-size: 0.72rem;
