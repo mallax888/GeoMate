@@ -542,10 +542,16 @@ function pointAtStation(chain, station) {
   return { x: last.to.x, y: last.to.y, tangent: { x: last.x, y: last.y } };
 }
 
-// Same as pointAtStation, but keeps going in a straight line past the chain's own natural end instead
-// of clamping to its last vertex — needed for a corner segment's overrunning strips (see
-// computeCutPlan), whose stations can genuinely exceed that segment's own true length.
+// Same as pointAtStation, but keeps going in a straight line past the chain's own natural end (or
+// before its own start) instead of clamping to the nearest vertex — needed for a corner segment's
+// overrunning strips (see computeCutPlan), whose stations can genuinely fall outside [0, chain.length]
+// on either side once a mirrored ("Strip 1 starts from Right") lift measures a segment from its own
+// far end instead of its near one.
 function pointAtStationExtrapolated(chain, station) {
+  if (station < -1e-9) {
+    const first = chain.edges[0];
+    return { x: first.from.x + chain.dir.x * station, y: first.from.y + chain.dir.y * station };
+  }
   if (station <= chain.length + 1e-9) return pointAtStation(chain, station);
   const last = chain.edges[chain.edges.length - 1];
   const extra = station - chain.length;
@@ -747,6 +753,19 @@ function extendChainToStation(chain, targetLen) {
   return { edges, length: targetLen, dir: chain.dir };
 }
 
+// Walks the exact same physical edges backward — station 0 on the result is the chain's own far end,
+// increasing back toward its near end. Used so a mirrored corner segment ("Strip 1 starts from Right")
+// can reuse every station-based helper (calcLift's even spread, extendChainToStation's overrun,
+// stripBoundaryReach's sampling) completely unchanged, just measuring from the opposite end — none of
+// those care which physical direction "increasing station" points, only that it's consistent.
+function reverseChain(chain) {
+  const edges = chain.edges
+    .slice()
+    .reverse()
+    .map((e) => ({ x: -e.x, y: -e.y, len: e.len, from: e.to, to: e.from }));
+  return { edges, length: chain.length, dir: { x: -chain.dir.x, y: -chain.dir.y } };
+}
+
 function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide = null, stripSide = null, avoidStitches = false, neighborDir = null) {
   const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
   const chains = chainEdges(poly);
@@ -829,14 +848,19 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     };
   }
 
-  // A genuine corner within the face (see splitFaceIntoCornerSegments): every segment but the last
-  // is laid at a plain full-width grid, anchored at its OWN start (the true face origin for the first
-  // segment, the previous corner for every one after) — its last strip is free to run past the NEXT
-  // corner uncut, same as a crew installing left to right would just keep going rather than stop
-  // short for a precise cut. Only the FINAL segment fits its strips exactly to what's left (today's
-  // ordinary calcLift behaviour), since that end is the true end of the wall, not another corner to
-  // run past. "Strip 1 starts from Right"/"force same length" don't apply here — see the packed check
-  // above — a cornered lift is always numbered left to right, segment by segment, in installation order.
+  // A genuine corner within the face (see splitFaceIntoCornerSegments): every segment but the one
+  // built LAST is laid at a plain full-width grid, anchored at its OWN starting end (the corner it's
+  // approached from, or a true end of the wall for whichever segment is built first) — its last
+  // strip is free to run past the NEXT corner uncut, same as a crew would just keep going rather than
+  // stop short for a precise cut. Only the segment built LAST fits its strips exactly to what's left
+  // (today's ordinary calcLift behaviour), since that end is a true end of the wall, not another
+  // corner to run past. Segments are normally walked in the face's own direction (segment 0 first, at
+  // the true face origin) — "Strip 1 starts from Right" flips which physical end the build actually
+  // starts from, so a mirrored lift walks cornerSegments in reverse and, within each one, measures
+  // and steps from that segment's own FAR end instead of its near one (reverseChain), while every
+  // real-world boundary lookup still uses the segment's true, unflipped inward normal — a mirrored
+  // direction changes which end strips are numbered/anchored from, never which side is "into the fill".
+  const mirror = stripSide === "right";
   let overallOverlap = oMin;
   let overallResultN = 0;
   const cutLengths = [];
@@ -845,41 +869,49 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
   const frontReach = [];
   const stripWidths = [];
   const stripStarts = [];
-  const stripLocalStarts = []; // start position within the strip's OWN segment (not flattened) — the
+  const stripLocalStarts = []; // start position within the strip's OWN segment (not flattened),
+  // always relative to that segment's ORIGINAL (unmirrored) orientation in cornerSegments — the
   // true-geometry diagram (renderCutPlanSvgCornered) needs this to place each strip in its own
   // segment's real world frame; stripStarts above stays a flattened approximation for every other
   // consumer that just needs a sane, non-crashing single-axis number.
-  const stripSegmentIndex = []; // which corner segment each strip belongs to.
+  const stripSegmentIndex = []; // which corner segment (its ORIGINAL index) each strip belongs to.
   const cornerStations = []; // flattened station of each corner (there's one fewer than segments).
   let flatOffset = 0; // running total of true (not overrun) segment lengths, for a flattened stripStarts
   // approximation — the diagram itself doesn't yet draw a real bend (see renderCutPlanSvg), so this
   // just keeps every existing consumer of stripStarts fed a sane, non-crashing number until it does.
-  cornerSegments.forEach((seg, segIdx) => {
-    const isLast = segIdx === cornerSegments.length - 1;
+  const installOrder = mirror
+    ? cornerSegments.map((_, i) => cornerSegments.length - 1 - i)
+    : cornerSegments.map((_, i) => i);
+  installOrder.forEach((segIdx, orderPos) => {
+    const seg = cornerSegments[segIdx];
+    const isLastInstalled = orderPos === installOrder.length - 1;
     const segDir = seg.dir;
-    const segInward = inwardNormal(segDir);
+    const segInward = inwardNormal(segDir); // the segment's TRUE inward direction — never flipped,
+    // even when workChain below walks its edges backward for a mirrored build.
     const segLen = seg.length;
+    const rawChain = { edges: seg.edges, length: segLen, dir: segDir };
+    const workChain = mirror ? reverseChain(rawChain) : rawChain;
 
     let segN, segStarts, segFace;
-    if (isLast) {
+    if (isLastInstalled) {
       const segResult = calcLift(segLen, w, oMin);
       if (!segResult) return;
       overallOverlap = segResult.overlap;
       segN = segResult.n;
       const segPitch = segN > 1 ? w - segResult.overlap : 0;
       segStarts = Array.from({ length: segN }, (_, i) => i * segPitch);
-      segFace = { edges: seg.edges, length: segLen, dir: segDir };
+      segFace = workChain;
     } else {
       const pitch = Math.max(w - oMin, 0.01);
       segN = segLen <= w ? 1 : Math.max(1, Math.ceil((segLen - w) / pitch) + 1);
       segStarts = Array.from({ length: segN }, (_, i) => i * pitch);
       const overrunLen = segStarts[segStarts.length - 1] + w;
-      segFace = extendChainToStation({ edges: seg.edges, length: segLen, dir: segDir }, overrunLen);
+      segFace = extendChainToStation(workChain, overrunLen);
     }
 
     const segFaceOrigin = segFace.edges[0].from;
     const segVertexStations = poly
-      .map((p) => (p.x - segFaceOrigin.x) * segDir.x + (p.y - segFaceOrigin.y) * segDir.y)
+      .map((p) => (p.x - segFaceOrigin.x) * segFace.dir.x + (p.y - segFaceOrigin.y) * segFace.dir.y)
       .filter((s) => s >= 0 && s <= segFace.length)
       .sort((a, b) => a - b);
 
@@ -893,12 +925,17 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
       frontReach.push(r.nearReach);
       stripWidths.push(w);
       stripStarts.push(flatOffset + start);
-      stripLocalStarts.push(start);
+      // A mirrored strip's `start` is local to workChain (measured from the segment's far end) — the
+      // renderer reads this against the segment's ORIGINAL orientation instead, so it needs
+      // converting back; that can legitimately land below zero for a strip overrunning towards the
+      // segment's near end rather than its far one, which is exactly the mirrored counterpart of the
+      // existing "last strip may overrun past segLen" case.
+      stripLocalStarts.push(mirror ? segLen - start - w : start);
       stripSegmentIndex.push(segIdx);
       overallResultN++;
     }
     flatOffset += segLen;
-    if (!isLast) cornerStations.push(flatOffset);
+    if (!isLastInstalled) cornerStations.push(flatOffset);
   });
 
   return {
