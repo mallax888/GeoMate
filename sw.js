@@ -2,7 +2,7 @@
 
 /* Cache-first-ish app shell for offline use on site. Bump CACHE_NAME on any deploy that changes
  * one of these files — the old cache is dropped in activate() so stale assets don't linger. */
-const CACHE_NAME = "geomate-v91";
+const CACHE_NAME = "geomate-v92";
 const ASSETS = [
   "./",
   "./index.html",

@@ -3961,15 +3961,6 @@ function fillRemainder(row, productId, productSpecs) {
   }
 }
 
-// One fill/stroke pair per corner segment, cycled if a lift ever has more than two — segment 0 keeps
-// the original accent/clay pair unchanged, so a normal (uncornered) lift's diagram looks exactly as
-// it always has. --id-3/--id-4 are already-established, theme-aware "just tell these apart" tokens
-// (product swatches use them too), reused here rather than inventing another palette.
-const SEGMENT_FILL_PAIRS = [
-  { a: "var(--accent)", b: "var(--clay)", aStroke: "var(--accent-strong)", bStroke: "var(--clay)" },
-  { a: "var(--id-3)", b: "var(--id-4)", aStroke: "var(--id-3)", bStroke: "var(--id-4)" },
-];
-
 function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
   const ns = "http://www.w3.org/2000/svg";
   const { face, cutLengths } = cutPlan;
@@ -4249,7 +4240,7 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
       p2: { x: centerPt.x + segInward.x * (s.offset + s.length), y: centerPt.y + segInward.y * (s.offset + s.length) },
     }));
 
-    return { nearLeft, nearRight, farLeft, farRight, farCenter, centerNear, stitchPts, segIdx };
+    return { nearLeft, nearRight, farLeft, farRight, farCenter, centerNear, stitchPts };
   });
 
   const allPts = cutPlan.poly.map(proj);
@@ -4321,10 +4312,12 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
       "points",
       `${nL.x.toFixed(1)},${nL.y.toFixed(1)} ${fL.x.toFixed(1)},${fL.y.toFixed(1)} ${fR.x.toFixed(1)},${fR.y.toFixed(1)} ${nR.x.toFixed(1)},${nR.y.toFixed(1)}`
     );
-    const fillPair = SEGMENT_FILL_PAIRS[g.segIdx % SEGMENT_FILL_PAIRS.length];
-    stripShape.setAttribute("fill", i % 2 === 0 ? fillPair.a : fillPair.b);
+    // Same two colours as the flat (uncornered) diagram, alternating by strip index regardless of
+    // which segment a strip is in — the bend and overlap in the shapes themselves now carry the
+    // "this is a corner" signal, so a colour break on top of that was just noise.
+    stripShape.setAttribute("fill", i % 2 === 0 ? "var(--accent)" : "var(--clay)");
     stripShape.setAttribute("fill-opacity", "0.75");
-    stripShape.setAttribute("stroke", i % 2 === 0 ? fillPair.aStroke : fillPair.bStroke);
+    stripShape.setAttribute("stroke", i % 2 === 0 ? "var(--accent-strong)" : "var(--clay)");
     stripShape.setAttribute("stroke-width", "1");
     svg.appendChild(stripShape);
 
