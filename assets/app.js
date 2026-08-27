@@ -835,6 +835,9 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
   const frontReach = [];
   const stripWidths = [];
   const stripStarts = [];
+  const stripSegmentIndex = []; // which corner segment each strip belongs to — lets the (still flat)
+  // diagram colour segment B onward differently and mark where each corner really is.
+  const cornerStations = []; // flattened station of each corner (there's one fewer than segments).
   let flatOffset = 0; // running total of true (not overrun) segment lengths, for a flattened stripStarts
   // approximation — the diagram itself doesn't yet draw a real bend (see renderCutPlanSvg), so this
   // just keeps every existing consumer of stripStarts fed a sane, non-crashing number until it does.
@@ -877,9 +880,11 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
       frontReach.push(r.nearReach);
       stripWidths.push(w);
       stripStarts.push(flatOffset + start);
+      stripSegmentIndex.push(segIdx);
       overallResultN++;
     }
     flatOffset += segLen;
+    if (!isLast) cornerStations.push(flatOffset);
   });
 
   return {
@@ -899,6 +904,8 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     stripWidths,
     polygonArea: Math.abs(signedArea(poly)),
     cornerSegments,
+    stripSegmentIndex,
+    cornerStations,
   };
 }
 
@@ -3933,6 +3940,15 @@ function fillRemainder(row, productId, productSpecs) {
   }
 }
 
+// One fill/stroke pair per corner segment, cycled if a lift ever has more than two — segment 0 keeps
+// the original accent/clay pair unchanged, so a normal (uncornered) lift's diagram looks exactly as
+// it always has. --id-3/--id-4 are already-established, theme-aware "just tell these apart" tokens
+// (product swatches use them too), reused here rather than inventing another palette.
+const SEGMENT_FILL_PAIRS = [
+  { a: "var(--accent)", b: "var(--clay)", aStroke: "var(--accent-strong)", bStroke: "var(--clay)" },
+  { a: "var(--id-3)", b: "var(--id-4)", aStroke: "var(--id-3)", bStroke: "var(--id-4)" },
+];
+
 function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
   const ns = "http://www.w3.org/2000/svg";
   const { face, cutLengths } = cutPlan;
@@ -3980,6 +3996,32 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
   polyEl.setAttribute("stroke-linejoin", "round");
   svg.innerHTML = "";
   svg.appendChild(polyEl);
+
+  // A genuine corner within the face (see splitFaceIntoCornerSegments) — the strips themselves still
+  // draw on this one flat station axis (a true bent diagram is a bigger rework), so this is the one
+  // visual cue that a corner exists here at all: a marker line at exactly where the direction change
+  // is, plus every strip from there on shifts to a different colour pair (see the fill picked below).
+  (cutPlan.cornerStations || []).forEach((station) => {
+    const cx = tx(station);
+    const markerLine = document.createElementNS(ns, "line");
+    markerLine.setAttribute("x1", cx.toFixed(1));
+    markerLine.setAttribute("y1", (pad * 0.3).toFixed(1));
+    markerLine.setAttribute("x2", cx.toFixed(1));
+    markerLine.setAttribute("y2", (H - pad * 0.3).toFixed(1));
+    markerLine.setAttribute("stroke", "var(--ink)");
+    markerLine.setAttribute("stroke-width", "1.5");
+    markerLine.setAttribute("stroke-dasharray", "2,2");
+    svg.appendChild(markerLine);
+
+    const label = document.createElementNS(ns, "text");
+    label.setAttribute("x", (cx + 3).toFixed(1));
+    label.setAttribute("y", (pad * 0.3 + 8).toFixed(1));
+    label.setAttribute("font-size", "8");
+    label.setAttribute("font-family", "var(--font-mono)");
+    label.setAttribute("fill", "var(--ink)");
+    label.textContent = "corner";
+    svg.appendChild(label);
+  });
 
   // Real per-strip positions/widths (computeCutPlan always fills these in now) — not recomputed from
   // a single uniform pitch, since "Pack from one side" (packStripsFromSide) can leave one strip
@@ -4057,9 +4099,14 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
     );
     // Alternating between two distinct colours (not just one colour's opacity) so adjacent strips
     // are clearly separable at a glance, even across a long dense run of similar-height rectangles.
-    stripShape.setAttribute("fill", i % 2 === 0 ? "var(--accent)" : "var(--clay)");
+    // A genuine corner (see the marker lines above) shifts the whole pair for every segment after
+    // the first, so which side of a corner a strip belongs to is visible from its colour alone, not
+    // just the marker line — SEGMENT_FILL_PAIRS cycles if a lift ever had more than two corners.
+    const segIdx = (cutPlan.stripSegmentIndex && cutPlan.stripSegmentIndex[i]) || 0;
+    const fillPair = SEGMENT_FILL_PAIRS[segIdx % SEGMENT_FILL_PAIRS.length];
+    stripShape.setAttribute("fill", i % 2 === 0 ? fillPair.a : fillPair.b);
     stripShape.setAttribute("fill-opacity", "0.75");
-    stripShape.setAttribute("stroke", i % 2 === 0 ? "var(--accent-strong)" : "var(--clay)");
+    stripShape.setAttribute("stroke", i % 2 === 0 ? fillPair.aStroke : fillPair.bStroke);
     stripShape.setAttribute("stroke-width", "1");
     svg.appendChild(stripShape);
 
