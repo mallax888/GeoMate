@@ -3968,14 +3968,20 @@ function renderCutPlan(results) {
   refreshCutPlanStacking();
 }
 
-// Matches renderCutPlanSvg's own W = Math.max(400, cutLengths.length * 14) — a diagram only ever
-// grows past its 400px floor once it needs the room, so comparing against that fixed number (not
-// the side-by-side column's own current pixel width) means two lifts with a similar strip count
-// always get the same layout. Comparing against the column's actual width instead used to stack
-// whichever lift's column happened to be a few px narrower at that moment and leave a similar,
-// similarly-dense lift cramped in the un-stacked layout right next to it — same strip count,
-// different treatment, for no reason a person looking at the page could see.
-const CUTPLAN_STACK_WIDTH = 400;
+// Matches renderCutPlanSvg's own W = Math.max(400, cutLengths.length * 14). Comparing against this
+// fixed number (not the side-by-side column's own current pixel width) is what makes two lifts with
+// a similar strip count get the same layout — comparing against the column's actual width instead
+// used to stack whichever lift's column happened to be a few px narrower at that moment and leave a
+// similar, similarly-dense lift cramped in the un-stacked layout right next to it — same strip
+// count, different treatment, for no reason a person looking at the page could see.
+//
+// Set well above W's own 400px floor, not right at it — two adjacent lifts routinely differ by a
+// couple of strips (29 vs 27 is typical, not an outlier), and right at the floor that alone was
+// enough to flip one to stacked and leave the other side-by-side: the exact "different treatment for
+// no visible reason" this was meant to prevent, just triggered by ordinary lift-to-lift variation
+// instead of a momentary layout width. 650px (~46 strips) only kicks in for a lift dense enough that
+// side-by-side would genuinely cramp it, well past the range two ordinary neighbouring lifts differ by.
+const CUTPLAN_STACK_WIDTH = 650;
 function refreshCutPlanStacking() {
   document.querySelectorAll(".cutplan-card").forEach((card) => {
     const svgEl = card.querySelector(".cutplan-card__plan");
