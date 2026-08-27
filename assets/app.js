@@ -848,21 +848,25 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     };
   }
 
-  // A genuine corner within the face (see splitFaceIntoCornerSegments): every segment is fitted
-  // exactly between its own two boundaries — a true end of the wall, or the corner shared with its
-  // neighbour on either side — the same evenly-spread-overlap fit (calcLift) already used for an
-  // ordinary straight lift. Strips stay full width always (never a narrow custom cut); a segment
-  // shorter than one strip just gets one strip's worth of harmless excess past its own far end,
-  // exactly like calcLift already handles for any short straight lift. Building every segment flush
-  // at BOTH ends this way means a corner is just a normal seam between two anchored strips — no strip
-  // barrels through into its neighbour's territory uncut, which is what the earlier "may overrun"
-  // design did and which left a redundant, wasted strip wherever a segment was short. Segments are
-  // walked in the face's own direction by default (segment 0 first, at the true face origin) —
-  // "Strip 1 starts from Right" flips which physical end the build actually starts from, so a
-  // mirrored lift walks cornerSegments in reverse and, within each one, measures/steps from that
-  // segment's own FAR end instead of its near one (reverseChain), while every real-world boundary
-  // lookup still uses the segment's true, unflipped inward normal — a mirrored direction changes
-  // which end strips are numbered/anchored from, never which side is "into the fill".
+  // A genuine corner within the face (see splitFaceIntoCornerSegments): every segment is anchored
+  // flush against whichever of its two boundaries is a real corner shared with a neighbour — never a
+  // strip barrelling through into the next segment's territory uncut (the earlier "may overrun"
+  // design's actual waste). But overlap itself should only ever be forced ABOVE the minimum right at
+  // that corner, where two strips genuinely have to fan out at a real angle — not along an ordinary
+  // straight run away from any corner, and not at a true END of the wall either (the very first or
+  // very last segment's own outer edge, which is no corner at all). So only a segment boundary that's
+  // shared with ANOTHER segment gets calcLift's evenly-spread fit (flush, whatever overlap that
+  // takes); a segment's own true-wall-end boundary instead steps at plain minimum pitch (w - oMin,
+  // same as an ordinary straight lift's minimum-overlap case) and simply lets its outermost strip run
+  // past that true end by whatever's left over — same harmless excess any calcLift call already
+  // tolerates, just not pulled back into extra overlap to land exactly on a line that was never a
+  // corner to begin with. Segments are walked in the face's own direction by default (segment 0
+  // first, at the true face origin) — "Strip 1 starts from Right" flips which physical end the build
+  // actually starts from, so a mirrored lift walks cornerSegments in reverse and, within each one,
+  // measures/steps from that segment's own FAR end instead of its near one (reverseChain), while
+  // every real-world boundary lookup still uses the segment's true, unflipped inward normal — a
+  // mirrored direction changes which end strips are numbered/anchored from, never which side is
+  // "into the fill", nor which physical boundary is a true wall end versus a corner.
   const mirror = stripSide === "right";
   let overallResultN = 0;
   const cutLengths = [];
@@ -894,16 +898,40 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     const rawChain = { edges: seg.edges, length: segLen, dir: segDir };
     const workChain = mirror ? reverseChain(rawChain) : rawChain;
 
-    const segResult = calcLift(segLen, w, oMin);
-    if (!segResult) return;
-    segOverlaps.push(segResult.overlap);
-    const segN = segResult.n;
-    const segPitch = segN > 1 ? w - segResult.overlap : 0;
-    const segStarts = Array.from({ length: segN }, (_, i) => i * segPitch);
-    // A segment shorter than one strip width still only gets ONE strip (calcLift's own n=1 case),
-    // which then harmlessly overhangs past this segment's own far end — extending the chain so that
-    // overhang's boundary-reach sampling is still a real, correctly-extrapolated position rather than
-    // clamped to this segment's last vertex.
+    // workChain-local 0 is always exactly where this segment's own strip numbering starts — either a
+    // corner shared with the PREVIOUS segment in install order, which always needs to be exact and
+    // always gets it for free just by starting the count there, or a true end (this is the very FIRST
+    // segment install reaches, so nothing precedes it to require precision) — either way, no special
+    // handling is ever needed at that end. The only real choice is at workChain-local segLen: a
+    // corner shared with the NEXT segment (needs calcLift's flush-both-ends fit, full stop — the
+    // MIDDLE-segment / neither-true-end case below), or the true wall end on the OTHER side, which
+    // only happens when this is the very LAST segment install reaches — nothing follows it either, so
+    // minimum pitch and letting the last strip overshoot there is exactly as valid as it is for an
+    // ordinary straight lift's own short-segment case, without needing calcLift's extra overlap to
+    // land precisely on a line nothing else has to match.
+    const isFirstGeometric = segIdx === 0;
+    const isLastGeometric = segIdx === cornerSegments.length - 1;
+    const farIsTrueEnd = (isFirstGeometric && mirror) || (isLastGeometric && !mirror);
+
+    let segN, segStarts, segOverlapForReport;
+    if (farIsTrueEnd) {
+      const pitch = Math.max(w - oMin, 0.01);
+      segN = segLen <= w ? 1 : Math.max(1, Math.ceil((segLen - w) / pitch) + 1);
+      segStarts = Array.from({ length: segN }, (_, i) => i * pitch);
+      segOverlapForReport = oMin;
+    } else {
+      const segResult = calcLift(segLen, w, oMin);
+      if (!segResult) return;
+      segN = segResult.n;
+      const segPitch = segN > 1 ? w - segResult.overlap : 0;
+      segStarts = Array.from({ length: segN }, (_, i) => i * segPitch);
+      segOverlapForReport = segResult.overlap;
+    }
+    segOverlaps.push(segOverlapForReport);
+    // Either fit's last strip can run past this segment's own far edge (a genuine calcLift n=1 short
+    // segment; the true-wall-end pitch fit, by design) — extending the chain so that overhang's
+    // boundary-reach sampling is still a real, correctly-extrapolated position rather than clamped to
+    // this segment's last vertex.
     const overrunLen = Math.max(segLen, segStarts[segStarts.length - 1] + w);
     const segFace = extendChainToStation(workChain, overrunLen);
 

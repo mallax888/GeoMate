@@ -1072,8 +1072,13 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 /* The scroll wrapper lets the diagram grow wider than its column for a dense (30+ strip) lift — see
    renderCutPlanSvg, which sizes the svg's own viewBox/width so every roll-number circle keeps enough
    room to stay legible instead of shrinking text below what's readable. min-width (not width) on the
-   svg itself means a normal, un-dense lift still fills the column exactly as before. */
-.cutplan-card__plan-scroll { overflow-x: auto; border-radius: 4px; }
+   svg itself means a normal, un-dense lift still fills the column exactly as before. min-width: 0
+   here (not the default `auto`) is what actually makes that scrolling happen INSIDE this column
+   instead of — a CSS grid item's default min-width is its content's own natural size, so without
+   this a wide diagram just pushed straight through its column's boundary and visibly overlapped the
+   strip list beside it (hiding whatever of the diagram or the list happened to land underneath),
+   rather than being clipped and scrolled the way overflow-x: auto was already meant to do. */
+.cutplan-card__plan-scroll { overflow-x: auto; border-radius: 4px; min-width: 0; }
 .cutplan-card__plan { display: block; min-width: 100%; height: auto; border-radius: 4px; background: var(--surface); }
 .cutplan-card__strips {
   list-style: none;
