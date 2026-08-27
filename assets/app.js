@@ -4067,7 +4067,11 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
     // means neighbouring strips' true tie-in points genuinely sit at very slightly different depths,
     // and that's exactly what needs to be readable straight off this diagram on site rather than
     // hidden behind a tidied-up flat baseline.
-    const farReach = (cutPlan.extentsReach || [])[i] ?? len;
+    // Floored at MIN_STRIP_LENGTH, same as the cut length itself — a true reach that rounds to
+    // (near) zero (the design boundary genuinely pinches out right at this strip) still gets a real,
+    // visible box matching the practical minimum strip the crew is actually told to cut and place,
+    // instead of collapsing to an invisible sliver while the strip list beside it says "2.0 m".
+    const farReach = Math.max((cutPlan.extentsReach || [])[i] ?? len, MIN_STRIP_LENGTH);
     const nearReach = (cutPlan.frontReach || [])[i] ?? 0;
     const xLeft = tx(leftSeam), xRight = tx(rightSeam);
     const depthLeft = faceDepthAtStation(face, inward, leftSeam);
@@ -4220,7 +4224,9 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
     const width = stripWidths[i];
     const right = left + width;
     const center = left + width / 2;
-    const farReach = (cutPlan.extentsReach || [])[i] ?? len;
+    // Same MIN_STRIP_LENGTH floor as the flat diagram (see renderCutPlanSvg) — a true reach that
+    // rounds to (near) zero still draws a real, visible box matching the practical minimum strip.
+    const farReach = Math.max((cutPlan.extentsReach || [])[i] ?? len, MIN_STRIP_LENGTH);
     const nearReach = (cutPlan.frontReach || [])[i] ?? 0;
 
     const nearLeftPt = pointAtStationExtrapolated(seg, left);
@@ -4426,6 +4432,7 @@ function renderCutPlanSvgManual(svg, cutPlan, productSpecs, activeProductId, row
   const stripProductIds = cutPlan.stripProductIds || [];
   const extentsReach = cutPlan.extentsReach || [];
   const frontReach = cutPlan.frontReach || [];
+  const cutLengths = cutPlan.cutLengths || [];
 
   // Once the last placed strip already reaches (or overshoots) the far end of the face, the build is
   // done — no more room for a "next" strip, so the click-to-place ghost preview has nothing real left
@@ -4488,7 +4495,11 @@ function renderCutPlanSvgManual(svg, cutPlan, productSpecs, activeProductId, row
     const end = stripEnds[i];
     const spec = productSpecs[stripProductIds[i]];
     const colorVar = spec && spec.colorSlot ? `var(--${spec.colorSlot})` : "var(--accent)";
-    const farReach = extentsReach[i] ?? 0;
+    // Floored the same way as the auto diagram (see renderCutPlanSvg) — but only up to this strip's
+    // OWN cut length, never past it: a manually-set strip shorter than MIN_STRIP_LENGTH is a
+    // deliberate user override (see the length input above), not a boundary pinching out to nothing,
+    // so it must stay exactly as short as the user actually set it.
+    const farReach = Math.max(extentsReach[i] ?? 0, Math.min(cutLengths[i] ?? 0, MIN_STRIP_LENGTH));
     const nearReach = frontReach[i] ?? 0;
     const xLeft = tx(start), xRight = tx(end);
     const yFar = ty(farReach), yNear = ty(nearReach);
