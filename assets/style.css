@@ -364,7 +364,9 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .spec-table tbody tr:hover { background: var(--surface-2); }
 .spec-table td .field__unit { width: 100%; min-width: 5.4rem; }
 .spec-table td .field__unit input { width: 100%; text-align: right; }
-.product-name-col { display: flex; align-items: center; gap: 0.4rem; }
+/* Plain table-cell display (not flex) — a <td> that opts into display:flex stops taking part in the
+   table's normal row-height algorithm, which threw this cell's own border-bottom ~1.5px out of line
+   with its siblings'. Only one child (the name input) ever lives here, so flex bought nothing. */
 .product-name-input { width: 100%; min-width: 7rem; font-family: var(--font-display); font-weight: 800; font-size: 1.05em; border: none; background: none; color: var(--ink); padding: 0.4rem 0.1rem; }
 .product-name-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
 /* "#" header (was an sr-only "Colour" label) is now a real, centered column — the row number sits

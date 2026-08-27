@@ -542,6 +542,16 @@ function pointAtStation(chain, station) {
   return { x: last.to.x, y: last.to.y, tangent: { x: last.x, y: last.y } };
 }
 
+// Same as pointAtStation, but keeps going in a straight line past the chain's own natural end instead
+// of clamping to its last vertex — needed for a corner segment's overrunning strips (see
+// computeCutPlan), whose stations can genuinely exceed that segment's own true length.
+function pointAtStationExtrapolated(chain, station) {
+  if (station <= chain.length + 1e-9) return pointAtStation(chain, station);
+  const last = chain.edges[chain.edges.length - 1];
+  const extra = station - chain.length;
+  return { x: last.to.x + chain.dir.x * extra, y: last.to.y + chain.dir.y * extra };
+}
+
 /**
  * True perpendicular depth of the REAL wall at an arbitrary station along the face, relative to the
  * fixed average-bearing line every strip is square-cut against — walks the actual DXF vertices (via
@@ -835,8 +845,11 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
   const frontReach = [];
   const stripWidths = [];
   const stripStarts = [];
-  const stripSegmentIndex = []; // which corner segment each strip belongs to — lets the (still flat)
-  // diagram colour segment B onward differently and mark where each corner really is.
+  const stripLocalStarts = []; // start position within the strip's OWN segment (not flattened) — the
+  // true-geometry diagram (renderCutPlanSvgCornered) needs this to place each strip in its own
+  // segment's real world frame; stripStarts above stays a flattened approximation for every other
+  // consumer that just needs a sane, non-crashing single-axis number.
+  const stripSegmentIndex = []; // which corner segment each strip belongs to.
   const cornerStations = []; // flattened station of each corner (there's one fewer than segments).
   let flatOffset = 0; // running total of true (not overrun) segment lengths, for a flattened stripStarts
   // approximation — the diagram itself doesn't yet draw a real bend (see renderCutPlanSvg), so this
@@ -880,6 +893,7 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
       frontReach.push(r.nearReach);
       stripWidths.push(w);
       stripStarts.push(flatOffset + start);
+      stripLocalStarts.push(start);
       stripSegmentIndex.push(segIdx);
       overallResultN++;
     }
@@ -905,6 +919,7 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     polygonArea: Math.abs(signedArea(poly)),
     cornerSegments,
     stripSegmentIndex,
+    stripLocalStarts,
     cornerStations,
   };
 }
@@ -2975,7 +2990,11 @@ function buildCutPlanSvgMarkup(cutPlan, w, stripRollNumbers) {
   svg.setAttribute("viewBox", "0 0 400 260");
   svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
   svg.setAttribute("class", "cutplan-print-page__plan");
-  renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers);
+  if (cutPlan.cornerSegments && cutPlan.cornerSegments.length > 1) {
+    renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers);
+  } else {
+    renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers);
+  }
   return svg.outerHTML;
 }
 
@@ -3896,6 +3915,8 @@ function renderCutPlan(results) {
     const svgEl = card.querySelector(".cutplan-card__plan");
     if (isManual) {
       renderCutPlanSvgManual(svgEl, r.cutPlan, productSpecs, activeProductId, id);
+    } else if (r.cutPlan.cornerSegments && r.cutPlan.cornerSegments.length > 1) {
+      renderCutPlanSvgCornered(svgEl, r.cutPlan, r.w, stripRollNumbersFor(r, rollLookup));
     } else {
       renderCutPlanSvg(svgEl, r.cutPlan, r.w, stripRollNumbersFor(r, rollLookup));
     }
@@ -3997,32 +4018,6 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
   svg.innerHTML = "";
   svg.appendChild(polyEl);
 
-  // A genuine corner within the face (see splitFaceIntoCornerSegments) — the strips themselves still
-  // draw on this one flat station axis (a true bent diagram is a bigger rework), so this is the one
-  // visual cue that a corner exists here at all: a marker line at exactly where the direction change
-  // is, plus every strip from there on shifts to a different colour pair (see the fill picked below).
-  (cutPlan.cornerStations || []).forEach((station) => {
-    const cx = tx(station);
-    const markerLine = document.createElementNS(ns, "line");
-    markerLine.setAttribute("x1", cx.toFixed(1));
-    markerLine.setAttribute("y1", (pad * 0.3).toFixed(1));
-    markerLine.setAttribute("x2", cx.toFixed(1));
-    markerLine.setAttribute("y2", (H - pad * 0.3).toFixed(1));
-    markerLine.setAttribute("stroke", "var(--ink)");
-    markerLine.setAttribute("stroke-width", "1.5");
-    markerLine.setAttribute("stroke-dasharray", "2,2");
-    svg.appendChild(markerLine);
-
-    const label = document.createElementNS(ns, "text");
-    label.setAttribute("x", (cx + 3).toFixed(1));
-    label.setAttribute("y", (pad * 0.3 + 8).toFixed(1));
-    label.setAttribute("font-size", "8");
-    label.setAttribute("font-family", "var(--font-mono)");
-    label.setAttribute("fill", "var(--ink)");
-    label.textContent = "corner";
-    svg.appendChild(label);
-  });
-
   // Real per-strip positions/widths (computeCutPlan always fills these in now) — not recomputed from
   // a single uniform pitch, since "Pack from one side" (packStripsFromSide) can leave one strip
   // narrower than the rest, and a plain i*pitch formula would draw it as if it were full width.
@@ -4099,14 +4094,11 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
     );
     // Alternating between two distinct colours (not just one colour's opacity) so adjacent strips
     // are clearly separable at a glance, even across a long dense run of similar-height rectangles.
-    // A genuine corner (see the marker lines above) shifts the whole pair for every segment after
-    // the first, so which side of a corner a strip belongs to is visible from its colour alone, not
-    // just the marker line — SEGMENT_FILL_PAIRS cycles if a lift ever had more than two corners.
-    const segIdx = (cutPlan.stripSegmentIndex && cutPlan.stripSegmentIndex[i]) || 0;
-    const fillPair = SEGMENT_FILL_PAIRS[segIdx % SEGMENT_FILL_PAIRS.length];
-    stripShape.setAttribute("fill", i % 2 === 0 ? fillPair.a : fillPair.b);
+    // A lift with a real corner never reaches this function at all any more — see
+    // renderCutPlanSvgCornered — so there's only ever one segment's worth of strips to colour here.
+    stripShape.setAttribute("fill", i % 2 === 0 ? "var(--accent)" : "var(--clay)");
     stripShape.setAttribute("fill-opacity", "0.75");
-    stripShape.setAttribute("stroke", i % 2 === 0 ? fillPair.aStroke : fillPair.bStroke);
+    stripShape.setAttribute("stroke", i % 2 === 0 ? "var(--accent-strong)" : "var(--clay)");
     stripShape.setAttribute("stroke-width", "1");
     svg.appendChild(stripShape);
 
@@ -4164,6 +4156,231 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
       // above). Below that floor, fall back to a small plain dot instead: the strip list alongside
       // this diagram (stripsList in renderCutPlan) always spells the roll number out in full, at any
       // strip count, so nothing is actually lost — it just isn't crammed into the diagram itself.
+      const rollFontSize = rollLabel.length >= 3 ? rollCircleR * 0.82 : rollLabel.length === 2 ? rollCircleR * 0.98 : rollCircleR * 1.15;
+      const MIN_LEGIBLE_FONT = 4.2;
+      const circle = document.createElementNS(ns, "circle");
+      circle.setAttribute("cx", ccx.toFixed(1));
+      circle.setAttribute("cy", ccy.toFixed(1));
+      const titleEl = document.createElementNS(ns, "title");
+      titleEl.textContent = `Roll ${rollLabel}`;
+
+      if (rollFontSize >= MIN_LEGIBLE_FONT) {
+        circle.setAttribute("r", rollCircleR.toFixed(1));
+        circle.setAttribute("fill", "var(--surface)");
+        circle.setAttribute("stroke", "var(--ink)");
+        circle.setAttribute("stroke-width", "1");
+        circle.appendChild(titleEl);
+        svg.appendChild(circle);
+
+        const rollText = document.createElementNS(ns, "text");
+        rollText.setAttribute("x", ccx.toFixed(1));
+        rollText.setAttribute("y", ccy.toFixed(1));
+        rollText.setAttribute("font-size", rollFontSize.toFixed(1));
+        rollText.setAttribute("font-family", "var(--font-mono)");
+        rollText.setAttribute("fill", "var(--ink)");
+        rollText.setAttribute("text-anchor", "middle");
+        rollText.setAttribute("dominant-baseline", "central");
+        rollText.textContent = rollLabel;
+        svg.appendChild(rollText);
+      } else {
+        circle.setAttribute("r", Math.max(1.3, rollCircleR * 0.45).toFixed(1));
+        circle.setAttribute("fill", "var(--ink-muted)");
+        circle.setAttribute("stroke", "none");
+        circle.appendChild(titleEl);
+        svg.appendChild(circle);
+      }
+    }
+  });
+}
+
+/**
+ * The true-geometry counterpart to renderCutPlanSvg, used only for a lift with a genuine corner (see
+ * splitFaceIntoCornerSegments). Where the ordinary renderer flattens the whole face onto one straight
+ * station axis, this one works entirely in real (x, y) world coordinates — each strip drawn against
+ * its OWN segment's own direction — then applies a single rigid rotation (never a distortion) so the
+ * lift's overall face direction still reads roughly left-to-right on screen, the same reading
+ * convention as every other lift's diagram. A real corner actually bends here, and two strips from
+ * different segments that genuinely overlap on the ground are drawn overlapping on screen too,
+ * instead of being straightened into a false back-to-back row.
+ */
+function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
+  const ns = "http://www.w3.org/2000/svg";
+  const { face, cutLengths, cornerSegments, stripSegmentIndex, stripLocalStarts, stripWidths } = cutPlan;
+  const overallOrigin = face.edges[0].from;
+  const overallInward = inwardNormal(face.dir);
+  // u = distance along the OVERALL face direction, v = distance along its inward normal — a genuine
+  // rotation of true world (x, y), not the arc-length flattening the ordinary diagram uses, so a real
+  // bend between segments stays a real bend here instead of being straightened out.
+  const proj = (p) => ({
+    u: (p.x - overallOrigin.x) * face.dir.x + (p.y - overallOrigin.y) * face.dir.y,
+    v: (p.x - overallOrigin.x) * overallInward.x + (p.y - overallOrigin.y) * overallInward.y,
+  });
+
+  // Every strip's true world corner points, computed against its OWN segment's own direction — each
+  // one independently correct regardless of which segment it's in, before any screen-space layout
+  // happens. Deliberately each strip's own natural [start, start+width] extent (not trimmed to a
+  // shared seam with its neighbour the way the flat diagram does) — the whole point here is to show a
+  // real overlap where one genuinely exists, at an ordinary seam as much as at a corner.
+  const stripGeoms = cutLengths.map((len, i) => {
+    const segIdx = (stripSegmentIndex && stripSegmentIndex[i]) || 0;
+    const seg = cornerSegments[segIdx];
+    const segInward = inwardNormal(seg.dir);
+    const left = stripLocalStarts[i];
+    const width = stripWidths[i];
+    const right = left + width;
+    const center = left + width / 2;
+    const farReach = (cutPlan.extentsReach || [])[i] ?? len;
+    const nearReach = (cutPlan.frontReach || [])[i] ?? 0;
+
+    const nearLeftPt = pointAtStationExtrapolated(seg, left);
+    const nearRightPt = pointAtStationExtrapolated(seg, right);
+    const centerPt = pointAtStationExtrapolated(seg, center);
+    const nearLeft = { x: nearLeftPt.x + segInward.x * nearReach, y: nearLeftPt.y + segInward.y * nearReach };
+    const nearRight = { x: nearRightPt.x + segInward.x * nearReach, y: nearRightPt.y + segInward.y * nearReach };
+    const centerNear = { x: centerPt.x + segInward.x * nearReach, y: centerPt.y + segInward.y * nearReach };
+    // Far edge is one level line through the centre point (not separately tracked left/right) — same
+    // convention the flat diagram uses: only the NEAR edge needs to hug the true wall position.
+    const farCenter = { x: centerPt.x + segInward.x * farReach, y: centerPt.y + segInward.y * farReach };
+    const farLeft = { x: farCenter.x - seg.dir.x * (width / 2), y: farCenter.y - seg.dir.y * (width / 2) };
+    const farRight = { x: farCenter.x + seg.dir.x * (width / 2), y: farCenter.y + seg.dir.y * (width / 2) };
+
+    const stitchPts = (cutPlan.stitches[i] || []).map((s) => ({
+      p1: { x: centerPt.x + segInward.x * s.offset, y: centerPt.y + segInward.y * s.offset },
+      p2: { x: centerPt.x + segInward.x * (s.offset + s.length), y: centerPt.y + segInward.y * (s.offset + s.length) },
+    }));
+
+    return { nearLeft, nearRight, farLeft, farRight, farCenter, centerNear, stitchPts, segIdx };
+  });
+
+  const allPts = cutPlan.poly.map(proj);
+  stripGeoms.forEach((g) => {
+    [g.nearLeft, g.nearRight, g.farLeft, g.farRight].forEach((p) => allPts.push(proj(p)));
+  });
+  const us = allPts.map((p) => p.u), vs = allPts.map((p) => p.v);
+  const minU = Math.min(...us), maxU = Math.max(...us);
+  const minV = Math.min(...vs), maxV = Math.max(...vs);
+
+  const pad = 16;
+  const W = Math.max(400, cutLengths.length * 14);
+  const uExtent = Math.max(maxU - minU, 1e-6), vExtent = Math.max(maxV - minV, 1e-6);
+  const scale = (W - pad * 2) / uExtent;
+  const H = Math.max(260, pad * 2 + vExtent * scale);
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("width", W);
+  svg.setAttribute("height", H);
+  const tx = (u) => pad + (u - minU) * scale;
+  const ty = (v) => H - pad - (v - minV) * scale;
+  const screenOf = (p) => { const q = proj(p); return { x: tx(q.u), y: ty(q.v) }; };
+
+  const poly2d = cutPlan.poly.map((p) => { const s = screenOf(p); return `${s.x.toFixed(1)},${s.y.toFixed(1)}`; }).join(" ");
+  const polyEl = document.createElementNS(ns, "polygon");
+  polyEl.setAttribute("points", poly2d);
+  polyEl.setAttribute("fill", "var(--accent-tint)");
+  polyEl.setAttribute("stroke", "var(--ink)");
+  polyEl.setAttribute("stroke-width", "2.5");
+  polyEl.setAttribute("stroke-dasharray", "7,4");
+  polyEl.setAttribute("stroke-linejoin", "round");
+  svg.innerHTML = "";
+  svg.appendChild(polyEl);
+
+  // A small precise dot right where the true boundary actually bends — the bend itself is now the
+  // main visual cue (no full-height line needed the way the flat diagram's marker did), this just
+  // pins down exactly where.
+  cornerSegments.slice(0, -1).forEach((seg) => {
+    const cornerPt = seg.edges[seg.edges.length - 1].to;
+    const s = screenOf(cornerPt);
+    const dot = document.createElementNS(ns, "circle");
+    dot.setAttribute("cx", s.x.toFixed(1));
+    dot.setAttribute("cy", s.y.toFixed(1));
+    dot.setAttribute("r", "4");
+    dot.setAttribute("fill", "var(--ink)");
+    dot.setAttribute("stroke", "var(--surface)");
+    dot.setAttribute("stroke-width", "2");
+    svg.appendChild(dot);
+  });
+
+  const labelFontSize = Math.max(4.5, Math.min(7, 165 / Math.max(cutLengths.length, 1)));
+  const avgStripPx = (W - pad * 2) / Math.max(cutLengths.length, 1);
+  const rollCircleR = Math.max(2.2, Math.min(7.5, avgStripPx / 2 - 1.3));
+
+  // Unlike the flat diagram (an even grid where neighbouring labels never fight for the same spot),
+  // strips either side of a real corner can land with near-identical screen positions — one segment's
+  // final strip overrunning past the bend, the next segment's first strip anchored right at it. Track
+  // the last few placed strip-number labels and, on a genuine bbox clash, lift the new one further
+  // from the strip's far edge (alternating "lanes") until it clears — same idea as bar-chart label
+  // decluttering, just triggered locally instead of applied to the whole row.
+  const recentStripLabels = [];
+
+  cutLengths.forEach((len, i) => {
+    const g = stripGeoms[i];
+    const nL = screenOf(g.nearLeft), nR = screenOf(g.nearRight);
+    const fL = screenOf(g.farLeft), fR = screenOf(g.farRight);
+
+    const stripShape = document.createElementNS(ns, "polygon");
+    stripShape.setAttribute(
+      "points",
+      `${nL.x.toFixed(1)},${nL.y.toFixed(1)} ${fL.x.toFixed(1)},${fL.y.toFixed(1)} ${fR.x.toFixed(1)},${fR.y.toFixed(1)} ${nR.x.toFixed(1)},${nR.y.toFixed(1)}`
+    );
+    const fillPair = SEGMENT_FILL_PAIRS[g.segIdx % SEGMENT_FILL_PAIRS.length];
+    stripShape.setAttribute("fill", i % 2 === 0 ? fillPair.a : fillPair.b);
+    stripShape.setAttribute("fill-opacity", "0.75");
+    stripShape.setAttribute("stroke", i % 2 === 0 ? fillPair.aStroke : fillPair.bStroke);
+    stripShape.setAttribute("stroke-width", "1");
+    svg.appendChild(stripShape);
+
+    g.stitchPts.forEach((sp) => {
+      const p1 = screenOf(sp.p1), p2 = screenOf(sp.p2);
+      const stitchLine = document.createElementNS(ns, "line");
+      stitchLine.setAttribute("x1", p1.x.toFixed(1));
+      stitchLine.setAttribute("y1", p1.y.toFixed(1));
+      stitchLine.setAttribute("x2", p2.x.toFixed(1));
+      stitchLine.setAttribute("y2", p2.y.toFixed(1));
+      stitchLine.setAttribute("stroke", "var(--accent-strong)");
+      stitchLine.setAttribute("stroke-width", "2");
+      stitchLine.setAttribute("stroke-linecap", "round");
+      stitchLine.setAttribute("stroke-dasharray", "3,2");
+      svg.appendChild(stitchLine);
+    });
+
+    {
+      const margin = 6;
+      const fc = screenOf(g.farCenter);
+      const lx = Math.max(margin, Math.min(W - margin, fc.x));
+      const baseLy = Math.max(margin, Math.min(H - margin, fc.y - 8));
+      const digits = String(i + 1).length;
+      const halfW = (labelFontSize * 0.62 * digits) / 2 + 1.2;
+      const laneStep = labelFontSize + 2;
+      let lane = 0;
+      let ly = baseLy;
+      while (
+        lane < 5 &&
+        recentStripLabels.some((b) => Math.abs(b.x - lx) < b.halfW + halfW && Math.abs(b.y - ly) < labelFontSize + 2)
+      ) {
+        lane++;
+        ly = Math.max(margin, baseLy - lane * laneStep);
+      }
+      recentStripLabels.push({ x: lx, y: ly, halfW });
+      if (recentStripLabels.length > 4) recentStripLabels.shift();
+
+      const label = document.createElementNS(ns, "text");
+      label.setAttribute("x", lx.toFixed(1));
+      label.setAttribute("y", ly.toFixed(1));
+      label.setAttribute("font-size", labelFontSize.toFixed(1));
+      label.setAttribute("font-family", "var(--font-mono)");
+      label.setAttribute("font-weight", "700");
+      label.setAttribute("fill", "var(--ink)");
+      label.setAttribute("text-anchor", "middle");
+      label.textContent = String(i + 1);
+      svg.appendChild(label);
+    }
+
+    const rollLabel = (stripRollNumbers && stripRollNumbers[i]) || "";
+    if (rollLabel) {
+      const margin = 6;
+      const cn = screenOf(g.centerNear);
+      const ccx = Math.max(margin + rollCircleR, Math.min(W - margin - rollCircleR, cn.x));
+      const ccy = Math.max(margin + rollCircleR, Math.min(H - margin - rollCircleR, cn.y - rollCircleR - 2));
+
       const rollFontSize = rollLabel.length >= 3 ? rollCircleR * 0.82 : rollLabel.length === 2 ? rollCircleR * 0.98 : rollCircleR * 1.15;
       const MIN_LEGIBLE_FONT = 4.2;
       const circle = document.createElementNS(ns, "circle");
