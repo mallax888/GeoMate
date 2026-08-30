@@ -47,7 +47,8 @@
          interactive controls in one (WCAG "nested interactive"), confusing for keyboard/screen
          reader users. Positioned over the same top-right corner the old in-summary button
          occupied instead (see .products-panel__add). -->
-    <button type="button" id="addProductBtn" class="btn btn--ghost products-panel__add">+ Add product</button>
+    <button type="button" id="addProductBtn" class="btn btn--ghost products-panel__add" aria-haspopup="menu" aria-expanded="false">+ Add product</button>
+    <div id="productLibraryMenu" class="product-library-menu" role="menu" aria-label="Add product" hidden></div>
     <details id="productsDetails" open>
       <summary id="productsSummaryHeading" class="products-summary">
         <h2 class="panel__heading products-summary__heading">Product list</h2>

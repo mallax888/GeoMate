@@ -1727,6 +1727,50 @@ function defaultProductRows() {
   ];
 }
 
+/* ============================================================
+   Product library — every product ever named in any project, kept separately from the project
+   itself so a spec used again on a different job doesn't need re-typing. A per-project product
+   list is still the source of truth for THAT project (renamed/deleted here, unaffected there); this
+   is only ever offered back as a starting point via "+ Add product".
+   ============================================================ */
+const PRODUCT_LIBRARY_KEY = "geogrid-product-library";
+
+function loadProductLibrary() {
+  try {
+    const list = JSON.parse(localStorage.getItem(PRODUCT_LIBRARY_KEY));
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveProductLibrary(list) {
+  try {
+    localStorage.setItem(PRODUCT_LIBRARY_KEY, JSON.stringify(list));
+  } catch {
+    /* storage full or unavailable — the library just won't persist */
+  }
+}
+
+/** Remembers a product's current spec, keyed by name (case-insensitive) so re-saving the same
+ *  product updates its library entry instead of duplicating it. A blank/not-yet-named row is never
+ *  remembered — the library only ever fills up with products someone actually named. */
+function rememberProductInLibrary(spec) {
+  const name = (spec.name || "").trim();
+  if (!name) return;
+  const library = loadProductLibrary();
+  const key = name.toLowerCase();
+  const entry = { name, w: spec.w, oMinMm: spec.oMinMm, rollLength: spec.rollLength, costPerRoll: spec.costPerRoll, wrapAllowance: spec.wrapAllowance };
+  const idx = library.findIndex((p) => p.name.trim().toLowerCase() === key);
+  if (idx >= 0) library[idx] = entry;
+  else library.push(entry);
+  saveProductLibrary(library);
+}
+
+function removeProductFromLibrary(name) {
+  saveProductLibrary(loadProductLibrary().filter((p) => p.name.trim().toLowerCase() !== name.trim().toLowerCase()));
+}
+
 /** Reconstructs the RE580/Strata products from a version-1 saved project or autosave (predating the
  *  editable product list), which stored RE580's spec as fixed settings.* fields and Strata's as a
  *  separate top-level `strata` block. Only synthesizes the ones that were actually saved, so an old
@@ -1811,14 +1855,36 @@ function renderProductTable(rows) {
   renumberProductRows();
 }
 
-function addProduct() {
-  const row = blankProductRow();
+function insertProductRow(row) {
   products.push({ id: row.id, colorSlot: row.colorSlot });
   productSpecBody.insertAdjacentHTML("beforeend", buildProductRowHtml(row));
   populateProductSelects();
   renumberProductRows();
   computeAndRender();
+  return row;
+}
+
+function addProduct() {
+  const row = insertProductRow(blankProductRow());
   productFieldEl(row.id, "name")?.focus();
+}
+
+/** Adds a row pre-filled from a saved library entry (see rememberProductInLibrary below) — a fresh
+ *  id/colour for THIS project's table, but every spec field copied over so it doesn't need
+ *  re-typing on a job that reuses a product from an earlier one. */
+function addProductFromLibrary(entry) {
+  const id = "product_" + Math.random().toString(36).slice(2, 9);
+  const colorSlot = PRODUCT_COLOR_SLOTS[products.length % PRODUCT_COLOR_SLOTS.length];
+  insertProductRow({
+    id,
+    colorSlot,
+    name: entry.name,
+    w: entry.w,
+    oMinMm: entry.oMinMm,
+    rollLength: entry.rollLength,
+    costPerRoll: entry.costPerRoll,
+    wrapAllowance: entry.wrapAllowance,
+  });
 }
 
 function deleteProduct(id) {
@@ -1873,16 +1939,87 @@ function snapshotProductRows() {
   });
 }
 
+const addProductBtn = document.getElementById("addProductBtn");
+const productLibraryMenu = document.getElementById("productLibraryMenu");
+
+function closeProductLibraryMenu() {
+  productLibraryMenu.hidden = true;
+  addProductBtn.setAttribute("aria-expanded", "false");
+}
+
+function renderProductLibraryMenu() {
+  const library = loadProductLibrary();
+  const items = library
+    .map(
+      (p) => `
+    <div class="product-library-menu__row">
+      <button type="button" class="product-library-menu__item" role="menuitem" data-name="${escapeHtml(p.name)}">
+        <span class="product-library-menu__name">${escapeHtml(p.name)}</span>
+        <span class="product-library-menu__spec">${escapeHtml(p.w)}m · ${escapeHtml(p.oMinMm)}mm overlap</span>
+      </button>
+      <button type="button" class="product-library-menu__remove" data-name="${escapeHtml(p.name)}" title="Remove ${escapeHtml(p.name)} from the library" aria-label="Remove ${escapeHtml(p.name)} from the library">×</button>
+    </div>`
+    )
+    .join("");
+  productLibraryMenu.innerHTML = `
+    ${items ? `<div class="product-library-menu__label">From library</div>${items}` : ""}
+    <button type="button" class="product-library-menu__item product-library-menu__item--new" role="menuitem" data-new>+ New product</button>
+  `;
+}
+
+function openProductLibraryMenu() {
+  renderProductLibraryMenu();
+  productLibraryMenu.hidden = false;
+  addProductBtn.setAttribute("aria-expanded", "true");
+}
+
 // The button now lives inside <summary> (top-right of the Products panel header, same slot
 // "+ Add lift" sits in above the Takeoff table) so it's reachable without opening the panel first —
 // but a click anywhere in <summary> also toggles the parent <details> by default, which would
 // immediately re-close the panel right after adding a product if it was already open. Cancel that
 // default toggle and force it open instead, so the new row is always visible afterward.
-document.getElementById("addProductBtn").addEventListener("click", (e) => {
+addProductBtn.addEventListener("click", (e) => {
   e.preventDefault();
   e.stopPropagation();
   document.getElementById("productsDetails").open = true;
-  addProduct();
+  // Nothing saved yet anywhere to choose from — skip straight to today's blank-row behaviour
+  // instead of opening a menu with only "+ New product" in it.
+  if (!loadProductLibrary().length) {
+    addProduct();
+    return;
+  }
+  if (productLibraryMenu.hidden) openProductLibraryMenu();
+  else closeProductLibraryMenu();
+});
+productLibraryMenu.addEventListener("click", (e) => {
+  // Stops here rather than letting it bubble to the document-level outside-click listener below —
+  // that listener checks productLibraryMenu.contains(e.target), which a remove click always fails
+  // by the time it runs (renderProductLibraryMenu already replaced the clicked element's whole
+  // subtree), closing the menu on every removal instead of just refreshing its contents in place.
+  e.stopPropagation();
+  const removeBtn = e.target.closest(".product-library-menu__remove");
+  if (removeBtn) {
+    removeProductFromLibrary(removeBtn.dataset.name);
+    renderProductLibraryMenu();
+    return;
+  }
+  const item = e.target.closest(".product-library-menu__item");
+  if (!item) return;
+  if (item.dataset.new !== undefined) {
+    addProduct();
+  } else {
+    const entry = loadProductLibrary().find((p) => p.name === item.dataset.name);
+    if (entry) addProductFromLibrary(entry);
+  }
+  closeProductLibraryMenu();
+});
+document.addEventListener("click", (e) => {
+  if (!productLibraryMenu.hidden && !productLibraryMenu.contains(e.target) && e.target !== addProductBtn) {
+    closeProductLibraryMenu();
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !productLibraryMenu.hidden) closeProductLibraryMenu();
 });
 // The products panel now stays permanently open — collapsing it hid the project details/usage
 // panel beside the table too, which are meant to be visible at a glance, not tucked behind a
@@ -1897,6 +2034,8 @@ productSpecBody.addEventListener("click", (e) => {
 });
 productSpecBody.addEventListener("input", (e) => {
   if (e.target.matches('[data-field="name"]')) populateProductSelects();
+  const row = e.target.closest(".product-row");
+  if (row) rememberProductInLibrary(snapshotProductRows().find((p) => p.id === row.dataset.id));
   computeAndRender();
 });
 
@@ -6183,4 +6322,11 @@ document.getElementById("newProjectBtn").addEventListener("click", () => {
    ============================================================ */
 restoreAutosave();
 refreshProjectList();
+// Seeds the cross-project library with the two built-in specs on a first-ever run, purely so
+// "+ Add product" has something to offer besides "+ New product" before anyone's named one of
+// their own — never re-seeds once the library holds anything, including after every entry is
+// individually removed, since that's a deliberate "start from empty" choice, not a fresh install.
+if (localStorage.getItem(PRODUCT_LIBRARY_KEY) == null) {
+  saveProductLibrary(defaultProductRows().map(({ name, w, oMinMm, rollLength, costPerRoll, wrapAllowance }) => ({ name, w, oMinMm, rollLength, costPerRoll, wrapAllowance })));
+}
 computeAndRender();
