@@ -2034,9 +2034,25 @@ productSpecBody.addEventListener("click", (e) => {
 });
 productSpecBody.addEventListener("input", (e) => {
   if (e.target.matches('[data-field="name"]')) populateProductSelects();
-  const row = e.target.closest(".product-row");
-  if (row) rememberProductInLibrary(snapshotProductRows().find((p) => p.id === row.dataset.id));
   computeAndRender();
+});
+// Committed to the cross-project library on focusout (bubbles, unlike blur — this can be one
+// delegated listener), not on every keystroke of "input" above — remembering "S", "St", "Sta",
+// "Star"… as someone types a name would flood the library with every partial string typed along
+// the way instead of just the finished product. Renaming an existing product removes its old
+// library entry (tracked in data-remembered-name) rather than leaving a stale one under the name
+// it used to have.
+productSpecBody.addEventListener("focusout", (e) => {
+  const row = e.target.closest(".product-row");
+  if (!row) return;
+  const spec = snapshotProductRows().find((p) => p.id === row.dataset.id);
+  if (!spec) return;
+  const prevName = row.dataset.rememberedName;
+  const newName = (spec.name || "").trim();
+  if (prevName && prevName.toLowerCase() !== newName.toLowerCase()) removeProductFromLibrary(prevName);
+  rememberProductInLibrary(spec);
+  if (newName) row.dataset.rememberedName = newName;
+  else delete row.dataset.rememberedName;
 });
 
 /** Parses every product's DOM row into the shape the rest of the app calculates against — unchanged
