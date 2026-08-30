@@ -145,6 +145,22 @@ function calcLift(L, w, oMin) {
 }
 
 /**
+ * calcLift's alternative for a lift with no wall face to tie in against — a floor/basal layer just
+ * needs the ground blanketed, so neither end needs calcLift's evenly-spread extra overlap to land
+ * flush on a specific line nothing downstream has to match. Every seam sits at exactly the minimum
+ * overlap instead, and the last strip is left wherever that places it, simply running past the far
+ * edge by whatever's left over — same stepping a cornered lift's own segments already use apart from
+ * their shared corner, see computeCutPlan's corner-segment loop for the identical formula.
+ */
+function minPitchLift(L, w, oMin) {
+  if (!(L > 0) || !(w > 0) || oMin < 0 || oMin >= w) return null;
+  const pitch = Math.max(w - oMin, 0.01);
+  const n = L <= w ? 1 : Math.max(1, Math.ceil((L - w) / pitch) + 1);
+  const materialWidth = n * w;
+  return { n, overlap: oMin, materialWidth, excessWidth: materialWidth - L };
+}
+
+/**
  * The "pack from one side" alternative to calcLift's default (spread the leftover evenly) and the
  * Extend-face-length setting (grow the reported face length): every strip is full width w — never
  * trimmed narrower, since cutting a roll down by however many mm on site to close a gap is real
@@ -810,7 +826,7 @@ function reverseChain(chain) {
   return { edges, length: chain.length, dir: { x: -chain.dir.x, y: -chain.dir.y } };
 }
 
-function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide = null, stripSide = null, avoidStitches = false, neighborDir = null) {
+function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide = null, stripSide = null, avoidStitches = false, neighborDir = null, floorMode = false) {
   const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
   const chains = chainEdges(poly);
   if (chains.length < 2) return null;
@@ -826,7 +842,10 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
   const cornerSegments = packed ? [pickedFace] : splitFaceIntoCornerSegments(face, w);
 
   if (cornerSegments.length <= 1) {
-    const result = packed || calcLift(face.length, w, oMin);
+    // Wall: calcLift's evenly-spread fit, so both ends land flush on the real tie-in lines. Floor:
+    // no face to tie into, so minPitchLift instead — same minimum-overlap, overshoot-allowed
+    // stepping every corner segment already uses further down (see installOrder.forEach below).
+    const result = packed || (floorMode ? minPitchLift(face.length, w, oMin) : calcLift(face.length, w, oMin));
     if (!result) return null;
     const pitch = !packed && result.n > 1 ? w - result.overlap : 0;
     // packStripsFromSide already mirrors itself onto packSide (that's a real repositioning, since its
@@ -1671,6 +1690,7 @@ const settingsInputs = {
   installRate: document.getElementById("installRate"),
   baseLevel: document.getElementById("baseLevel"),
   extendFace: document.getElementById("extendFaceToggle"),
+  reinforcementType: document.getElementById("reinforcementType"),
   packSide: document.getElementById("packSideToggle"),
   packSideValue: document.getElementById("packSide"),
   avoidStitches: document.getElementById("avoidStitchesToggle"),
@@ -1683,6 +1703,7 @@ settingsInputs.packSide.addEventListener("change", () => {
 });
 settingsInputs.packSideValue.addEventListener("change", computeAndRender);
 settingsInputs.avoidStitches.addEventListener("change", computeAndRender);
+settingsInputs.reinforcementType.addEventListener("change", computeAndRender);
 
 /* ============================================================
    Products — an open-ended, editable list of rolled products (RE580, Strata, or whatever a job
@@ -1946,6 +1967,7 @@ function readSettings() {
     stripSide: settingsInputs.packSideValue.value,
     packSide: settingsInputs.packSide.checked ? settingsInputs.packSideValue.value : null,
     avoidStitches: settingsInputs.avoidStitches.checked,
+    floorMode: settingsInputs.reinforcementType.value === "floor",
   };
 }
 
@@ -2454,7 +2476,7 @@ function validateProductSpec(p, rollLengthRawStr) {
 }
 
 function computeAndRender() {
-  const { rollGroupSize, installRate, baseLevel, extendFace, packSide, stripSide, avoidStitches } = readSettings();
+  const { rollGroupSize, installRate, baseLevel, extendFace, packSide, stripSide, avoidStitches, floorMode } = readSettings();
   const productSpecs = readProductSpecs();
   const fallbackProduct = productSpecs[products[0]?.id];
   const productFor = (row) => {
@@ -2509,7 +2531,7 @@ function computeAndRender() {
         cp = computeManualCutPlan(row._extentsPoints, row._manualStrips, productSpecs, row._faceCycle, refDir, prevFaceDir);
       } else {
         const p = productFor(row);
-        cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle, refDir, packSide, stripSide, avoidStitches, prevFaceDir) : null;
+        cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle, refDir, packSide, stripSide, avoidStitches, prevFaceDir, floorMode) : null;
         // How many stitch patches EVERY candidate face would produce, not just the active one — lets
         // the Face picker show the consequence of each option up front (see renderCutPlan) instead of
         // the user clicking through them blind to find the one with zero patches. Also records each
@@ -2527,7 +2549,7 @@ function computeAndRender() {
           row._faceStitchCounts = [];
           row._faceLengths = [];
           chains.forEach((_, i) => {
-            const altCp = i === activeIdx ? cp : computeCutPlan(row._extentsPoints, p.w, p.oMin, i, refDir, packSide, stripSide, avoidStitches);
+            const altCp = i === activeIdx ? cp : computeCutPlan(row._extentsPoints, p.w, p.oMin, i, refDir, packSide, stripSide, avoidStitches, undefined, floorMode);
             row._faceStitchCounts.push(altCp.stitches.reduce((s, arr) => s + arr.length, 0));
             row._faceLengths.push(altCp.faceLength);
           });
@@ -5844,6 +5866,7 @@ function buildStateSnapshot() {
       installRate: settingsInputs.installRate.value,
       baseLevel: settingsInputs.baseLevel.value,
       extendFace: settingsInputs.extendFace.checked,
+      reinforcementType: settingsInputs.reinforcementType.value,
       packSide: settingsInputs.packSide.checked,
       packSideValue: settingsInputs.packSideValue.value,
       avoidStitches: settingsInputs.avoidStitches.checked,
@@ -5881,6 +5904,7 @@ function applyStateSnapshot(state) {
   if (s.installRate != null) settingsInputs.installRate.value = s.installRate;
   if (s.baseLevel != null) settingsInputs.baseLevel.value = s.baseLevel;
   if (s.extendFace != null) settingsInputs.extendFace.checked = !!s.extendFace;
+  if (s.reinforcementType != null) settingsInputs.reinforcementType.value = s.reinforcementType;
   if (s.packSideValue != null) settingsInputs.packSideValue.value = s.packSideValue;
   if (s.packSide != null) {
     settingsInputs.packSide.checked = !!s.packSide;
@@ -6126,6 +6150,7 @@ document.getElementById("newProjectBtn").addEventListener("click", () => {
   settingsInputs.installRate.value = "";
   settingsInputs.baseLevel.value = "";
   settingsInputs.extendFace.checked = false;
+  settingsInputs.reinforcementType.value = "wall";
   settingsInputs.packSide.checked = false;
   settingsInputs.packSideValue.value = "left";
   packSideHint.hidden = true;

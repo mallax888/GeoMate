@@ -131,6 +131,21 @@
       whichever product a lift uses.
     </p>
     <label class="field">
+      <span>Reinforcement type</span>
+      <select id="reinforcementType">
+        <option value="wall">Wall</option>
+        <option value="floor">Floor</option>
+      </select>
+    </label>
+    <p class="generator__hint">
+      Wall: every straight run (no corner in it) fits flush at both ends, so a real tie-in point on
+      either side lands exactly on the design line — that costs a little extra overlap wherever the
+      length doesn't divide evenly. Floor: there's no wall face to tie into, just ground to blanket,
+      so every seam sits at exactly the minimum overlap instead and the last strip simply runs past
+      the far edge, same as a corner already does at every seam but the shared corner point itself.
+      Applies project-wide, to every DXF extents/benched/battered lift.
+    </p>
+    <label class="field">
       <span>Strip 1 starts from</span>
       <select id="packSide">
         <option value="left">Left</option>
