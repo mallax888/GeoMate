@@ -1371,6 +1371,41 @@ function parseDXFEntityLengths(text) {
   return entities;
 }
 
+/**
+ * A DXF polyline vertex's "bulge" (group code 42) marks the segment to the NEXT vertex as a curved
+ * arc instead of a straight line — tan(¼ the arc's included angle), sign giving the turn direction.
+ * Left unhandled, every filleted/radiused corner in a boundary just reads as its straight chord,
+ * flattening any real curve into a sharp line. Returns the arc's interior points only (excluding
+ * both p0 and p1, which the caller already has), so an unset/zero bulge naturally contributes none.
+ */
+function tessellateBulge(p0, p1, bulge) {
+  if (!bulge) return [];
+  const theta = 4 * Math.atan(bulge); // signed included angle: p1 sits at exactly a0+theta, by definition
+  const dx = p1.x - p0.x, dy = p1.y - p0.y;
+  const chord = Math.hypot(dx, dy);
+  if (chord < 1e-9 || Math.abs(theta) < 1e-6) return [];
+  const rSigned = chord / (2 * Math.sin(theta / 2));
+  const h = rSigned * Math.cos(theta / 2);
+  const mx = (p0.x + p1.x) / 2, my = (p0.y + p1.y) / 2;
+  // Chord direction rotated -90° (clockwise) — verified against known ground-truth circles across
+  // every quadrant/sign combination; the seemingly-equivalent +90° rotation actually picks the
+  // WRONG one of the two circles of this radius through p0/p1 for roughly half of all cases (every
+  // sign of bulge behaves differently depending on whether |theta| is above or below 180°), so this
+  // rotation direction is a hard requirement, not a style choice.
+  const nx = dy / chord, ny = -dx / chord;
+  const cx = mx - h * nx, cy = my - h * ny;
+  const radius = Math.hypot(p0.x - cx, p0.y - cy);
+  const a0 = Math.atan2(p0.y - cy, p0.x - cx);
+  // ~10° per segment, capped so a degenerate bulge value can't blow up the vertex count.
+  const segments = Math.min(64, Math.max(2, Math.ceil(Math.abs(theta) / (Math.PI / 18))));
+  const pts = [];
+  for (let k = 1; k < segments; k++) {
+    const a = a0 + theta * (k / segments);
+    pts.push({ x: cx + radius * Math.cos(a), y: cy + radius * Math.sin(a), z: p0.z || 0 });
+  }
+  return pts;
+}
+
 /** Closed polylines only (LWPOLYLINE + legacy POLYLINE/VERTEX) — a lift's plan-view extents boundary. */
 function parseDXFPolygons(text) {
   const linesRaw = text.split(/\r?\n/);
@@ -1388,8 +1423,9 @@ function parseDXFPolygons(text) {
 
   function flushLwVertex() {
     if (buf && buf.type === "LWPOLYLINE" && buf._x !== undefined) {
-      buf.pts.push({ x: buf._x, y: buf._y ?? 0, z: buf.elevation || 0 });
+      buf.pts.push({ x: buf._x, y: buf._y ?? 0, z: buf.elevation || 0, bulge: buf._bulge || 0 });
       buf._x = undefined;
+      buf._bulge = undefined;
     }
   }
   function finishClosedPoly(entity) {
@@ -1405,15 +1441,24 @@ function parseDXFPolygons(text) {
     const endpointsCoincide = Math.hypot(last.x - first.x, last.y - first.y) < 1e-6;
     if (!(entity.flags & 1) && !endpointsCoincide) return;
     if (endpointsCoincide) pts.pop();
-    const meanZ = pts.reduce((s, p) => s + (p.z || 0), 0) / pts.length;
-    polygons.push({ layer: entity.layer || "0", points: pts, meanZ });
+    // Expand any bulge (curved) segment now that the final, deduplicated vertex loop is known —
+    // including the closing edge from the last vertex back to the first, which is just as real a
+    // segment as any other and can carry its own bulge on a genuinely curved corner.
+    const expanded = [];
+    for (let i = 0; i < pts.length; i++) {
+      const p0 = pts[i], p1 = pts[(i + 1) % pts.length];
+      expanded.push(p0);
+      if (p0.bulge) expanded.push(...tessellateBulge(p0, p1, p0.bulge));
+    }
+    const meanZ = expanded.reduce((s, p) => s + (p.z || 0), 0) / expanded.length;
+    polygons.push({ layer: entity.layer || "0", points: expanded, meanZ });
   }
 
   for (let i = 0; i < pairs.length; i++) {
     const { code, value } = pairs[i];
     if (code === 0) {
       if (buf && buf._vertexOf) {
-        buf._vertexOf.pts.push({ x: buf._x || 0, y: buf._y || 0, z: buf._z || 0 });
+        buf._vertexOf.pts.push({ x: buf._x || 0, y: buf._y || 0, z: buf._z || 0, bulge: buf._bulge || 0 });
       } else if (buf && buf.type === "LWPOLYLINE") {
         flushLwVertex();
         finishClosedPoly(buf);
@@ -1439,6 +1484,7 @@ function parseDXFPolygons(text) {
       if (code === 10) buf._x = parseFloat(value);
       if (code === 20) buf._y = parseFloat(value);
       if (code === 30) buf._z = parseFloat(value);
+      if (code === 42) buf._bulge = parseFloat(value);
       continue;
     }
     if (buf.type === "LWPOLYLINE") {
@@ -1447,6 +1493,7 @@ function parseDXFPolygons(text) {
       if (code === 70) buf.flags = parseInt(value, 10);
       if (code === 10) { flushLwVertex(); buf._x = parseFloat(value); }
       if (code === 20) buf._y = parseFloat(value);
+      if (code === 42) buf._bulge = parseFloat(value);
     } else if (buf.type === "POLYLINE") {
       if (code === 8) buf.layer = value;
       if (code === 70) buf.flags = parseInt(value, 10);
@@ -4031,7 +4078,10 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
   const localPoly = faceAlignedFootprint(cutPlan);
   const xs = localPoly.map((p) => p.x), ys = localPoly.map((p) => p.y);
   const minX = Math.min(0, ...xs), maxX = Math.max(face.length, ...xs);
-  const minY = Math.min(0, ...ys, ...(cutPlan.frontReach || [])), maxY = Math.max(...cutLengths, ...(cutPlan.extentsReach || []), ...ys);
+  // A stitch patch covers a pocket PAST a gap, so it can reach further out than its strip's own
+  // extentsReach — left out here, the viewBox would clip the very patch it's meant to show.
+  const stitchEnds = (cutPlan.stitches || []).flatMap((group) => (group || []).map((s) => s.offset + s.length));
+  const minY = Math.min(0, ...ys, ...(cutPlan.frontReach || [])), maxY = Math.max(...cutLengths, ...(cutPlan.extentsReach || []), ...ys, ...stitchEnds);
   // Wide enough that every strip keeps a real minimum pixel budget for its roll-number circle — a
   // fixed 400-wide canvas forces a dense (30+ strip) lift's circles/text down past what's legible no
   // matter how they're sized. Growing the canvas instead (the card's plan-scroll wrapper lets it
@@ -4156,20 +4206,22 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
     svg.appendChild(stripShape);
 
     // Stitch patches — a separate small piece further back along the same line, past a gap the
-    // main strip's single straight cut can't reach in one piece. Drawn dashed so it reads as its
-    // own patch, not a continuation of the main strip.
+    // main strip's single straight cut can't reach in one piece. Filled (lower opacity, dashed
+    // outline) so the diagram actually shows that pocket as covered, not left blank as if nothing
+    // was placed there — the cut length and offset already account for it, only the drawing didn't.
     (cutPlan.stitches[i] || []).forEach((s) => {
       const sy1 = ty(depthCenter + s.offset), sy2 = ty(depthCenter + s.offset + s.length);
-      const stitchLine = document.createElementNS(ns, "line");
-      stitchLine.setAttribute("x1", tx(station).toFixed(1));
-      stitchLine.setAttribute("y1", sy1.toFixed(1));
-      stitchLine.setAttribute("x2", tx(station).toFixed(1));
-      stitchLine.setAttribute("y2", sy2.toFixed(1));
-      stitchLine.setAttribute("stroke", "var(--accent-strong)");
-      stitchLine.setAttribute("stroke-width", "2");
-      stitchLine.setAttribute("stroke-linecap", "round");
-      stitchLine.setAttribute("stroke-dasharray", "3,2");
-      svg.appendChild(stitchLine);
+      const stitchShape = document.createElementNS(ns, "polygon");
+      stitchShape.setAttribute(
+        "points",
+        `${xLeft.toFixed(1)},${sy1.toFixed(1)} ${xLeft.toFixed(1)},${sy2.toFixed(1)} ${xRight.toFixed(1)},${sy2.toFixed(1)} ${xRight.toFixed(1)},${sy1.toFixed(1)}`
+      );
+      stitchShape.setAttribute("fill", i % 2 === 0 ? "var(--accent)" : "var(--clay)");
+      stitchShape.setAttribute("fill-opacity", "0.4");
+      stitchShape.setAttribute("stroke", "var(--accent-strong)");
+      stitchShape.setAttribute("stroke-width", "1.5");
+      stitchShape.setAttribute("stroke-dasharray", "3,2");
+      svg.appendChild(stitchShape);
     });
 
     // Small per-strip label — the strip's own sequence number (1, 2, 3…), left-to-right, always in
@@ -4299,17 +4351,27 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
     const farLeft = { x: farCenter.x - seg.dir.x * (width / 2), y: farCenter.y - seg.dir.y * (width / 2) };
     const farRight = { x: farCenter.x + seg.dir.x * (width / 2), y: farCenter.y + seg.dir.y * (width / 2) };
 
-    const stitchPts = (cutPlan.stitches[i] || []).map((s) => ({
-      p1: { x: centerPt.x + segInward.x * s.offset, y: centerPt.y + segInward.y * s.offset },
-      p2: { x: centerPt.x + segInward.x * (s.offset + s.length), y: centerPt.y + segInward.y * (s.offset + s.length) },
-    }));
+    // Full quad, not just a centreline — same [left, right] lane as the main strip, so the patch
+    // reads as real covered area rather than a mark on a line.
+    const stitchQuads = (cutPlan.stitches[i] || []).map((s) => {
+      const far = { x: centerPt.x + segInward.x * (s.offset + s.length), y: centerPt.y + segInward.y * (s.offset + s.length) };
+      return {
+        nearLeft: { x: nearLeftPt.x + segInward.x * s.offset, y: nearLeftPt.y + segInward.y * s.offset },
+        nearRight: { x: nearRightPt.x + segInward.x * s.offset, y: nearRightPt.y + segInward.y * s.offset },
+        farLeft: { x: far.x - seg.dir.x * (width / 2), y: far.y - seg.dir.y * (width / 2) },
+        farRight: { x: far.x + seg.dir.x * (width / 2), y: far.y + seg.dir.y * (width / 2) },
+      };
+    });
 
-    return { nearLeft, nearRight, farLeft, farRight, farCenter, centerNear, stitchPts };
+    return { nearLeft, nearRight, farLeft, farRight, farCenter, centerNear, stitchQuads };
   });
 
   const allPts = cutPlan.poly.map(proj);
   stripGeoms.forEach((g) => {
     [g.nearLeft, g.nearRight, g.farLeft, g.farRight].forEach((p) => allPts.push(proj(p)));
+    // A stitch patch covers a pocket PAST a gap, so it can reach further out than the main strip's
+    // own far edge — leaving it out here would let the viewBox clip the patch it's meant to show.
+    g.stitchQuads.forEach((q) => [q.nearLeft, q.nearRight, q.farLeft, q.farRight].forEach((p) => allPts.push(proj(p))));
   });
   const us = allPts.map((p) => p.u), vs = allPts.map((p) => p.v);
   const minU = Math.min(...us), maxU = Math.max(...us);
@@ -4370,18 +4432,23 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
     stripShape.setAttribute("stroke-width", "1");
     svg.appendChild(stripShape);
 
-    g.stitchPts.forEach((sp) => {
-      const p1 = screenOf(sp.p1), p2 = screenOf(sp.p2);
-      const stitchLine = document.createElementNS(ns, "line");
-      stitchLine.setAttribute("x1", p1.x.toFixed(1));
-      stitchLine.setAttribute("y1", p1.y.toFixed(1));
-      stitchLine.setAttribute("x2", p2.x.toFixed(1));
-      stitchLine.setAttribute("y2", p2.y.toFixed(1));
-      stitchLine.setAttribute("stroke", "var(--accent-strong)");
-      stitchLine.setAttribute("stroke-width", "2");
-      stitchLine.setAttribute("stroke-linecap", "round");
-      stitchLine.setAttribute("stroke-dasharray", "3,2");
-      svg.appendChild(stitchLine);
+    // Stitch patches — a separate small piece past a gap the main strip's single straight cut can't
+    // reach in one piece. Filled (lower opacity, dashed outline) so the diagram actually shows that
+    // pocket as covered ground, not a blank gap — the cut length already accounts for it.
+    g.stitchQuads.forEach((q) => {
+      const snL = screenOf(q.nearLeft), snR = screenOf(q.nearRight);
+      const sfL = screenOf(q.farLeft), sfR = screenOf(q.farRight);
+      const stitchShape = document.createElementNS(ns, "polygon");
+      stitchShape.setAttribute(
+        "points",
+        `${snL.x.toFixed(1)},${snL.y.toFixed(1)} ${sfL.x.toFixed(1)},${sfL.y.toFixed(1)} ${sfR.x.toFixed(1)},${sfR.y.toFixed(1)} ${snR.x.toFixed(1)},${snR.y.toFixed(1)}`
+      );
+      stitchShape.setAttribute("fill", i % 2 === 0 ? "var(--accent)" : "var(--clay)");
+      stitchShape.setAttribute("fill-opacity", "0.4");
+      stitchShape.setAttribute("stroke", "var(--accent-strong)");
+      stitchShape.setAttribute("stroke-width", "1.5");
+      stitchShape.setAttribute("stroke-dasharray", "3,2");
+      svg.appendChild(stitchShape);
     });
 
     {
@@ -4554,8 +4621,11 @@ function renderCutPlanSvgManual(svg, cutPlan, productSpecs, activeProductId, row
   const minX = Math.min(0, ...xs), maxX = Math.max(face.length, ghostEnd, ...xs);
   const ghostFar = ghostReach ? ghostReach.farReach : 0;
   const ghostNear = ghostReach ? ghostReach.nearReach : 0;
+  // A stitch patch covers a pocket PAST a gap, so it can reach further out than its strip's own
+  // extentsReach — left out of maxY, the viewBox would clip the very patch it's meant to show.
+  const stitchEnds = (cutPlan.stitches || []).flatMap((group) => (group || []).map((s) => s.offset + s.length));
   const minY = Math.min(0, ...ys, ...frontReach, ghostNear);
-  const maxY = Math.max(0, ...extentsReach, ...ys, ghostFar);
+  const maxY = Math.max(0, ...extentsReach, ...ys, ghostFar, ...stitchEnds);
   const W = 400, H = 260, pad = 16;
   const scale = Math.min((W - pad * 2) / Math.max(maxX - minX, 1e-6), (H - pad * 2) / Math.max(maxY - minY, 1e-6));
   const tx = (x) => pad + (x - minX) * scale;
@@ -4607,19 +4677,22 @@ function renderCutPlanSvgManual(svg, cutPlan, productSpecs, activeProductId, row
     rect.setAttribute("stroke-width", "1");
     svg.appendChild(rect);
 
+    // Stitch patches — a separate small piece past a gap the main strip's single straight cut can't
+    // reach in one piece. Filled (lower opacity, dashed outline) so the diagram actually shows that
+    // pocket as covered ground, not a blank gap — the cut length already accounts for it.
     (cutPlan.stitches[i] || []).forEach((s) => {
-      const station = (start + end) / 2;
       const sy1 = ty(s.offset), sy2 = ty(s.offset + s.length);
-      const stitchLine = document.createElementNS(ns, "line");
-      stitchLine.setAttribute("x1", tx(station).toFixed(1));
-      stitchLine.setAttribute("y1", sy1.toFixed(1));
-      stitchLine.setAttribute("x2", tx(station).toFixed(1));
-      stitchLine.setAttribute("y2", sy2.toFixed(1));
-      stitchLine.setAttribute("stroke", colorVar);
-      stitchLine.setAttribute("stroke-width", "2");
-      stitchLine.setAttribute("stroke-linecap", "round");
-      stitchLine.setAttribute("stroke-dasharray", "3,2");
-      svg.appendChild(stitchLine);
+      const stitchRect = document.createElementNS(ns, "rect");
+      stitchRect.setAttribute("x", Math.min(xLeft, xRight).toFixed(1));
+      stitchRect.setAttribute("y", Math.min(sy1, sy2).toFixed(1));
+      stitchRect.setAttribute("width", Math.abs(xRight - xLeft).toFixed(1));
+      stitchRect.setAttribute("height", Math.abs(sy2 - sy1).toFixed(1));
+      stitchRect.setAttribute("fill", colorVar);
+      stitchRect.setAttribute("fill-opacity", "0.35");
+      stitchRect.setAttribute("stroke", colorVar);
+      stitchRect.setAttribute("stroke-width", "1.5");
+      stitchRect.setAttribute("stroke-dasharray", "3,2");
+      svg.appendChild(stitchRect);
     });
 
     const label = document.createElementNS(ns, "text");
