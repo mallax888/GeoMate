@@ -608,6 +608,50 @@ function inwardNormal(tangent) {
   return { x: -tangent.y, y: tangent.x };
 }
 
+/**
+ * Sutherland-Hodgman polygon clip: cuts `subject` down to the part inside `clip`. `subject` can be
+ * any simple polygon, including the non-convex extents boundary (a real notch or gap is exactly
+ * what makes it non-convex) — the algorithm only requires `clip` itself to be convex, which every
+ * strip/patch quad always is. Used so a rendered strip or stitch patch never draws past the true
+ * boundary line even where its own rectangle naturally would (bridging a gap, or a tapered corner).
+ */
+function clipPolyToConvex(subject, clip) {
+  // Sutherland-Hodgman's inside/outside test assumes the clip polygon winds CCW; every quad this
+  // gets called with is built consistently, but a signed-area check here is cheap insurance against
+  // that assumption ever silently flipping (which would clip away the wrong side entirely).
+  let clipCcw = clip;
+  let area2 = 0;
+  for (let i = 0; i < clip.length; i++) {
+    const p = clip[i], q = clip[(i + 1) % clip.length];
+    area2 += p.x * q.y - q.x * p.y;
+  }
+  if (area2 < 0) clipCcw = clip.slice().reverse();
+
+  let output = subject;
+  for (let i = 0; i < clipCcw.length; i++) {
+    if (output.length === 0) break;
+    const A = clipCcw[i], B = clipCcw[(i + 1) % clipCcw.length];
+    const input = output;
+    output = [];
+    const edgeVal = (p) => (B.x - A.x) * (p.y - A.y) - (B.y - A.y) * (p.x - A.x);
+    for (let j = 0; j < input.length; j++) {
+      const cur = input[j], prev = input[(j - 1 + input.length) % input.length];
+      const curIn = edgeVal(cur) >= 0, prevIn = edgeVal(prev) >= 0;
+      if (curIn) {
+        if (!prevIn) {
+          const t = edgeVal(prev) / (edgeVal(prev) - edgeVal(cur));
+          output.push({ x: prev.x + t * (cur.x - prev.x), y: prev.y + t * (cur.y - prev.y) });
+        }
+        output.push(cur);
+      } else if (prevIn) {
+        const t = edgeVal(prev) / (edgeVal(prev) - edgeVal(cur));
+        output.push({ x: prev.x + t * (cur.x - prev.x), y: prev.y + t * (cur.y - prev.y) });
+      }
+    }
+  }
+  return output;
+}
+
 // Below this, a gap or leftover pocket along a strip's ray isn't worth a separate stitch strip.
 const STITCH_MIN = 0.05;
 
@@ -4190,38 +4234,80 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
     const yNearR = ty(depthRight + nearReach);
     const yNear = (yNearL + yNearR) / 2; // used below for label/roll-circle placement only
 
-    const stripShape = document.createElementNS(ns, "polygon");
-    stripShape.setAttribute(
-      "points",
-      `${xLeft.toFixed(1)},${yNearL.toFixed(1)} ${xLeft.toFixed(1)},${yFar.toFixed(1)} ${xRight.toFixed(1)},${yFar.toFixed(1)} ${xRight.toFixed(1)},${yNearR.toFixed(1)}`
-    );
-    // Alternating between two distinct colours (not just one colour's opacity) so adjacent strips
-    // are clearly separable at a glance, even across a long dense run of similar-height rectangles.
-    // A lift with a real corner never reaches this function at all any more — see
-    // renderCutPlanSvgCornered — so there's only ever one segment's worth of strips to colour here.
-    stripShape.setAttribute("fill", i % 2 === 0 ? "var(--accent)" : "var(--clay)");
-    stripShape.setAttribute("fill-opacity", "0.75");
-    stripShape.setAttribute("stroke", i % 2 === 0 ? "var(--accent-strong)" : "var(--clay)");
-    stripShape.setAttribute("stroke-width", "1");
-    svg.appendChild(stripShape);
+    const color = i % 2 === 0 ? "var(--accent)" : "var(--clay)";
 
-    // Stitch patches — a separate small piece further back along the same line, past a gap the
-    // main strip's single straight cut can't reach in one piece. Filled (lower opacity, dashed
-    // outline) so the diagram actually shows that pocket as covered, not left blank as if nothing
-    // was placed there — the cut length and offset already account for it, only the drawing didn't.
+    // A strip is a straight square cut off a roll — it can never actually bend to trace a curved or
+    // notched boundary, so the rectangle draws full and undistorted (rule one isn't "reshape the
+    // material," it's "don't let it read as needed ground where it isn't"). The part past the true
+    // boundary is real material that still gets cut and installed, only trimmed back on site, so
+    // it's drawn faint underneath rather than hidden; the part actually inside the boundary draws
+    // solid on top of it. Clipped here in the local (station, depth) frame, since that's the one
+    // both this quad and localPoly share, before tx/ty project either into screen space.
+    const stripQuadLocal = [
+      { x: leftSeam, y: depthLeft + nearReach },
+      { x: leftSeam, y: depthCenter + farReach },
+      { x: rightSeam, y: depthCenter + farReach },
+      { x: rightSeam, y: depthRight + nearReach },
+    ];
+    const stripPtsFull = stripQuadLocal.map((p) => ({ x: tx(p.x), y: ty(p.y) }));
+    const stripFull = document.createElementNS(ns, "polygon");
+    stripFull.setAttribute("points", stripPtsFull.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "));
+    stripFull.setAttribute("fill", color);
+    stripFull.setAttribute("fill-opacity", "0.18");
+    stripFull.setAttribute("stroke", i % 2 === 0 ? "var(--accent-strong)" : "var(--clay)");
+    stripFull.setAttribute("stroke-width", "1");
+    stripFull.setAttribute("stroke-dasharray", "2,2");
+    svg.appendChild(stripFull);
+
+    const stripClippedLocal = clipPolyToConvex(localPoly, stripQuadLocal);
+    if (stripClippedLocal.length >= 3) {
+      const stripPts = stripClippedLocal.map((p) => ({ x: tx(p.x), y: ty(p.y) }));
+      const stripShape = document.createElementNS(ns, "polygon");
+      stripShape.setAttribute("points", stripPts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "));
+      // Alternating between two distinct colours (not just one colour's opacity) so adjacent strips
+      // are clearly separable at a glance, even across a long dense run of similar-height rectangles.
+      // A lift with a real corner never reaches this function at all any more — see
+      // renderCutPlanSvgCornered — so there's only ever one segment's worth of strips to colour here.
+      stripShape.setAttribute("fill", color);
+      stripShape.setAttribute("fill-opacity", "0.75");
+      stripShape.setAttribute("stroke", i % 2 === 0 ? "var(--accent-strong)" : "var(--clay)");
+      stripShape.setAttribute("stroke-width", "1");
+      svg.appendChild(stripShape);
+    }
+
+    // Stitch patches — a separate small rectangular piece further back along the same line, past a
+    // gap the main strip's single straight cut can't reach in one piece. Same faint-full-rectangle-
+    // plus-solid-clipped-overlay treatment as the main strip above: it's still a straight cut off a
+    // roll, just a shorter one.
     (cutPlan.stitches[i] || []).forEach((s) => {
-      const sy1 = ty(depthCenter + s.offset), sy2 = ty(depthCenter + s.offset + s.length);
-      const stitchShape = document.createElementNS(ns, "polygon");
-      stitchShape.setAttribute(
-        "points",
-        `${xLeft.toFixed(1)},${sy1.toFixed(1)} ${xLeft.toFixed(1)},${sy2.toFixed(1)} ${xRight.toFixed(1)},${sy2.toFixed(1)} ${xRight.toFixed(1)},${sy1.toFixed(1)}`
-      );
-      stitchShape.setAttribute("fill", i % 2 === 0 ? "var(--accent)" : "var(--clay)");
-      stitchShape.setAttribute("fill-opacity", "0.4");
-      stitchShape.setAttribute("stroke", "var(--accent-strong)");
-      stitchShape.setAttribute("stroke-width", "1.5");
-      stitchShape.setAttribute("stroke-dasharray", "3,2");
-      svg.appendChild(stitchShape);
+      const patchQuadLocal = [
+        { x: leftSeam, y: depthCenter + s.offset },
+        { x: leftSeam, y: depthCenter + s.offset + s.length },
+        { x: rightSeam, y: depthCenter + s.offset + s.length },
+        { x: rightSeam, y: depthCenter + s.offset },
+      ];
+      const patchPtsFull = patchQuadLocal.map((p) => ({ x: tx(p.x), y: ty(p.y) }));
+      const patchFull = document.createElementNS(ns, "polygon");
+      patchFull.setAttribute("points", patchPtsFull.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "));
+      patchFull.setAttribute("fill", color);
+      patchFull.setAttribute("fill-opacity", "0.12");
+      patchFull.setAttribute("stroke", "var(--accent-strong)");
+      patchFull.setAttribute("stroke-width", "1");
+      patchFull.setAttribute("stroke-dasharray", "2,2");
+      svg.appendChild(patchFull);
+
+      const patchClippedLocal = clipPolyToConvex(localPoly, patchQuadLocal);
+      if (patchClippedLocal.length >= 3) {
+        const patchPts = patchClippedLocal.map((p) => ({ x: tx(p.x), y: ty(p.y) }));
+        const stitchShape = document.createElementNS(ns, "polygon");
+        stitchShape.setAttribute("points", patchPts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "));
+        stitchShape.setAttribute("fill", color);
+        stitchShape.setAttribute("fill-opacity", "0.4");
+        stitchShape.setAttribute("stroke", "var(--accent-strong)");
+        stitchShape.setAttribute("stroke-width", "1.5");
+        stitchShape.setAttribute("stroke-dasharray", "3,2");
+        svg.appendChild(stitchShape);
+      }
     });
 
     // Small per-strip label — the strip's own sequence number (1, 2, 3…), left-to-right, always in
@@ -4415,40 +4501,70 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
 
   cutLengths.forEach((len, i) => {
     const g = stripGeoms[i];
-    const nL = screenOf(g.nearLeft), nR = screenOf(g.nearRight);
-    const fL = screenOf(g.farLeft), fR = screenOf(g.farRight);
+    const color = i % 2 === 0 ? "var(--accent)" : "var(--clay)";
+    const colorStrong = i % 2 === 0 ? "var(--accent-strong)" : "var(--clay)";
 
-    const stripShape = document.createElementNS(ns, "polygon");
-    stripShape.setAttribute(
-      "points",
-      `${nL.x.toFixed(1)},${nL.y.toFixed(1)} ${fL.x.toFixed(1)},${fL.y.toFixed(1)} ${fR.x.toFixed(1)},${fR.y.toFixed(1)} ${nR.x.toFixed(1)},${nR.y.toFixed(1)}`
-    );
-    // Same two colours as the flat (uncornered) diagram, alternating by strip index regardless of
-    // which segment a strip is in — the bend and overlap in the shapes themselves now carry the
-    // "this is a corner" signal, so a colour break on top of that was just noise.
-    stripShape.setAttribute("fill", i % 2 === 0 ? "var(--accent)" : "var(--clay)");
-    stripShape.setAttribute("fill-opacity", "0.75");
-    stripShape.setAttribute("stroke", i % 2 === 0 ? "var(--accent-strong)" : "var(--clay)");
-    stripShape.setAttribute("stroke-width", "1");
-    svg.appendChild(stripShape);
+    // A strip is a straight square cut off a roll — it can never actually bend to trace a curved or
+    // notched boundary, so the rectangle itself always draws full and undistorted (rule one isn't
+    // "reshape the material," it's "don't let it read as needed ground where it isn't"). The part
+    // past the true boundary — bridging a gap in "extend" mode, or just a tapered/cornered lane
+    // whose square envelope pokes past a boundary that narrows partway across it — is real material
+    // that still gets cut and installed, only trimmed back on site, so it's drawn faint underneath
+    // rather than hidden; the part actually inside the boundary draws solid on top of it, so what's
+    // genuinely needed reads clearly at a glance without pretending the strip itself isn't a rectangle.
+    const stripQuad = [g.nearLeft, g.farLeft, g.farRight, g.nearRight];
+    const stripPtsFull = stripQuad.map(screenOf);
+    const stripFull = document.createElementNS(ns, "polygon");
+    stripFull.setAttribute("points", stripPtsFull.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "));
+    stripFull.setAttribute("fill", color);
+    stripFull.setAttribute("fill-opacity", "0.18");
+    stripFull.setAttribute("stroke", colorStrong);
+    stripFull.setAttribute("stroke-width", "1");
+    stripFull.setAttribute("stroke-dasharray", "2,2");
+    svg.appendChild(stripFull);
 
-    // Stitch patches — a separate small piece past a gap the main strip's single straight cut can't
-    // reach in one piece. Filled (lower opacity, dashed outline) so the diagram actually shows that
-    // pocket as covered ground, not a blank gap — the cut length already accounts for it.
+    const stripClipped = clipPolyToConvex(cutPlan.poly, stripQuad);
+    if (stripClipped.length >= 3) {
+      const stripPts = stripClipped.map(screenOf);
+      const stripShape = document.createElementNS(ns, "polygon");
+      stripShape.setAttribute("points", stripPts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "));
+      // Same two colours as the flat (uncornered) diagram, alternating by strip index regardless of
+      // which segment a strip is in — the bend and overlap in the shapes themselves now carry the
+      // "this is a corner" signal, so a colour break on top of that was just noise.
+      stripShape.setAttribute("fill", color);
+      stripShape.setAttribute("fill-opacity", "0.75");
+      stripShape.setAttribute("stroke", colorStrong);
+      stripShape.setAttribute("stroke-width", "1");
+      svg.appendChild(stripShape);
+    }
+
+    // Stitch patches — a separate small rectangular piece past a gap the main strip's single
+    // straight cut can't reach in one piece. Same faint-full-rectangle-plus-solid-clipped-overlay
+    // treatment as the main strip above: it's still a straight cut off a roll, just a shorter one.
     g.stitchQuads.forEach((q) => {
-      const snL = screenOf(q.nearLeft), snR = screenOf(q.nearRight);
-      const sfL = screenOf(q.farLeft), sfR = screenOf(q.farRight);
-      const stitchShape = document.createElementNS(ns, "polygon");
-      stitchShape.setAttribute(
-        "points",
-        `${snL.x.toFixed(1)},${snL.y.toFixed(1)} ${sfL.x.toFixed(1)},${sfL.y.toFixed(1)} ${sfR.x.toFixed(1)},${sfR.y.toFixed(1)} ${snR.x.toFixed(1)},${snR.y.toFixed(1)}`
-      );
-      stitchShape.setAttribute("fill", i % 2 === 0 ? "var(--accent)" : "var(--clay)");
-      stitchShape.setAttribute("fill-opacity", "0.4");
-      stitchShape.setAttribute("stroke", "var(--accent-strong)");
-      stitchShape.setAttribute("stroke-width", "1.5");
-      stitchShape.setAttribute("stroke-dasharray", "3,2");
-      svg.appendChild(stitchShape);
+      const patchQuad = [q.nearLeft, q.farLeft, q.farRight, q.nearRight];
+      const patchPtsFull = patchQuad.map(screenOf);
+      const patchFull = document.createElementNS(ns, "polygon");
+      patchFull.setAttribute("points", patchPtsFull.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "));
+      patchFull.setAttribute("fill", color);
+      patchFull.setAttribute("fill-opacity", "0.12");
+      patchFull.setAttribute("stroke", "var(--accent-strong)");
+      patchFull.setAttribute("stroke-width", "1");
+      patchFull.setAttribute("stroke-dasharray", "2,2");
+      svg.appendChild(patchFull);
+
+      const patchClipped = clipPolyToConvex(cutPlan.poly, patchQuad);
+      if (patchClipped.length >= 3) {
+        const patchPts = patchClipped.map(screenOf);
+        const stitchShape = document.createElementNS(ns, "polygon");
+        stitchShape.setAttribute("points", patchPts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "));
+        stitchShape.setAttribute("fill", color);
+        stitchShape.setAttribute("fill-opacity", "0.4");
+        stitchShape.setAttribute("stroke", "var(--accent-strong)");
+        stitchShape.setAttribute("stroke-width", "1.5");
+        stitchShape.setAttribute("stroke-dasharray", "3,2");
+        svg.appendChild(stitchShape);
+      }
     });
 
     {
@@ -4662,37 +4778,76 @@ function renderCutPlanSvgManual(svg, cutPlan, productSpecs, activeProductId, row
     const xLeft = tx(start), xRight = tx(end);
     const yFar = ty(farReach), yNear = ty(nearReach);
 
-    const rect = document.createElementNS(ns, "rect");
-    rect.setAttribute("x", Math.min(xLeft, xRight).toFixed(1));
-    rect.setAttribute("y", yFar.toFixed(1));
-    rect.setAttribute("width", Math.abs(xRight - xLeft).toFixed(1));
-    rect.setAttribute("height", Math.max(0, yNear - yFar).toFixed(1));
-    rect.setAttribute("fill", colorVar);
-    // Colour still identifies the PRODUCT (mixed-product builds need that), but adjacent strips of
-    // the very same product otherwise blend into one solid block with no visible seam between them —
-    // alternating opacity the same way the automatic layout alternates hue keeps every strip
-    // separable at a glance either way.
-    rect.setAttribute("fill-opacity", i % 2 === 0 ? "0.78" : "0.48");
-    rect.setAttribute("stroke", colorVar);
-    rect.setAttribute("stroke-width", "1");
-    svg.appendChild(rect);
+    // A strip is a straight square cut off a roll — it can never actually bend to trace a curved or
+    // notched boundary, so the rectangle draws full and undistorted (rule one isn't "reshape the
+    // material," it's "don't let it read as needed ground where it isn't"). The part past the true
+    // boundary is real material that still gets cut and installed, only trimmed back on site, so
+    // it's drawn faint underneath rather than hidden; the part actually inside the boundary draws
+    // solid on top of it. Clipped here in the local (station, reach) frame, since that's the one
+    // both this quad and localPoly share, before tx/ty project either into screen space.
+    const stripQuadLocal = [
+      { x: start, y: nearReach },
+      { x: start, y: farReach },
+      { x: end, y: farReach },
+      { x: end, y: nearReach },
+    ];
+    const stripPtsFull = stripQuadLocal.map((p) => ({ x: tx(p.x), y: ty(p.y) }));
+    const stripFull = document.createElementNS(ns, "polygon");
+    stripFull.setAttribute("points", stripPtsFull.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "));
+    stripFull.setAttribute("fill", colorVar);
+    stripFull.setAttribute("fill-opacity", "0.14");
+    stripFull.setAttribute("stroke", colorVar);
+    stripFull.setAttribute("stroke-width", "1");
+    stripFull.setAttribute("stroke-dasharray", "2,2");
+    svg.appendChild(stripFull);
 
-    // Stitch patches — a separate small piece past a gap the main strip's single straight cut can't
-    // reach in one piece. Filled (lower opacity, dashed outline) so the diagram actually shows that
-    // pocket as covered ground, not a blank gap — the cut length already accounts for it.
+    const stripClippedLocal = clipPolyToConvex(localPoly, stripQuadLocal);
+    if (stripClippedLocal.length >= 3) {
+      const stripPts = stripClippedLocal.map((p) => ({ x: tx(p.x), y: ty(p.y) }));
+      const stripShape = document.createElementNS(ns, "polygon");
+      stripShape.setAttribute("points", stripPts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "));
+      stripShape.setAttribute("fill", colorVar);
+      // Colour still identifies the PRODUCT (mixed-product builds need that), but adjacent strips of
+      // the very same product otherwise blend into one solid block with no visible seam between them
+      // — alternating opacity the same way the automatic layout alternates hue keeps every strip
+      // separable at a glance either way.
+      stripShape.setAttribute("fill-opacity", i % 2 === 0 ? "0.78" : "0.48");
+      stripShape.setAttribute("stroke", colorVar);
+      stripShape.setAttribute("stroke-width", "1");
+      svg.appendChild(stripShape);
+    }
+
+    // Stitch patches — a separate small rectangular piece past a gap the main strip's single
+    // straight cut can't reach in one piece. Same faint-full-rectangle-plus-solid-clipped-overlay
+    // treatment as the main strip above: it's still a straight cut off a roll, just a shorter one.
     (cutPlan.stitches[i] || []).forEach((s) => {
-      const sy1 = ty(s.offset), sy2 = ty(s.offset + s.length);
-      const stitchRect = document.createElementNS(ns, "rect");
-      stitchRect.setAttribute("x", Math.min(xLeft, xRight).toFixed(1));
-      stitchRect.setAttribute("y", Math.min(sy1, sy2).toFixed(1));
-      stitchRect.setAttribute("width", Math.abs(xRight - xLeft).toFixed(1));
-      stitchRect.setAttribute("height", Math.abs(sy2 - sy1).toFixed(1));
-      stitchRect.setAttribute("fill", colorVar);
-      stitchRect.setAttribute("fill-opacity", "0.35");
-      stitchRect.setAttribute("stroke", colorVar);
-      stitchRect.setAttribute("stroke-width", "1.5");
-      stitchRect.setAttribute("stroke-dasharray", "3,2");
-      svg.appendChild(stitchRect);
+      const patchQuadLocal = [
+        { x: start, y: s.offset },
+        { x: start, y: s.offset + s.length },
+        { x: end, y: s.offset + s.length },
+        { x: end, y: s.offset },
+      ];
+      const patchPtsFull = patchQuadLocal.map((p) => ({ x: tx(p.x), y: ty(p.y) }));
+      const patchFull = document.createElementNS(ns, "polygon");
+      patchFull.setAttribute("points", patchPtsFull.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "));
+      patchFull.setAttribute("fill", colorVar);
+      patchFull.setAttribute("fill-opacity", "0.1");
+      patchFull.setAttribute("stroke", colorVar);
+      patchFull.setAttribute("stroke-width", "1");
+      patchFull.setAttribute("stroke-dasharray", "2,2");
+      svg.appendChild(patchFull);
+
+      const patchClippedLocal = clipPolyToConvex(localPoly, patchQuadLocal);
+      if (patchClippedLocal.length < 3) return;
+      const patchPts = patchClippedLocal.map((p) => ({ x: tx(p.x), y: ty(p.y) }));
+      const stitchShape = document.createElementNS(ns, "polygon");
+      stitchShape.setAttribute("points", patchPts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "));
+      stitchShape.setAttribute("fill", colorVar);
+      stitchShape.setAttribute("fill-opacity", "0.35");
+      stitchShape.setAttribute("stroke", colorVar);
+      stitchShape.setAttribute("stroke-width", "1.5");
+      stitchShape.setAttribute("stroke-dasharray", "3,2");
+      svg.appendChild(stitchShape);
     });
 
     const label = document.createElementNS(ns, "text");
