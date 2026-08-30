@@ -899,34 +899,21 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     const workChain = mirror ? reverseChain(rawChain) : rawChain;
 
     // workChain-local 0 is always exactly where this segment's own strip numbering starts — either a
-    // corner shared with the PREVIOUS segment in install order, which always needs to be exact and
-    // always gets it for free just by starting the count there, or a true end (this is the very FIRST
-    // segment install reaches, so nothing precedes it to require precision) — either way, no special
-    // handling is ever needed at that end. The only real choice is at workChain-local segLen: a
-    // corner shared with the NEXT segment (needs calcLift's flush-both-ends fit, full stop — the
-    // MIDDLE-segment / neither-true-end case below), or the true wall end on the OTHER side, which
-    // only happens when this is the very LAST segment install reaches — nothing follows it either, so
-    // minimum pitch and letting the last strip overshoot there is exactly as valid as it is for an
-    // ordinary straight lift's own short-segment case, without needing calcLift's extra overlap to
-    // land precisely on a line nothing else has to match.
-    const isFirstGeometric = segIdx === 0;
-    const isLastGeometric = segIdx === cornerSegments.length - 1;
-    const farIsTrueEnd = (isFirstGeometric && mirror) || (isLastGeometric && !mirror);
-
-    let segN, segStarts, segOverlapForReport;
-    if (farIsTrueEnd) {
-      const pitch = Math.max(w - oMin, 0.01);
-      segN = segLen <= w ? 1 : Math.max(1, Math.ceil((segLen - w) / pitch) + 1);
-      segStarts = Array.from({ length: segN }, (_, i) => i * pitch);
-      segOverlapForReport = oMin;
-    } else {
-      const segResult = calcLift(segLen, w, oMin);
-      if (!segResult) return;
-      segN = segResult.n;
-      const segPitch = segN > 1 ? w - segResult.overlap : 0;
-      segStarts = Array.from({ length: segN }, (_, i) => i * segPitch);
-      segOverlapForReport = segResult.overlap;
-    }
+    // corner shared with the PREVIOUS segment in install order (the anchor point — it has to be
+    // exact there) or a true end (the very FIRST segment install reaches, so nothing precedes it) —
+    // either way it's already exact for free, just by starting the count there. workChain-local
+    // segLen, at the OTHER end, is never anchored by anything: whether it lands on the true wall end
+    // or the NEXT corner, the next thing that needs to be exact is the far segment's own local-0, on
+    // its own independent count — this end never has to match it. So every segment uses minimum
+    // pitch and lets its last strip overshoot past that boundary, same as an ordinary straight lift's
+    // short-segment case; stripBoundaryReach still clips the strip back to the real polygon, so an
+    // overshoot at a corner just means a bit of extra overlap with the next segment's first strip
+    // there — expected at the dot — rather than every strip in this segment being squeezed tighter to
+    // land exactly on a line nothing downstream needs to match.
+    const pitch = Math.max(w - oMin, 0.01);
+    const segN = segLen <= w ? 1 : Math.max(1, Math.ceil((segLen - w) / pitch) + 1);
+    const segStarts = Array.from({ length: segN }, (_, i) => i * pitch);
+    const segOverlapForReport = oMin;
     segOverlaps.push(segOverlapForReport);
     // Either fit's last strip can run past this segment's own far edge (a genuine calcLift n=1 short
     // segment; the true-wall-end pitch fit, by design) — extending the chain so that overhang's
