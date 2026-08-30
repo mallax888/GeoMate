@@ -466,8 +466,11 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 /* Same slot "+ Add lift" sits in above the Takeoff table — one consistent place to look for
  * "add a row" everywhere in the app. A sibling of <details>, not nested inside <summary> (see the
- * HTML comment above it), positioned to land in the same corner it'd occupy if it were inline. */
-.products-panel__add { position: absolute; top: 0.85rem; right: 1.2rem; z-index: 1; }
+ * HTML comment above it), positioned to land in the same corner it'd occupy if it were inline.
+ * top is measured, not guessed: .products-summary's rendered height (1rem padding each side plus
+ * one line of its 900-weight heading text) centred against this button's own 35px height — a
+ * plausible-looking round number like 0.85rem is close enough to read as "off" without a ruler. */
+.products-panel__add { position: absolute; top: 0.54rem; right: 1.2rem; z-index: 1; }
 .products-full-body { display: flex; gap: 2.6rem; align-items: flex-start; padding: 0 1.2rem 1.3rem; border-top: 1px solid var(--line); margin-top: -1px; padding-top: 1rem; }
 .products-panel__main { flex: 1 1 auto; min-width: 0; max-width: 760px; }
 /* Its own heading now lives up in .products-summary (next to "Product list") instead of repeating
