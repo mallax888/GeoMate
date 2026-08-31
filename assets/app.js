@@ -1010,8 +1010,9 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
       [cutLengths, stitches, extentsReach, frontReach, stripWidths, stripStarts].forEach((arr) => arr.splice(idx, 1));
       liftN--;
     };
-    if (endOverrides && endOverrides.last === "omit" && cutLengths.length > 1) dropFlatStripAt(cutLengths.length - 1);
-    if (endOverrides && endOverrides.first === "omit" && cutLengths.length > 1) dropFlatStripAt(0);
+    const flatOmitCount = (mode) => (typeof mode === "string" && mode.startsWith("omit") ? Math.max(1, parseInt(mode.slice(4), 10) || 1) : 0);
+    for (let k = flatOmitCount(endOverrides && endOverrides.last); k > 0 && cutLengths.length > 1; k--) dropFlatStripAt(cutLengths.length - 1);
+    for (let k = flatOmitCount(endOverrides && endOverrides.first); k > 0 && cutLengths.length > 1; k--) dropFlatStripAt(0);
 
     return {
       poly,
@@ -1142,7 +1143,7 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
 
   // Turning an end strip to lie against its neighbour instead of square to its own segment. Shared
   // by the automatic sliver rule below and by an explicit "back-to-back" override from the user.
-  const turnStripToward = (idx, neighbourIdx, requireNoLoss) => {
+  const turnStripToward = (idx, neighbourIdx, requireNoLoss, dryRun) => {
     const ownSeg = cornerSegments[stripSegmentIndex[idx]];
     const neighbourSeg = cornerSegments[stripSegmentIndex[neighbourIdx]];
     if (!ownSeg || !neighbourSeg) return false;
@@ -1154,6 +1155,7 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
       const turnedArea = coveredAreaOf(poly, stripQuadAbout(centerPt, neighbourSeg.dir, width, turned.nearReach, turned.farReach));
       if (turnedArea < asIsArea) return false;
     }
+    if (dryRun) return true; // asked only whether the turn WOULD happen, not to make it
     stripDirs[idx] = { x: neighbourSeg.dir.x, y: neighbourSeg.dir.y };
     extentsReach[idx] = turned.farReach;
     frontReach[idx] = turned.nearReach;
@@ -1171,6 +1173,10 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
 
   const firstMode = (endOverrides && endOverrides.first) || "auto";
   const lastMode = (endOverrides && endOverrides.last) || "auto";
+  // "omit" drops one strip, "omit2"/"omit3"/... drop that many from the same end. Dropping one is
+  // often not enough: strips bunch up where a face turns, so removing the outermost can simply
+  // promote the next redundant one into its place.
+  const omitCount = (mode) => (typeof mode === "string" && mode.startsWith("omit") ? Math.max(1, parseInt(mode.slice(4), 10) || 1) : 0);
 
   // A segment shorter than one strip is too small a piece of face to be setting a strip's bearing.
   // On a real lift (RL 53.90) the run ended on a 0.33 m sliver at 42.98 deg next to a 3.87 m segment
@@ -1185,6 +1191,25 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
   // the reason: it only stops a turn that would put LESS material inside the boundary. "Square to
   // face" opts a lift out of this entirely; "back-to-back" turns regardless of the sliver test.
   const lastIdx = cutLengths.length - 1;
+  // Whether the sliver rule has anything to say about this lift, recorded before any override runs
+  // so it stays true regardless of what mode is currently selected. The UI needs it to know whether
+  // "square to face" is a distinct choice on this lift or just another name for "auto": auto only
+  // turns the last strip when its own segment is a sliver, so where it isn't, auto IS square to face.
+  const lastStripSliver =
+    lastIdx > 0 &&
+    stripSegmentIndex[lastIdx] !== stripSegmentIndex[lastIdx - 1] &&
+    cornerSegments[stripSegmentIndex[lastIdx]].length < stripWidths[lastIdx];
+  // Whether auto would ACTUALLY turn this lift's last strip — the sliver test alone isn't enough,
+  // because the coverage guard can still refuse the turn. Asked as a dry run so the answer is the
+  // same whatever mode is currently selected. Where auto doesn't turn, auto IS "square to face", and
+  // the UI drops that entry rather than offering the same strip under two names.
+  const lastStripAutoTurns = lastStripSliver && turnStripToward(lastIdx, lastIdx - 1, true, true);
+  // Turning a strip to lie against its neighbour only means anything when the two sit in DIFFERENT
+  // segments. Within one segment every strip already shares that segment's bearing, so they are
+  // back-to-back by construction and the option would do nothing at all — which is exactly what it
+  // did when offered on a lift whose first two strips shared a segment.
+  const firstStripCanTurn = cutLengths.length > 1 && stripSegmentIndex[0] !== stripSegmentIndex[1];
+  const lastStripCanTurn = lastIdx > 0 && stripSegmentIndex[lastIdx] !== stripSegmentIndex[lastIdx - 1];
   if (lastIdx > 0 && stripSegmentIndex[lastIdx] !== stripSegmentIndex[lastIdx - 1]) {
     if (lastMode === "backToBack") {
       turnStripToward(lastIdx, lastIdx - 1, false);
@@ -1209,8 +1234,8 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     );
     overallResultN--;
   };
-  if (lastMode === "omit" && cutLengths.length > 1) dropStripAt(cutLengths.length - 1);
-  if (firstMode === "omit" && cutLengths.length > 1) dropStripAt(0);
+  for (let k = omitCount(lastMode); k > 0 && cutLengths.length > 1; k--) dropStripAt(cutLengths.length - 1);
+  for (let k = omitCount(firstMode); k > 0 && cutLengths.length > 1; k--) dropStripAt(0);
 
   // Each segment's own overlap is only reported as one flat number when every segment actually landed
   // on the same value (short lifts of near-identical length aren't unusual) — otherwise this reads
@@ -1238,6 +1263,9 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     stripSegmentIndex,
     stripLocalStarts,
     stripDirs,
+    lastStripAutoTurns,
+    firstStripCanTurn,
+    lastStripCanTurn,
     faceCoreStart,
     faceCoreEnd,
   };
@@ -3275,6 +3303,37 @@ function packRollsForProduct(results, productId, productSpecs, rollGroupSize) {
   return rolls;
 }
 
+/**
+ * Shrinks any stat value that would otherwise overflow its tile, so a long figure stays whole and on
+ * one line. The tiles are a fixed two-column grid in a narrow sidebar, so how much room a value has
+ * is fixed while the value itself is not — a material cost runs from "—" to seven figures on the
+ * same job. Wrapping was the old answer and it was the wrong one: a figure split across lines
+ * ("$204,00" / "0") reads as a different number.
+ *
+ * Measured rather than guessed from string length, because the values are a mix of plain figures and
+ * figures with a smaller trailing unit, and those occupy very different widths per character. Steps
+ * down in small increments to a floor, and clears its own inline size first so a value that gets
+ * SHORTER on a later render goes back up to full size rather than staying shrunk forever.
+ */
+function fitStatValues() {
+  document.querySelectorAll(".stat__value").forEach((el) => {
+    el.style.fontSize = "";
+    const base = parseFloat(getComputedStyle(el).fontSize);
+    if (!(base > 0)) return;
+    let size = base;
+    const floor = base * 0.62;
+    // scrollWidth exceeds clientWidth only while the (nowrap) content really is too wide for the box.
+    while (el.scrollWidth > el.clientWidth && size > floor) {
+      size -= base * 0.04;
+      el.style.fontSize = `${size}px`;
+    }
+  });
+}
+
+// How much room a value has depends on the sidebar's width, so a resize can make a value that fitted
+// stop fitting (or free up room for one that was shrunk). Re-measuring is cheap and idempotent.
+window.addEventListener("resize", fitStatValues);
+
 function renderSummary(results, productSpecs, rollGroupSize, installRate, baseLevel) {
   // Build-order position of each lift — used by buildRollPieces (below, and inside
   // packRollsWindowed) to number rolls in first-used-on-site order. Tagged once, here, so it's set
@@ -3353,6 +3412,7 @@ function renderSummary(results, productSpecs, rollGroupSize, installRate, baseLe
   const installDays = installRate > 0 ? Math.ceil((totalArea / installRate) * 2) / 2 : 0;
   document.getElementById("statInstallTime").textContent = installDays > 0 ? `${fmt.m(installDays)} day${installDays === 1 ? "" : "s"}` : "—";
   document.getElementById("statInstallTimeHint").textContent = installDays > 0 ? "" : "enter install rate";
+  fitStatValues();
 
   const purchased = rolls.reduce((s, roll) => s + roll.rollLength, 0);
   const extraTotal = rolls.reduce((s, roll) => s + roll.pieces.reduce((s2, p) => s2 + p.extra, 0), 0);
@@ -4381,15 +4441,38 @@ function renderCutPlan(results) {
     // nothing when picked.
     const endOv = r.row._endOverrides || {};
     const cornered = !!(r.cutPlan.cornerSegments && r.cutPlan.cornerSegments.length > 1);
-    const endModes = cornered
-      ? [["auto", "Auto"], ["backToBack", "Back-to-back"], ["squareToFace", "Square to face"], ["omit", "Omit"]]
-      : [["auto", "Auto"], ["omit", "Omit"]];
-    const endSelect = (which) =>
-      `<select class="cutplan-card__end-select" data-row-id="${id}" data-end="${which}" aria-label="${which === "first" ? "First" : "Last"} strip handling">
-        ${endModes
-          .map(([v, label]) => `<option value="${v}" ${(endOv[which] || "auto") === v ? "selected" : ""}>${label}</option>`)
-          .join("")}
+    // Only offer a choice where it actually produces a different strip. "Square to face" means "do
+    // not turn this strip off its own segment", which is only ever distinct from "auto" where auto
+    // WOULD have turned it — and auto turns exactly one strip, the last, and only when its own
+    // segment is a sliver. So the first strip never gets it (auto already leaves it square), and the
+    // last strip only gets it on a lift where the sliver rule fires. Anywhere else the two entries
+    // were the same strip under two names, which just invites picking one and seeing nothing happen.
+    // How many strips this end could lose before the lift has none left — no point offering "omit 4"
+    // on a five-strip lift where both ends are already dropping strips.
+    const omitChoices = Math.max(0, Math.min(4, (r.cutPlan.n || 1) - 1));
+    const omitEntries = Array.from({ length: omitChoices }, (_, k) =>
+      k === 0 ? ["omit", "Omit 1"] : [`omit${k + 1}`, `Omit ${k + 1}`]
+    );
+    const endModes = (which) => {
+      if (!cornered) return [["auto", "Auto"], ...omitEntries];
+      const modes = [["auto", "Auto"]];
+      if (which === "first" ? r.cutPlan.firstStripCanTurn : r.cutPlan.lastStripCanTurn) {
+        modes.push(["backToBack", "Back-to-back"]);
+      }
+      if (which === "last" && r.cutPlan.lastStripAutoTurns) modes.push(["squareToFace", "Square to face"]);
+      return modes.concat(omitEntries);
+    };
+    const endSelect = (which) => {
+      const modes = endModes(which);
+      // A stored choice this lift no longer offers (a saved "square to face", or a lift that has
+      // since stopped being cornered) falls back to auto rather than silently selecting whatever
+      // happens to be first — and since the dropped entries only ever duplicated auto, it reads back
+      // as the same layout it was saved as.
+      const current = modes.some(([v]) => v === endOv[which]) ? endOv[which] : "auto";
+      return `<select class="cutplan-card__end-select" data-row-id="${id}" data-end="${which}" aria-label="${which === "first" ? "First" : "Last"} strip handling">
+        ${modes.map(([v, label]) => `<option value="${v}" ${current === v ? "selected" : ""}>${label}</option>`).join("")}
       </select>`;
+    };
     const endStripBar = `<div class="cutplan-card__end-bar">
       <span class="cutplan-card__end-title">End strips</span>
       <label class="cutplan-card__end-label">First ${endSelect("first")}</label>
@@ -4602,9 +4685,12 @@ function annotateFaceLine(svg, facePts, W, H, projectedPts = []) {
     extLine.setAttribute("points", ext.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "));
     extLine.setAttribute("fill", "none");
     extLine.setAttribute("stroke", "var(--face-line)");
-    extLine.setAttribute("stroke-width", "2");
-    extLine.setAttribute("stroke-opacity", "0.45");
-    extLine.setAttribute("stroke-dasharray", "4,3");
+    // Same weight and near the same strength as the surveyed run. At 2px and 0.45 opacity this read
+    // as the line simply stopping partway along the lift — the exact confusion it was added to
+    // remove. The dash alone carries "projected, not surveyed"; it does not need to be faint too.
+    extLine.setAttribute("stroke-width", "3");
+    extLine.setAttribute("stroke-opacity", "0.85");
+    extLine.setAttribute("stroke-dasharray", "6,4");
     extLine.setAttribute("stroke-linecap", "round");
     svg.appendChild(extLine);
   });
