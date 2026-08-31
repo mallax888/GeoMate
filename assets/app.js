@@ -1071,6 +1071,7 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
   // segment's real world frame; stripStarts above stays a flattened approximation for every other
   // consumer that just needs a sane, non-crashing single-axis number.
   const stripSegmentIndex = []; // which corner segment (its ORIGINAL index) each strip belongs to.
+  const stripIsStitch = []; // true for a narrow gap-filling piece added at a corner (see below).
   const stripDirs = []; // per-strip bearing OVERRIDE, normally all empty. Only the last strip can
   // take one, and only when its own segment is too short to be orienting a strip at all — see the
   // check after the loop. Every other strip reads its bearing off its own segment.
@@ -1082,7 +1083,7 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
   const installOrder = mirror
     ? cornerSegments.map((_, i) => cornerSegments.length - 1 - i)
     : cornerSegments.map((_, i) => i);
-  installOrder.forEach((segIdx) => {
+  installOrder.forEach((segIdx, orderPos) => {
     const seg = cornerSegments[segIdx];
     const segDir = seg.dir;
     const segInward = inwardNormal(segDir); // the segment's TRUE inward direction — never flipped,
@@ -1104,7 +1105,24 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     // there — expected at the dot — rather than every strip in this segment being squeezed tighter to
     // land exactly on a line nothing downstream needs to match.
     const pitch = Math.max(w - oMin, 0.01);
-    const segN = segLen <= w ? 1 : Math.max(1, Math.ceil((segLen - w) / pitch) + 1);
+    // Whether this segment's far end is a real corner shared with the next segment, or the true end
+    // of the wall. It decides what happens to the leftover when the segment doesn't divide evenly.
+    //
+    // At a TRUE END, running the last strip past the line is harmless — there is nothing beyond it
+    // to collide with, and the overshoot is simply trimmed on site, so the end stays covered.
+    //
+    // At a CORNER it is not harmless: the overshooting strip lands on top of the next segment's
+    // first strip, which is anchored flush at that same corner. That is the doubling-up visible
+    // where a face turns. Stopping short instead leaves a gap under one pitch wide, which site
+    // closes with a stitch strip — a deliberate, visible, cheap piece of material, rather than a
+    // whole strip's width of silent double coverage.
+    const endsAtCorner = orderPos < installOrder.length - 1;
+    const segN =
+      segLen <= w
+        ? 1
+        : endsAtCorner
+        ? Math.max(1, Math.floor((segLen - w) / pitch + 1e-9) + 1)
+        : Math.max(1, Math.ceil((segLen - w) / pitch) + 1);
     const segStarts = Array.from({ length: segN }, (_, i) => i * pitch);
     const segOverlapForReport = oMin;
     segOverlaps.push(segOverlapForReport);
@@ -1136,6 +1154,30 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
       // converting back.
       stripLocalStarts.push(mirror ? segLen - start - w : start);
       stripSegmentIndex.push(segIdx);
+      stripIsStitch.push(false);
+      overallResultN++;
+    }
+
+    // Whatever the segment could not cover before its corner. Now that strips stop at the corner
+    // instead of barrelling past it, this is real uncovered ground — so it is planned as its own
+    // narrow piece rather than left for someone to notice on site. Cut to the width of the gap
+    // itself, so it closes the lane exactly without reintroducing the double coverage that stopping
+    // short was meant to remove.
+    const covered = segStarts[segStarts.length - 1] + w;
+    const shortfall = segLen - covered;
+    if (endsAtCorner && shortfall > STITCH_MIN) {
+      const stitchStart = covered;
+      const station = Math.max(0, Math.min(segFace.length, stitchStart + shortfall / 2));
+      const r = stripBoundaryReach(station, shortfall, poly, segFace, segInward, segVertexStations, avoidStitches);
+      cutLengths.push(r.cutLength);
+      stitches.push(r.stitches);
+      extentsReach.push(r.farReach);
+      frontReach.push(r.nearReach);
+      stripWidths.push(shortfall);
+      stripStarts.push(flatOffset + stitchStart);
+      stripLocalStarts.push(mirror ? segLen - stitchStart - shortfall : stitchStart);
+      stripSegmentIndex.push(segIdx);
+      stripIsStitch.push(true);
       overallResultN++;
     }
     flatOffset += segLen;
@@ -1229,7 +1271,7 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
   // per-strip array in step so nothing downstream — roll packing, the strip list, CSV, the print
   // sheets — can end up reading a strip that is no longer in the plan.
   const dropStripAt = (idx) => {
-    [cutLengths, stitches, extentsReach, frontReach, stripWidths, stripStarts, stripLocalStarts, stripSegmentIndex, stripDirs].forEach(
+    [cutLengths, stitches, extentsReach, frontReach, stripWidths, stripStarts, stripLocalStarts, stripSegmentIndex, stripDirs, stripIsStitch].forEach(
       (arr) => arr.splice(idx, 1)
     );
     overallResultN--;
@@ -1263,6 +1305,7 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     stripSegmentIndex,
     stripLocalStarts,
     stripDirs,
+    stripIsStitch,
     lastStripAutoTurns,
     firstStripCanTurn,
     lastStripCanTurn,
@@ -4550,7 +4593,17 @@ function renderCutPlan(results) {
       const lenBit = isManual
         ? `<input type="number" class="cutplan-card__strip-len" aria-label="Strip ${i + 1} cut length, metres" data-row-id="${id}" data-strip-index="${i}" value="${len.toFixed(2)}" step="0.05" min="0.05"> m`
         : `${fmt.m1(len)} m`;
-      li.innerHTML = `<span class="cutplan-card__strip-label">Strip</span><span class="cutplan-card__strip-chip">${i + 1}</span>${midBit}<span class="cutplan-card__strip-cut">${lenBit}</span>`;
+      // A gap-filling piece is cut to the width of the lane it closes, not the full roll width, so
+      // the list has to say so — otherwise it reads as an ordinary strip and gets cut full width.
+      const isStitchStrip = !!(r.cutPlan.stripIsStitch || [])[i];
+      if (isStitchStrip) li.classList.add("is-stitch-strip");
+      const stripWord = isStitchStrip
+        ? `<span class="cutplan-card__strip-label">Stitch</span>`
+        : `<span class="cutplan-card__strip-label">Strip</span>`;
+      const widthNote = isStitchStrip
+        ? `<span class="cutplan-card__stitch-width">${fmt.m1((r.cutPlan.stripWidths || [])[i] || 0)} m wide</span>`
+        : "";
+      li.innerHTML = `${stripWord}<span class="cutplan-card__strip-chip">${i + 1}</span>${midBit}${widthNote}<span class="cutplan-card__strip-cut">${lenBit}</span>`;
       stripsList.appendChild(li);
 
       (r.cutPlan.stitches[i] || []).forEach((s, si) => {
@@ -4857,7 +4910,11 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
     const yNearR = ty(depthRight + nearReach);
     const yNear = (yNearL + yNearR) / 2; // used below for label/roll-circle placement only
 
-    const color = i % 2 === 0 ? "var(--accent)" : "var(--clay)";
+    // A gap-filling piece at a corner is a different thing from an ordinary strip — narrower, and
+    // cut specifically to close a lane the run couldn't reach — so it gets its own colour rather
+    // than continuing the alternating green/clay run, which would hide it among its neighbours.
+    const isStitchStrip = !!(cutPlan.stripIsStitch || [])[i];
+    const color = isStitchStrip ? "var(--stitch)" : i % 2 === 0 ? "var(--accent)" : "var(--clay)";
 
     // A strip is a straight square cut off a roll — it can never actually bend to trace a curved or
     // notched boundary, so the rectangle draws full and undistorted (rule one isn't "reshape the
@@ -5146,7 +5203,11 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
 
   cutLengths.forEach((len, i) => {
     const g = stripGeoms[i];
-    const color = i % 2 === 0 ? "var(--accent)" : "var(--clay)";
+    // A gap-filling piece at a corner is a different thing from an ordinary strip — narrower, and
+    // cut specifically to close a lane the run couldn't reach — so it gets its own colour rather
+    // than continuing the alternating green/clay run, which would hide it among its neighbours.
+    const isStitchStrip = !!(cutPlan.stripIsStitch || [])[i];
+    const color = isStitchStrip ? "var(--stitch)" : i % 2 === 0 ? "var(--accent)" : "var(--clay)";
     const colorStrong = i % 2 === 0 ? "var(--accent-strong)" : "var(--clay)";
 
     // A strip is a straight square cut off a roll — it can never actually bend to trace a curved or
