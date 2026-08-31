@@ -290,6 +290,42 @@ function groupDirsByAngle(dirs, angleThresholdDeg) {
   });
 }
 
+/**
+ * Same idea as groupDirsByAngle, but measured against each group's OWN first edge (a fixed anchor)
+ * instead of the immediately preceding one. Comparing only to the previous edge lets a smooth curve
+ * run arbitrarily far with every single adjacent step still under threshold — a tessellated arc (see
+ * tessellateBulge) or a real, densely-vertexed curved boundary averages a genuine 90°+ sweep into
+ * one direction pointing roughly the wrong way everywhere along it except near the midpoint, rather
+ * than tracking the true local direction. Rule one for a strip is staying perpendicular to the real
+ * boundary at its own position — not "close enough on average" — so this is what
+ * splitFaceIntoCornerSegments uses for its finer, within-a-face corner threshold. chainEdges' own
+ * coarser pass (deciding which polygon SIDE becomes the face in the first place) deliberately keeps
+ * the plain prev-edge version above instead — that choice is a face-picking question, not a "how
+ * accurately does this track the curve" one, and changing it changes which edge wins as longest,
+ * which is a much bigger, riskier blast radius than this function is meant to have.
+ */
+function groupDirsByAngleFromStart(dirs, angleThresholdDeg) {
+  if (!dirs.length) return [];
+  const chains = [];
+  let cur = [dirs[0]];
+  let groupStart = dirs[0];
+  for (let i = 1; i < dirs.length; i++) {
+    const d = dirs[i];
+    const cosA = groupStart.x * d.x + groupStart.y * d.y;
+    const angle = Math.acos(Math.max(-1, Math.min(1, cosA))) * (180 / Math.PI);
+    if (angle <= angleThresholdDeg) cur.push(d);
+    else { chains.push(cur); cur = [d]; groupStart = d; }
+  }
+  chains.push(cur);
+  return chains.map((edges) => {
+    const totalLen = edges.reduce((s, e) => s + e.len, 0);
+    const avgX = edges.reduce((s, e) => s + e.x * e.len, 0) / totalLen;
+    const avgY = edges.reduce((s, e) => s + e.y * e.len, 0) / totalLen;
+    const avgLen = Math.hypot(avgX, avgY) || 1;
+    return { edges, length: totalLen, dir: { x: avgX / avgLen, y: avgY / avgLen } };
+  });
+}
+
 function chainEdges(poly, angleThresholdDeg = 20) {
   const n = poly.length;
   const dirs = [];
@@ -312,13 +348,19 @@ function chainEdges(poly, angleThresholdDeg = 20) {
 const CORNER_SPLIT_ANGLE_DEG = 5;
 
 /** Real DXF vertex noise can produce a segment that's technically past the angle threshold but only
- *  a few tens of centimetres long — not anything a crew could treat as its own direction. Merges any
- *  segment shorter than this back into whichever neighbour it's more closely aligned with (repeating
- *  until every segment clears the floor, or only one is left). Tied to strip width when known — a
- *  segment has to be able to hold at least most of one strip to mean anything on its own; 1.5m is
- *  just a sane floor for the rare case this runs before a product's width is known. */
-function mergeShortCornerSegments(segments, w) {
-  const minLen = w > 0 ? Math.max(w * 0.9, 0.5) : 1.5;
+ *  a few tens of centimetres long — not anything a crew could treat as its own direction, just a
+ *  stray short edge from how the boundary happened to get drawn. Merges any segment shorter than
+ *  this back into whichever neighbour it's more closely aligned with (repeating until every segment
+ *  clears the floor, or only one is left).
+ *  A FIXED floor, not tied to strip width — rule one for a strip is staying perpendicular to the
+ *  real boundary at its own position, so a genuinely curved run (a tight-radius bend, where even a
+ *  fine 5° slice is physically short) still keeps its own precise direction rather than being glued
+ *  to its neighbours just to reach a "held at least most of one strip" length; that used to gather
+ *  several correctly-oriented slices into one flatter, coarser-angled one purely because the strip
+ *  was wide relative to the curve's radius, tracking the true direction worse the tighter the bend
+ *  got — backwards from what actually matters there. */
+function mergeShortCornerSegments(segments) {
+  const minLen = 0.3;
   let segs = segments.slice();
   let changed = true;
   while (changed && segs.length > 1) {
@@ -372,10 +414,10 @@ function mergeShortCornerSegments(segments, w) {
  *  Only the ANGLE (plus the length floor above) decides the split points here, never how the
  *  resulting segments should overlap where they meet — that's entirely computeCutPlan's job once it
  *  knows where the splits are. */
-function splitFaceIntoCornerSegments(face, w = null) {
-  const raw = groupDirsByAngle(face.edges, CORNER_SPLIT_ANGLE_DEG);
+function splitFaceIntoCornerSegments(face) {
+  const raw = groupDirsByAngleFromStart(face.edges, CORNER_SPLIT_ANGLE_DEG);
   if (raw.length <= 1) return raw;
-  return mergeShortCornerSegments(raw, w);
+  return mergeShortCornerSegments(raw);
 }
 
 /** Longest chain = face; the longest, most anti-parallel remaining chain = back.
@@ -839,7 +881,7 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
   // "force every strip to the same length from one side" is a separate, narrower feature, and nobody
   // has asked how a forced-length strip should behave crossing a corner, so a packed lift keeps
   // today's single-direction behaviour regardless of any corner within it.
-  const cornerSegments = packed ? [pickedFace] : splitFaceIntoCornerSegments(face, w);
+  const cornerSegments = packed ? [pickedFace] : splitFaceIntoCornerSegments(face);
 
   if (cornerSegments.length <= 1) {
     // Wall: calcLift's evenly-spread fit, so both ends land flush on the real tie-in lines. Floor:
