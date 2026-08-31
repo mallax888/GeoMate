@@ -874,6 +874,16 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
   if (chains.length < 2) return null;
   const { face: pickedFace, back, chosenIndex } = faceCycle != null ? pickFaceByIndex(chains, faceCycle) : pickFaceAndBack(chains, refDir, poly, w, oMin, neighborDir);
   const face = extendFaceToFullExtent(pickedFace, poly);
+  // Where the REAL surveyed face sits inside the extended one. extendFaceToFullExtent prolongs the
+  // face along its own bearing so strips can be placed across the polygon's whole extent, but that
+  // prolongation is a construction line, not wall — it runs off past the boundary. Anything drawing
+  // the face itself (see annotateFaceLine) has to stop at the real ends; the extension is collinear
+  // with face.dir, so projecting the picked face's own origin onto the extended frame locates it
+  // exactly.
+  const faceCoreStart =
+    (pickedFace.edges[0].from.x - face.edges[0].from.x) * face.dir.x +
+    (pickedFace.edges[0].from.y - face.edges[0].from.y) * face.dir.y;
+  const faceCoreEnd = faceCoreStart + pickedFace.length;
 
   const packed = packSide ? packStripsFromSide(face.length, w, oMin, packSide) : null;
 
@@ -950,6 +960,8 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
       frontReach,
       stripWidths,
       polygonArea: Math.abs(signedArea(poly)),
+      faceCoreStart,
+      faceCoreEnd,
     };
   }
 
@@ -1078,6 +1090,8 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     cornerSegments,
     stripSegmentIndex,
     stripLocalStarts,
+    faceCoreStart,
+    faceCoreEnd,
   };
 }
 
@@ -4346,6 +4360,29 @@ function fillRemainder(row, productId, productSpecs) {
  * never shifts between lifts, and it goes onto the print sheets with them, which is where it's
  * actually read on site.
  */
+/**
+ * The stations along `cutPlan.face` that the REAL face spans, as a polyline to sample: its two true
+ * ends plus every face vertex between them, so a face that kinks is traced through its kinks rather
+ * than chorded straight across them.
+ *
+ * Bounded by faceCoreStart/faceCoreEnd (see computeCutPlan) so the face's synthetic prolongation is
+ * excluded — drawn, it runs off past the boundary and reads as the wall carrying on where there
+ * isn't any. computeManualCutPlan never extends its face, so the whole-face default is right there.
+ */
+function faceCoreStations(cutPlan) {
+  const face = cutPlan.face;
+  const start = Number.isFinite(cutPlan.faceCoreStart) ? cutPlan.faceCoreStart : 0;
+  const end = Number.isFinite(cutPlan.faceCoreEnd) ? cutPlan.faceCoreEnd : face.length;
+  const stations = [start];
+  let acc = 0;
+  face.edges.forEach((e) => {
+    acc += e.len;
+    if (acc > start + 1e-6 && acc < end - 1e-6) stations.push(acc);
+  });
+  stations.push(end);
+  return stations;
+}
+
 function annotateFaceLine(svg, facePts, W, H) {
   const ns = "http://www.w3.org/2000/svg";
   if (!facePts || facePts.length < 2) return;
@@ -4665,15 +4702,12 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
   // face's own vertices at their true depths (not a flat y = 0), matching the outline the strips'
   // near edges are already drawn against — see faceAlignedFootprint on why a real face doesn't sit
   // dead flat in this frame.
-  {
-    const facePts = [{ x: tx(0), y: ty(faceDepthAtStation(face, inward, 0)) }];
-    let station = 0;
-    face.edges.forEach((e) => {
-      station += e.len;
-      facePts.push({ x: tx(station), y: ty(faceDepthAtStation(face, inward, station)) });
-    });
-    annotateFaceLine(svg, facePts, W, H);
-  }
+  annotateFaceLine(
+    svg,
+    faceCoreStations(cutPlan).map((s) => ({ x: tx(s), y: ty(faceDepthAtStation(face, inward, s)) })),
+    W,
+    H
+  );
 }
 
 /**
@@ -5001,7 +5035,7 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
   // stretch of it rather than to one averaged bearing across the corner.
   annotateFaceLine(
     svg,
-    [face.edges[0].from, ...face.edges.map((e) => e.to)].map(screenOf),
+    faceCoreStations(cutPlan).map((s) => screenOf(pointAtStation(face, s))),
     W,
     H
   );
