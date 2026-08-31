@@ -4329,6 +4329,65 @@ function fillRemainder(row, productId, productSpecs) {
   }
 }
 
+/**
+ * Marks the face on a cut-plan diagram: a solid line traced over it, captioned with what it means.
+ *
+ * Every one of these diagrams plots distance ALONG the face against depth INTO the fill, so the face
+ * is the baseline and the far boundary behind it is free to slant even where the face is dead
+ * straight — embedment depth simply varies along the wall. Unlabelled, that slanted far boundary
+ * reads as the wall face at a glance, and every strip then looks skewed against it rather than
+ * square to it (a site engineer read it exactly that way, which is why this exists). The dashed
+ * outline can't carry the distinction on its own: it traces the whole boundary, face and back alike,
+ * in one identical line.
+ *
+ * `facePts` is the face already projected into screen space by the caller, so this works unchanged
+ * for the flat diagram's arc-length flattening and the cornered diagram's true-geometry rotation —
+ * a face with a real bend traces that bend here too. Applied to all three diagrams so the convention
+ * never shifts between lifts, and it goes onto the print sheets with them, which is where it's
+ * actually read on site.
+ */
+function annotateFaceLine(svg, facePts, W, H) {
+  const ns = "http://www.w3.org/2000/svg";
+  if (!facePts || facePts.length < 2) return;
+  const pts = facePts.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+  if (pts.length < 2) return;
+
+  const line = document.createElementNS(ns, "polyline");
+  line.setAttribute("points", pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "));
+  line.setAttribute("fill", "none");
+  // Solid and heavier than the dashed extents outline it sits on top of — this is the one line on
+  // the diagram the strips are actually cut square to, so it has to be separable from the boundary
+  // at a glance rather than reading as just another edge of the same shape.
+  line.setAttribute("stroke", "var(--accent-strong)");
+  line.setAttribute("stroke-width", "3");
+  line.setAttribute("stroke-linecap", "round");
+  line.setAttribute("stroke-linejoin", "round");
+  svg.appendChild(line);
+
+  // Pinned to the canvas's bottom padding band rather than trailing off the face's own start point.
+  // Every diagram lays its content out down to `H - pad` at the lowest, so this band is the one
+  // strip of canvas guaranteed clear at any strip count — and on a cornered lift the face can start
+  // anywhere in the drawing, where the caption ran straight through the roll numbers.
+  const fontSize = 8;
+  const label = document.createElementNS(ns, "text");
+  label.setAttribute("x", "2");
+  label.setAttribute("y", (H - 3).toFixed(1));
+  label.setAttribute("font-size", String(fontSize));
+  label.setAttribute("font-family", "var(--font-mono)");
+  label.setAttribute("font-weight", "700");
+  label.setAttribute("fill", "var(--accent-strong)");
+  label.setAttribute("text-anchor", "start");
+  // Halo behind the glyphs: on the flat diagram this caption sits in empty padding, but on the
+  // cornered one the face can start anywhere in the drawing, so it may land over strip fill.
+  // paint-order puts the stroke behind the fill, making it a backing plate rather than an outline.
+  label.setAttribute("paint-order", "stroke");
+  label.setAttribute("stroke", "var(--surface)");
+  label.setAttribute("stroke-width", "3");
+  label.setAttribute("stroke-linejoin", "round");
+  label.textContent = "FACE — STRIPS SQUARE TO THIS LINE";
+  svg.appendChild(label);
+}
+
 function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
   const ns = "http://www.w3.org/2000/svg";
   const { face, cutLengths } = cutPlan;
@@ -4601,6 +4660,20 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
       }
     }
   });
+
+  // Last, so the face line lands on top of the strips rather than under them. Traced through the
+  // face's own vertices at their true depths (not a flat y = 0), matching the outline the strips'
+  // near edges are already drawn against — see faceAlignedFootprint on why a real face doesn't sit
+  // dead flat in this frame.
+  {
+    const facePts = [{ x: tx(0), y: ty(faceDepthAtStation(face, inward, 0)) }];
+    let station = 0;
+    face.edges.forEach((e) => {
+      station += e.len;
+      facePts.push({ x: tx(station), y: ty(faceDepthAtStation(face, inward, station)) });
+    });
+    annotateFaceLine(svg, facePts, W, H);
+  }
 }
 
 /**
@@ -4905,6 +4978,16 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
     dot.setAttribute("stroke-width", "2");
     svg.appendChild(dot);
   });
+
+  // The face traced through its own true world vertices, so a real bend between corner segments
+  // shows as a bend in this line too — the strips either side of it visibly square up to their own
+  // stretch of it rather than to one averaged bearing across the corner.
+  annotateFaceLine(
+    svg,
+    [face.edges[0].from, ...face.edges.map((e) => e.to)].map(screenOf),
+    W,
+    H
+  );
 }
 
 /**
@@ -5122,6 +5205,20 @@ function renderCutPlanSvgManual(svg, cutPlan, productSpecs, activeProductId, row
     hint.textContent = fitsFull ? fullHintText : "+";
     svg.appendChild(hint);
   }
+
+  // Same face marking as the two automatic diagrams — a manually built lift is read on site off the
+  // same printed sheet, so the convention can't differ here.
+  {
+    const faceInward = inwardNormal(face.dir);
+    const facePts = [{ x: tx(0), y: ty(faceDepthAtStation(face, faceInward, 0)) }];
+    let station = 0;
+    face.edges.forEach((e) => {
+      station += e.len;
+      facePts.push({ x: tx(station), y: ty(faceDepthAtStation(face, faceInward, station)) });
+    });
+    annotateFaceLine(svg, facePts, W, H);
+  }
+
   return finished;
 }
 
