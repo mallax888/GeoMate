@@ -52,6 +52,9 @@
   --accent: #1f7a44;
   --accent-strong: #145c33;
   --accent-tint: #e3f3e8;
+  /* The cut-plan face reference line. Deliberately outside the green/clay strip palette: a green
+     line on a diagram made of green and clay strips reads as fill, not as a reference. */
+  --face-line: #1b4fd8;
   --accent-pop: #187a40;
   --accent-pop-deep: #156b3a;
   --ink-on-accent: #ffffff;
@@ -96,6 +99,7 @@
     --accent: #2fa863;
     --accent-strong: #6ecf95;
     --accent-tint: #0f261a;
+    --face-line: #7aa9ff;
     --clay: #ffb238;
     --clay-tint: #3a2a0a;
     --graphite: #a3aca6;
@@ -127,6 +131,7 @@
   --accent: #2fa863;
   --accent-strong: #6ecf95;
   --accent-tint: #0f261a;
+  --face-line: #7aa9ff;
   --clay: #ffb238;
   --clay-tint: #3a2a0a;
   --graphite: #a3aca6;

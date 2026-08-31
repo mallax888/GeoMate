@@ -4361,41 +4361,73 @@ function fillRemainder(row, productId, productSpecs) {
  * actually read on site.
  */
 /**
- * The stations along `cutPlan.face` that the REAL face spans, as a polyline to sample: its two true
- * ends plus every face vertex between them, so a face that kinks is traced through its kinks rather
- * than chorded straight across them.
+ * Splits `cutPlan.face` into the stations covering the REAL surveyed face (`core`) and those
+ * covering whatever extendFaceToFullExtent prolonged it by (`projected` — none, or one span at
+ * either end). Each span lists its two ends plus every face vertex between, so a face that kinks is
+ * traced through its kinks rather than chorded straight across them.
  *
- * Bounded by faceCoreStart/faceCoreEnd (see computeCutPlan) so the face's synthetic prolongation is
- * excluded — drawn, it runs off past the boundary and reads as the wall carrying on where there
- * isn't any. computeManualCutPlan never extends its face, so the whole-face default is right there.
+ * Split because the two mean different things on the ground: the core is surveyed wall, the
+ * projection is a construction line. computeManualCutPlan never extends its face, so the whole-face
+ * default there gives a core span and nothing projected.
  */
-function faceCoreStations(cutPlan) {
+function faceStationSpans(cutPlan) {
   const face = cutPlan.face;
   const start = Number.isFinite(cutPlan.faceCoreStart) ? cutPlan.faceCoreStart : 0;
   const end = Number.isFinite(cutPlan.faceCoreEnd) ? cutPlan.faceCoreEnd : face.length;
-  const stations = [start];
-  let acc = 0;
-  face.edges.forEach((e) => {
-    acc += e.len;
-    if (acc > start + 1e-6 && acc < end - 1e-6) stations.push(acc);
-  });
-  stations.push(end);
-  return stations;
+  const between = (a, b) => {
+    const out = [a];
+    let acc = 0;
+    face.edges.forEach((e) => {
+      acc += e.len;
+      if (acc > a + 1e-6 && acc < b - 1e-6) out.push(acc);
+    });
+    out.push(b);
+    return out;
+  };
+  // Whatever the face was prolonged by gets drawn too, just distinctly. Strips really are placed
+  // across it — that is the whole reason extendFaceToFullExtent exists, so a corner jutting past the
+  // face chain still gets covered — so a line that simply stopped short left those last strips
+  // squared to nothing visible, which reads as a bug rather than as "surveyed face ends here". On
+  // RL 62.90 that prolongation is 7.15 m of a 16.61 m baseline: far too much to leave unexplained.
+  const spans = { core: between(start, end), projected: [] };
+  if (start > 1e-6) spans.projected.push(between(0, start));
+  if (face.length - end > 1e-6) spans.projected.push(between(end, face.length));
+  return spans;
 }
 
-function annotateFaceLine(svg, facePts, W, H) {
+function annotateFaceLine(svg, facePts, W, H, projectedPts = []) {
   const ns = "http://www.w3.org/2000/svg";
   if (!facePts || facePts.length < 2) return;
-  const pts = facePts.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+  const clean = (list) => (list || []).filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+  const pts = clean(facePts);
   if (pts.length < 2) return;
+
+  // Where the face had to be projected past its surveyed ends so strips could reach a corner
+  // jutting beyond it. Same line, lighter and dashed: the strips there ARE square to it, so it can't
+  // just be missing, but it isn't surveyed wall either and shouldn't claim to be.
+  projectedPts.forEach((span) => {
+    const ext = clean(span);
+    if (ext.length < 2) return;
+    const extLine = document.createElementNS(ns, "polyline");
+    extLine.setAttribute("points", ext.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "));
+    extLine.setAttribute("fill", "none");
+    extLine.setAttribute("stroke", "var(--face-line)");
+    extLine.setAttribute("stroke-width", "2");
+    extLine.setAttribute("stroke-opacity", "0.45");
+    extLine.setAttribute("stroke-dasharray", "4,3");
+    extLine.setAttribute("stroke-linecap", "round");
+    svg.appendChild(extLine);
+  });
 
   const line = document.createElementNS(ns, "polyline");
   line.setAttribute("points", pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "));
   line.setAttribute("fill", "none");
   // Solid and heavier than the dashed extents outline it sits on top of — this is the one line on
   // the diagram the strips are actually cut square to, so it has to be separable from the boundary
-  // at a glance rather than reading as just another edge of the same shape.
-  line.setAttribute("stroke", "var(--accent-strong)");
+  // at a glance rather than reading as just another edge of the same shape. Its own colour, not the
+  // strip green: against a diagram already made of green and clay strips, a green line reads as part
+  // of the fill rather than as a reference line.
+  line.setAttribute("stroke", "var(--face-line)");
   line.setAttribute("stroke-width", "3");
   line.setAttribute("stroke-linecap", "round");
   line.setAttribute("stroke-linejoin", "round");
@@ -4412,7 +4444,7 @@ function annotateFaceLine(svg, facePts, W, H) {
   label.setAttribute("font-size", String(fontSize));
   label.setAttribute("font-family", "var(--font-mono)");
   label.setAttribute("font-weight", "700");
-  label.setAttribute("fill", "var(--accent-strong)");
+  label.setAttribute("fill", "var(--face-line)");
   label.setAttribute("text-anchor", "start");
   // Halo behind the glyphs: on the flat diagram this caption sits in empty padding, but on the
   // cornered one the face can start anywhere in the drawing, so it may land over strip fill.
@@ -4702,12 +4734,11 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
   // face's own vertices at their true depths (not a flat y = 0), matching the outline the strips'
   // near edges are already drawn against — see faceAlignedFootprint on why a real face doesn't sit
   // dead flat in this frame.
-  annotateFaceLine(
-    svg,
-    faceCoreStations(cutPlan).map((s) => ({ x: tx(s), y: ty(faceDepthAtStation(face, inward, s)) })),
-    W,
-    H
-  );
+  {
+    const spans = faceStationSpans(cutPlan);
+    const toPt = (s) => ({ x: tx(s), y: ty(faceDepthAtStation(face, inward, s)) });
+    annotateFaceLine(svg, spans.core.map(toPt), W, H, spans.projected.map((span) => span.map(toPt)));
+  }
 }
 
 /**
@@ -5033,12 +5064,11 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
   // The face traced through its own true world vertices, so a real bend between corner segments
   // shows as a bend in this line too — the strips either side of it visibly square up to their own
   // stretch of it rather than to one averaged bearing across the corner.
-  annotateFaceLine(
-    svg,
-    faceCoreStations(cutPlan).map((s) => screenOf(pointAtStation(face, s))),
-    W,
-    H
-  );
+  {
+    const spans = faceStationSpans(cutPlan);
+    const toPt = (s) => screenOf(pointAtStation(face, s));
+    annotateFaceLine(svg, spans.core.map(toPt), W, H, spans.projected.map((span) => span.map(toPt)));
+  }
 }
 
 /**
@@ -5261,13 +5291,9 @@ function renderCutPlanSvgManual(svg, cutPlan, productSpecs, activeProductId, row
   // same printed sheet, so the convention can't differ here.
   {
     const faceInward = inwardNormal(face.dir);
-    const facePts = [{ x: tx(0), y: ty(faceDepthAtStation(face, faceInward, 0)) }];
-    let station = 0;
-    face.edges.forEach((e) => {
-      station += e.len;
-      facePts.push({ x: tx(station), y: ty(faceDepthAtStation(face, faceInward, station)) });
-    });
-    annotateFaceLine(svg, facePts, W, H);
+    const spans = faceStationSpans(cutPlan);
+    const toPt = (s) => ({ x: tx(s), y: ty(faceDepthAtStation(face, faceInward, s)) });
+    annotateFaceLine(svg, spans.core.map(toPt), W, H, spans.projected.map((span) => span.map(toPt)));
   }
 
   return finished;
