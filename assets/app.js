@@ -345,7 +345,7 @@ function chainEdges(poly, angleThresholdDeg = 20) {
 // without tripping on ordinary survey wobble along a straight run. This is a DIFFERENT question from
 // which edge gets picked as the face in the first place (pickFaceAndBack/refDir) — it only ever
 // fires on a genuine bend partway through a face that's already been chosen.
-const CORNER_SPLIT_ANGLE_DEG = 5;
+const CORNER_SPLIT_ANGLE_DEG = 1;
 
 /** Real DXF vertex noise can produce a segment that's technically past the angle threshold but only
  *  a few tens of centimetres long — not anything a crew could treat as its own direction, just a
@@ -360,7 +360,7 @@ const CORNER_SPLIT_ANGLE_DEG = 5;
  *  was wide relative to the curve's radius, tracking the true direction worse the tighter the bend
  *  got — backwards from what actually matters there. */
 function mergeShortCornerSegments(segments) {
-  const minLen = 0.3;
+  const minLen = 0.1;
   let segs = segments.slice();
   let changed = true;
   while (changed && segs.length > 1) {
@@ -4921,6 +4921,23 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
       ) {
         ccLane++;
         ccy = Math.max(margin + rollCircleR, baseCcy - ccLane * (rollCircleR * 2 + circlePad));
+      }
+      // Lanes step from each circle's OWN near-edge baseline, and along a curving face no two
+      // baselines are quite the same — so two circles can each take a lane and still come to rest
+      // within a couple of pixels of one another, at which point the cap above gives up and draws
+      // them on top of each other anyway. Finish the job against the actual blocker instead: sit
+      // just clear of the highest circle still in the way, which is a full diameter by
+      // construction. Bounded, and it only ever moves as far as it has to, so a circle still reads
+      // as part of its row rather than drifting off on its own.
+      for (let guard = 0; guard < 6; guard++) {
+        const blockers = recentRollCircles.filter(
+          (b) => Math.abs(b.x - ccx) < b.r + rollCircleR + circlePad && Math.abs(b.y - ccy) < b.r + rollCircleR + circlePad
+        );
+        if (!blockers.length) break;
+        const highest = Math.min(...blockers.map((b) => b.y));
+        const lifted = Math.max(margin + rollCircleR, highest - (rollCircleR * 2 + circlePad));
+        if (lifted >= ccy) break; // already at the top margin — nothing further to gain
+        ccy = lifted;
       }
       recentRollCircles.push({ x: ccx, y: ccy, r: rollCircleR });
       if (recentRollCircles.length > 8) recentRollCircles.shift();

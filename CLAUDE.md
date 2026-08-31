@@ -51,7 +51,7 @@ Geometry / cut planning — the part that is subtle:
 - `pickFaceAndBack` / `candidateFaceChains` — choose which chain is the face.
 - `splitFaceIntoCornerSegments(face)` — splits the chosen face into segments
   the strips fan around. Uses `groupDirsByAngleFromStart` at
-  `CORNER_SPLIT_ANGLE_DEG` (5°).
+  `CORNER_SPLIT_ANGLE_DEG` (1°).
 - `computeCutPlan(rawPoints, w, oMin, faceCycle, refDir, packSide, stripSide,
   avoidStitches, neighborDir, floorMode)` — the core planner.
 - `computeManualCutPlan(...)` — the click-to-place manual strip builder.
@@ -76,9 +76,16 @@ and was reverted**: it changed which chain won as the face on some lifts,
 turning correct renders into crossing, wrong-shape ones with ~63% more
 material. If you think both should use the same function, they shouldn't.
 
-`mergeShortCornerSegments(segments)` uses a **fixed 0.3 m noise floor**. It
-used to scale with strip width, which over-merged tight-radius curves into
-coarse segments and broke rule 1 on narrower strips. Don't retie it to width.
+`mergeShortCornerSegments(segments)` uses a **fixed 0.1 m noise floor**. It
+once scaled with strip width, which over-merged tight-radius curves into
+coarse segments and broke rule 1 on narrower strips. Don't retie it to width,
+and don't raise it: any segment under the floor is folded into a neighbour by
+a merge that force-averages the combined edges (a 180° threshold that never
+splits), so a coarse floor hands that merge more slivers to average away. That
+is not a hypothetical — at a 1° split threshold with the floor still at 0.3 m,
+one lift's merge averaged edges ~18° apart and its worst strip skew went from
+2.7° to 9.3°, i.e. tightening the split threshold alone made accuracy *worse*.
+The split threshold and this floor have to move together.
 
 Other areas: DXF/LandXML parsing (`parseDXF*`, `parseLandXMLSurface`,
 `sliceMeshAt`, `benchBoundaryAt`), roll packing (`packRolls*`,
@@ -120,6 +127,14 @@ breaks another. The established workflow, which has caught real regressions:
 
 Verify a bulge/arc change against **ground-truth circles**, checking centre
 and side — endpoint-only matching passes for a mirrored circle.
+
+For anything touching strip orientation, measure each strip against the face
+tangent **at that strip's own station** (worst deviation from 90°, across
+every lift, both pack directions, wall and floor). Comparing against the
+segment's averaged direction proves nothing — that is perpendicular by
+construction. The current worst case across all four real project DXFs is
+0.835°, bounded by `CORNER_SPLIT_ANGLE_DEG`; treat a regression past ~1° as a
+defect.
 
 **Never ship a change that regresses a previously-working, verified case**,
 even if it fixes the case in front of you. Revert and find a narrower fix.
