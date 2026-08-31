@@ -810,6 +810,64 @@ function stripBoundaryReach(station, w, poly, face, inward, vertexStations, avoi
 }
 
 /**
+ * How far a strip of `width` centred on `centerPt` reaches into (and in front of) the boundary if it
+ * were laid along `dir`. Same sampling idea as stripBoundaryReach — several points across the
+ * strip's own width, so a boundary kinking mid-strip is actually seen — but measured about a free
+ * centre point along an arbitrary bearing rather than along a face chain's stations, which is what
+ * testing an alternative orientation for a strip needs.
+ */
+function reachAlongDirection(centerPt, dir, width, poly) {
+  const inward = inwardNormal(dir);
+  const sampleCount = Math.max(3, Math.min(15, Math.round(width / 0.3) + 1));
+  let farReach = 0, nearReach = 0;
+  let centerSegments = [];
+  for (let k = 0; k < sampleCount; k++) {
+    const t = sampleCount === 1 ? 0.5 : k / (sampleCount - 1);
+    const offset = (t - 0.5) * width;
+    const p = { x: centerPt.x + dir.x * offset, y: centerPt.y + dir.y * offset };
+    const segs = insideSegments(p, inward, poly);
+    if (Math.abs(offset) < 1e-9) centerSegments = segs;
+    if (!segs.length) continue;
+    // Deliberately NOT "the segment starting at the origin", which is what stripBoundaryReach can
+    // assume because its rays always start on the face itself. Here the centre point can sit past
+    // the end of a segment shorter than the strip — precisely the case this function exists to
+    // test — so the ray starts OUTSIDE the boundary and nothing starts at zero. Spanning first entry
+    // to last exit handles both: an origin inside gives the same answer as before, an origin outside
+    // gives the stretch the strip actually crosses rather than nothing at all.
+    farReach = Math.max(farReach, segs[segs.length - 1].end);
+    nearReach = Math.min(nearReach, segs[0].start);
+  }
+  return { farReach, nearReach, centerSegments, inward };
+}
+
+/**
+ * The four world corners of a strip: `width` wide, laid along `dir`, spanning `nearReach` to
+ * `farReach` off `centerPt`. Square by construction — a strip is a straight cut off a roll and can
+ * never be anything else — with the far edge one level line through the centre, the same convention
+ * the diagrams already draw.
+ */
+function stripQuadAbout(centerPt, dir, width, nearReach, farReach) {
+  const inward = inwardNormal(dir);
+  const half = width / 2;
+  const near = { x: centerPt.x + inward.x * nearReach, y: centerPt.y + inward.y * nearReach };
+  const far = { x: centerPt.x + inward.x * farReach, y: centerPt.y + inward.y * farReach };
+  return [
+    { x: near.x - dir.x * half, y: near.y - dir.y * half },
+    { x: far.x - dir.x * half, y: far.y - dir.y * half },
+    { x: far.x + dir.x * half, y: far.y + dir.y * half },
+    { x: near.x + dir.x * half, y: near.y + dir.y * half },
+  ];
+}
+
+/** How much of `quad` lands inside the design boundary — the only part of a strip doing any work.
+ *  Everything past the line gets trimmed off on site. */
+function coveredAreaOf(poly, quad) {
+  const clipped = clipPolyToConvex(poly, quad);
+  if (clipped.length < 3) return 0;
+  return Math.abs(polygonShoelaceArea(clipped));
+}
+
+/**
  * A corner of the boundary can jut out past either end of the face chain itself — a diagonal
  * tie-in/return edge whose far corner sits further along the face's own direction than the face
  * chain's own last (or first) vertex. Strips only ever get placed within [0, face.length], so
@@ -998,6 +1056,9 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
   // segment's real world frame; stripStarts above stays a flattened approximation for every other
   // consumer that just needs a sane, non-crashing single-axis number.
   const stripSegmentIndex = []; // which corner segment (its ORIGINAL index) each strip belongs to.
+  const stripDirs = []; // per-strip bearing OVERRIDE, normally all empty. Only the last strip can
+  // take one, and only when its own segment is too short to be orienting a strip at all — see the
+  // check after the loop. Every other strip reads its bearing off its own segment.
   const segOverlaps = []; // each segment's own evenly-spread overlap — not necessarily equal across
   // segments of different lengths, unlike a plain straight lift's single flat number.
   let flatOffset = 0; // running total of true segment lengths, for a flattened stripStarts
@@ -1065,6 +1126,44 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     flatOffset += segLen;
   });
 
+  // A segment shorter than one strip is too small a piece of face to be setting a strip's bearing.
+  // On a real lift (RL 53.90) the run ended on a 0.33 m sliver at 42.98 deg next to a 3.87 m segment
+  // at 36.66 deg, and the last strip — 1.3 m wide, four times the length of the sliver orienting it —
+  // came out 6.3 deg off the strip beside it, standing askew at the end of an otherwise parallel run.
+  // Rule 1 says square to the face, and a sliver a quarter of a strip long is not enough face to be
+  // squaring to; the neighbour it lies against is the better answer to what the face is doing there.
+  //
+  // Last strip only. Every other strip has neighbours on both sides that would have to answer for a
+  // turn, and slivers mid-run are exactly the fine segmentation that keeps strips tracking a tight
+  // curve — turning those would undo rule 1 rather than serve it. The coverage check is a guard, not
+  // the reason: it only stops a turn that would put LESS material inside the boundary.
+  const lastIdx = cutLengths.length - 1;
+  if (lastIdx > 0 && stripSegmentIndex[lastIdx] !== stripSegmentIndex[lastIdx - 1]) {
+    const ownSeg = cornerSegments[stripSegmentIndex[lastIdx]];
+    const neighbourSeg = cornerSegments[stripSegmentIndex[lastIdx - 1]];
+    const width = stripWidths[lastIdx];
+    if (ownSeg.length < width) {
+      const centerPt = pointAtStationExtrapolated(ownSeg, stripLocalStarts[lastIdx] + width / 2);
+      const asIsArea = coveredAreaOf(poly, stripQuadAbout(centerPt, ownSeg.dir, width, frontReach[lastIdx], extentsReach[lastIdx]));
+      const turned = reachAlongDirection(centerPt, neighbourSeg.dir, width, poly);
+      const turnedArea = coveredAreaOf(poly, stripQuadAbout(centerPt, neighbourSeg.dir, width, turned.nearReach, turned.farReach));
+      if (turnedArea >= asIsArea) {
+        stripDirs[lastIdx] = { x: neighbourSeg.dir.x, y: neighbourSeg.dir.y };
+        extentsReach[lastIdx] = turned.farReach;
+        frontReach[lastIdx] = turned.nearReach;
+        cutLengths[lastIdx] = roundToPracticalLength(turned.farReach, ROUND_STEP);
+        // Recomputed against the turned ray — a pocket past a gap sits somewhere else entirely once
+        // the strip changes bearing, so the old segment's patches no longer describe this strip.
+        const mainSeg = turned.centerSegments.find((s) => s.start <= 1e-6);
+        stitches[lastIdx] = avoidStitches
+          ? []
+          : turned.centerSegments
+              .filter((s) => s !== mainSeg && s.end - s.start > STITCH_MIN)
+              .map((s) => ({ offset: roundUpToStep(s.start, ROUND_STEP), length: roundToPracticalLength(s.end - s.start, ROUND_STEP) }));
+      }
+    }
+  }
+
   // Each segment's own overlap is only reported as one flat number when every segment actually landed
   // on the same value (short lifts of near-identical length aren't unusual) — otherwise this reads
   // exactly like a mixed-product lift's "lapping each strip by its own product's overlap" case, which
@@ -1090,6 +1189,7 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     cornerSegments,
     stripSegmentIndex,
     stripLocalStarts,
+    stripDirs,
     faceCoreStart,
     faceCoreEnd,
   };
@@ -4782,27 +4882,39 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
     const farReach = Math.max((cutPlan.extentsReach || [])[i] ?? len, MIN_STRIP_LENGTH);
     const nearReach = (cutPlan.frontReach || [])[i] ?? 0;
 
-    const nearLeftPt = pointAtStationExtrapolated(seg, left);
-    const nearRightPt = pointAtStationExtrapolated(seg, right);
+    // The last strip may have been turned to lie against the one before it, because its own segment
+    // was too short a piece of face to be setting a strip's bearing (see computeCutPlan). It still
+    // sits on the same point of the face — only its bearing changed — so its near edge is measured
+    // off that centre point rather than off the segment's own stations, which describe the untuned
+    // orientation.
+    const dirOverride = (cutPlan.stripDirs || [])[i] || null;
+    const dir = dirOverride || seg.dir;
+    const inward = dirOverride ? inwardNormal(dirOverride) : segInward;
     const centerPt = pointAtStationExtrapolated(seg, center);
-    const nearLeft = { x: nearLeftPt.x + segInward.x * nearReach, y: nearLeftPt.y + segInward.y * nearReach };
-    const nearRight = { x: nearRightPt.x + segInward.x * nearReach, y: nearRightPt.y + segInward.y * nearReach };
-    const centerNear = { x: centerPt.x + segInward.x * nearReach, y: centerPt.y + segInward.y * nearReach };
+    const nearLeftPt = dirOverride
+      ? { x: centerPt.x - dir.x * (width / 2), y: centerPt.y - dir.y * (width / 2) }
+      : pointAtStationExtrapolated(seg, left);
+    const nearRightPt = dirOverride
+      ? { x: centerPt.x + dir.x * (width / 2), y: centerPt.y + dir.y * (width / 2) }
+      : pointAtStationExtrapolated(seg, right);
+    const nearLeft = { x: nearLeftPt.x + inward.x * nearReach, y: nearLeftPt.y + inward.y * nearReach };
+    const nearRight = { x: nearRightPt.x + inward.x * nearReach, y: nearRightPt.y + inward.y * nearReach };
+    const centerNear = { x: centerPt.x + inward.x * nearReach, y: centerPt.y + inward.y * nearReach };
     // Far edge is one level line through the centre point (not separately tracked left/right) — same
     // convention the flat diagram uses: only the NEAR edge needs to hug the true wall position.
-    const farCenter = { x: centerPt.x + segInward.x * farReach, y: centerPt.y + segInward.y * farReach };
-    const farLeft = { x: farCenter.x - seg.dir.x * (width / 2), y: farCenter.y - seg.dir.y * (width / 2) };
-    const farRight = { x: farCenter.x + seg.dir.x * (width / 2), y: farCenter.y + seg.dir.y * (width / 2) };
+    const farCenter = { x: centerPt.x + inward.x * farReach, y: centerPt.y + inward.y * farReach };
+    const farLeft = { x: farCenter.x - dir.x * (width / 2), y: farCenter.y - dir.y * (width / 2) };
+    const farRight = { x: farCenter.x + dir.x * (width / 2), y: farCenter.y + dir.y * (width / 2) };
 
     // Full quad, not just a centreline — same [left, right] lane as the main strip, so the patch
     // reads as real covered area rather than a mark on a line.
     const stitchQuads = (cutPlan.stitches[i] || []).map((s) => {
-      const far = { x: centerPt.x + segInward.x * (s.offset + s.length), y: centerPt.y + segInward.y * (s.offset + s.length) };
+      const far = { x: centerPt.x + inward.x * (s.offset + s.length), y: centerPt.y + inward.y * (s.offset + s.length) };
       return {
-        nearLeft: { x: nearLeftPt.x + segInward.x * s.offset, y: nearLeftPt.y + segInward.y * s.offset },
-        nearRight: { x: nearRightPt.x + segInward.x * s.offset, y: nearRightPt.y + segInward.y * s.offset },
-        farLeft: { x: far.x - seg.dir.x * (width / 2), y: far.y - seg.dir.y * (width / 2) },
-        farRight: { x: far.x + seg.dir.x * (width / 2), y: far.y + seg.dir.y * (width / 2) },
+        nearLeft: { x: nearLeftPt.x + inward.x * s.offset, y: nearLeftPt.y + inward.y * s.offset },
+        nearRight: { x: nearRightPt.x + inward.x * s.offset, y: nearRightPt.y + inward.y * s.offset },
+        farLeft: { x: far.x - dir.x * (width / 2), y: far.y - dir.y * (width / 2) },
+        farRight: { x: far.x + dir.x * (width / 2), y: far.y + dir.y * (width / 2) },
       };
     });
 
@@ -4938,14 +5050,26 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
       // the required gap (not just "don't literally touch") also keeps every number legibly separated,
       // not just non-overlapping by a fraction of a pixel.
       const gapPad = 1.5;
+      const collidesAt = (y) =>
+        recentStripLabels.some((b) => Math.abs(b.x - lx) < b.halfW + halfW + gapPad && Math.abs(b.y - y) < labelFontSize + 2);
       let lane = 0;
       let ly = baseLy;
-      while (
-        lane < 10 &&
-        recentStripLabels.some((b) => Math.abs(b.x - lx) < b.halfW + halfW + gapPad && Math.abs(b.y - ly) < labelFontSize + 2)
-      ) {
+      while (lane < 10 && collidesAt(ly)) {
         lane++;
         ly = Math.max(margin, baseLy - lane * laneStep);
+      }
+      // Those lanes clamp at the top margin, so once a label is pushed to the ceiling further lanes
+      // move it nowhere and the next one lands on top of it — two numbers stacked on the same pixel
+      // row at the very top of the diagram. Fall back to stepping DOWN from the strip's own far edge
+      // instead, which reads just as clearly as this strip's number and has no ceiling to hit.
+      if (collidesAt(ly)) {
+        for (let down = 1; down <= 10; down++) {
+          const candidate = Math.min(H - margin, baseLy + down * laneStep);
+          if (!collidesAt(candidate)) {
+            ly = candidate;
+            break;
+          }
+        }
       }
       recentStripLabels.push({ x: lx, y: ly, halfW });
       if (recentStripLabels.length > 8) recentStripLabels.shift();
