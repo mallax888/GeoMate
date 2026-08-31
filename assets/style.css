@@ -1090,6 +1090,43 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 .cutplan-card__rl { font-family: var(--font-mono); font-weight: 700; font-size: 0.92rem; }
 .cutplan-card__meta { font-size: 0.76rem; color: var(--ink-muted); }
+/* End-strip overrides. Sits in the card head, not on the strip's own row in the list, because
+   "Omit" removes that row — a control that deletes the element it lives on can't be undone. */
+.cutplan-card__end-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 0.6rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+.cutplan-card__end-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.cutplan-card__end-label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--ink-muted);
+}
+.cutplan-card__end-select {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.15rem 0.3rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--ink);
+}
+
 .cutplan-card__manual-toolbar {
   display: flex;
   align-items: center;

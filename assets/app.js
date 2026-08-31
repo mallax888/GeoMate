@@ -926,7 +926,7 @@ function reverseChain(chain) {
   return { edges, length: chain.length, dir: { x: -chain.dir.x, y: -chain.dir.y } };
 }
 
-function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide = null, stripSide = null, avoidStitches = false, neighborDir = null, floorMode = false) {
+function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide = null, stripSide = null, avoidStitches = false, neighborDir = null, floorMode = false, endOverrides = null) {
   const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
   const chains = chainEdges(poly);
   if (chains.length < 2) return null;
@@ -1002,16 +1002,30 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
       stripStarts.push(start);
     }
 
+    // Only "omit" means anything on a single-segment lift: with one bearing for the whole face,
+    // every strip is already parallel to its neighbour AND square to the face, so back-to-back and
+    // square-to-face describe the same strip. The UI hides those two here for that reason.
+    let liftN = result.n;
+    const dropFlatStripAt = (idx) => {
+      [cutLengths, stitches, extentsReach, frontReach, stripWidths, stripStarts].forEach((arr) => arr.splice(idx, 1));
+      liftN--;
+    };
+    if (endOverrides && endOverrides.last === "omit" && cutLengths.length > 1) dropFlatStripAt(cutLengths.length - 1);
+    if (endOverrides && endOverrides.first === "omit" && cutLengths.length > 1) dropFlatStripAt(0);
+
     return {
       poly,
       face,
       back,
       faceIndex: chosenIndex,
       faceLength: face.length,
-      n: result.n,
+      n: liftN,
       overlap: result.overlap,
       stripStarts,
-      materialWidth: result.materialWidth,
+      // Recomputed from what actually remains once an end strip is dropped — result.materialWidth
+      // counts the strips calcLift/packStripsFromSide planned, not the ones still in the plan, and
+      // it feeds the material/waste totals.
+      materialWidth: liftN === result.n ? result.materialWidth : stripWidths.reduce((a, b) => a + b, 0),
       cutLengths,
       stitches,
       extentsReach,
@@ -1126,6 +1140,38 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     flatOffset += segLen;
   });
 
+  // Turning an end strip to lie against its neighbour instead of square to its own segment. Shared
+  // by the automatic sliver rule below and by an explicit "back-to-back" override from the user.
+  const turnStripToward = (idx, neighbourIdx, requireNoLoss) => {
+    const ownSeg = cornerSegments[stripSegmentIndex[idx]];
+    const neighbourSeg = cornerSegments[stripSegmentIndex[neighbourIdx]];
+    if (!ownSeg || !neighbourSeg) return false;
+    const width = stripWidths[idx];
+    const centerPt = pointAtStationExtrapolated(ownSeg, stripLocalStarts[idx] + width / 2);
+    const turned = reachAlongDirection(centerPt, neighbourSeg.dir, width, poly);
+    if (requireNoLoss) {
+      const asIsArea = coveredAreaOf(poly, stripQuadAbout(centerPt, ownSeg.dir, width, frontReach[idx], extentsReach[idx]));
+      const turnedArea = coveredAreaOf(poly, stripQuadAbout(centerPt, neighbourSeg.dir, width, turned.nearReach, turned.farReach));
+      if (turnedArea < asIsArea) return false;
+    }
+    stripDirs[idx] = { x: neighbourSeg.dir.x, y: neighbourSeg.dir.y };
+    extentsReach[idx] = turned.farReach;
+    frontReach[idx] = turned.nearReach;
+    cutLengths[idx] = roundToPracticalLength(turned.farReach, ROUND_STEP);
+    // Recomputed against the turned ray — a pocket past a gap sits somewhere else entirely once the
+    // strip changes bearing, so the old segment's patches no longer describe this strip.
+    const mainSeg = turned.centerSegments.find((s) => s.start <= 1e-6);
+    stitches[idx] = avoidStitches
+      ? []
+      : turned.centerSegments
+          .filter((s) => s !== mainSeg && s.end - s.start > STITCH_MIN)
+          .map((s) => ({ offset: roundUpToStep(s.start, ROUND_STEP), length: roundToPracticalLength(s.end - s.start, ROUND_STEP) }));
+    return true;
+  };
+
+  const firstMode = (endOverrides && endOverrides.first) || "auto";
+  const lastMode = (endOverrides && endOverrides.last) || "auto";
+
   // A segment shorter than one strip is too small a piece of face to be setting a strip's bearing.
   // On a real lift (RL 53.90) the run ended on a 0.33 m sliver at 42.98 deg next to a 3.87 m segment
   // at 36.66 deg, and the last strip — 1.3 m wide, four times the length of the sliver orienting it —
@@ -1136,33 +1182,35 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
   // Last strip only. Every other strip has neighbours on both sides that would have to answer for a
   // turn, and slivers mid-run are exactly the fine segmentation that keeps strips tracking a tight
   // curve — turning those would undo rule 1 rather than serve it. The coverage check is a guard, not
-  // the reason: it only stops a turn that would put LESS material inside the boundary.
+  // the reason: it only stops a turn that would put LESS material inside the boundary. "Square to
+  // face" opts a lift out of this entirely; "back-to-back" turns regardless of the sliver test.
   const lastIdx = cutLengths.length - 1;
   if (lastIdx > 0 && stripSegmentIndex[lastIdx] !== stripSegmentIndex[lastIdx - 1]) {
-    const ownSeg = cornerSegments[stripSegmentIndex[lastIdx]];
-    const neighbourSeg = cornerSegments[stripSegmentIndex[lastIdx - 1]];
-    const width = stripWidths[lastIdx];
-    if (ownSeg.length < width) {
-      const centerPt = pointAtStationExtrapolated(ownSeg, stripLocalStarts[lastIdx] + width / 2);
-      const asIsArea = coveredAreaOf(poly, stripQuadAbout(centerPt, ownSeg.dir, width, frontReach[lastIdx], extentsReach[lastIdx]));
-      const turned = reachAlongDirection(centerPt, neighbourSeg.dir, width, poly);
-      const turnedArea = coveredAreaOf(poly, stripQuadAbout(centerPt, neighbourSeg.dir, width, turned.nearReach, turned.farReach));
-      if (turnedArea >= asIsArea) {
-        stripDirs[lastIdx] = { x: neighbourSeg.dir.x, y: neighbourSeg.dir.y };
-        extentsReach[lastIdx] = turned.farReach;
-        frontReach[lastIdx] = turned.nearReach;
-        cutLengths[lastIdx] = roundToPracticalLength(turned.farReach, ROUND_STEP);
-        // Recomputed against the turned ray — a pocket past a gap sits somewhere else entirely once
-        // the strip changes bearing, so the old segment's patches no longer describe this strip.
-        const mainSeg = turned.centerSegments.find((s) => s.start <= 1e-6);
-        stitches[lastIdx] = avoidStitches
-          ? []
-          : turned.centerSegments
-              .filter((s) => s !== mainSeg && s.end - s.start > STITCH_MIN)
-              .map((s) => ({ offset: roundUpToStep(s.start, ROUND_STEP), length: roundToPracticalLength(s.end - s.start, ROUND_STEP) }));
-      }
+    if (lastMode === "backToBack") {
+      turnStripToward(lastIdx, lastIdx - 1, false);
+    } else if (lastMode !== "squareToFace") {
+      const ownSeg = cornerSegments[stripSegmentIndex[lastIdx]];
+      if (ownSeg.length < stripWidths[lastIdx]) turnStripToward(lastIdx, lastIdx - 1, true);
     }
   }
+  // The FIRST strip never turns automatically — the sliver rule is deliberately last-strip-only, so
+  // changing that would move quantities on lifts nobody asked about. It turns only when explicitly
+  // asked to.
+  if (firstMode === "backToBack" && cutLengths.length > 1 && stripSegmentIndex[0] !== stripSegmentIndex[1]) {
+    turnStripToward(0, 1, false);
+  }
+
+  // Dropping an end strip entirely. Last, after any orientation work, and by splicing every
+  // per-strip array in step so nothing downstream — roll packing, the strip list, CSV, the print
+  // sheets — can end up reading a strip that is no longer in the plan.
+  const dropStripAt = (idx) => {
+    [cutLengths, stitches, extentsReach, frontReach, stripWidths, stripStarts, stripLocalStarts, stripSegmentIndex, stripDirs].forEach(
+      (arr) => arr.splice(idx, 1)
+    );
+    overallResultN--;
+  };
+  if (lastMode === "omit" && cutLengths.length > 1) dropStripAt(cutLengths.length - 1);
+  if (firstMode === "omit" && cutLengths.length > 1) dropStripAt(0);
 
   // Each segment's own overlap is only reported as one flat number when every segment actually landed
   // on the same value (short lifts of near-identical length aren't unusual) — otherwise this reads
@@ -2361,6 +2409,7 @@ function applyExtents(row, points) {
   // (see pickFaceAndBack's negative-depth safety check). 0 used to double as both, which was
   // harmless when the automatic pick always agreed with index 0 anyway; it no longer always does.
   row._faceCycle = null;
+  row._endOverrides = null;
   row.dataset.mode = "extents";
   row.querySelector(".face-input__length").hidden = true;
   row.querySelector(".face-coords").hidden = true;
@@ -2842,7 +2891,7 @@ function computeAndRender() {
         cp = computeManualCutPlan(row._extentsPoints, row._manualStrips, productSpecs, row._faceCycle, refDir, prevFaceDir);
       } else {
         const p = productFor(row);
-        cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle, refDir, packSide, stripSide, avoidStitches, prevFaceDir, floorMode) : null;
+        cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle, refDir, packSide, stripSide, avoidStitches, prevFaceDir, floorMode, row._endOverrides) : null;
         // How many stitch patches EVERY candidate face would produce, not just the active one — lets
         // the Face picker show the consequence of each option up front (see renderCutPlan) instead of
         // the user clicking through them blind to find the one with zero patches. Also records each
@@ -4221,6 +4270,21 @@ cutPlanList.addEventListener("change", (e) => {
     return;
   }
 
+  const endSelect = e.target.closest(".cutplan-card__end-select");
+  if (endSelect) {
+    const row = window.__geogridRowsById.get(endSelect.dataset.rowId);
+    if (row) {
+      const which = endSelect.dataset.end === "first" ? "first" : "last";
+      const next = { ...(row._endOverrides || {}), [which]: endSelect.value };
+      // Both ends back on "auto" is the same as never having touched it — stored as null so a saved
+      // project doesn't carry a settings object that says nothing.
+      row._endOverrides =
+        (next.first || "auto") === "auto" && (next.last || "auto") === "auto" ? null : next;
+      computeAndRender();
+    }
+    return;
+  }
+
   const productInput = e.target.closest(".cutplan-card__strip-product");
   if (productInput) {
     const row = window.__geogridRowsById.get(productInput.dataset.rowId);
@@ -4307,6 +4371,31 @@ function renderCutPlan(results) {
     const faceStitchCounts = r.row._faceStitchCounts;
     const faceLengths = r.row._faceLengths;
 
+    // End-strip overrides. Deliberately in the card head rather than on the strip's own row in the
+    // list beside the diagram: "Omit" removes that strip from the list entirely, and a control that
+    // deletes the row it lives on leaves no way to put the strip back.
+    //
+    // A single-segment lift is offered only Auto and Omit. With one bearing across the whole face
+    // every strip is already both parallel to its neighbour AND square to the face, so the two
+    // orientation choices would describe the very same strip — dead options that appear to do
+    // nothing when picked.
+    const endOv = r.row._endOverrides || {};
+    const cornered = !!(r.cutPlan.cornerSegments && r.cutPlan.cornerSegments.length > 1);
+    const endModes = cornered
+      ? [["auto", "Auto"], ["backToBack", "Back-to-back"], ["squareToFace", "Square to face"], ["omit", "Omit"]]
+      : [["auto", "Auto"], ["omit", "Omit"]];
+    const endSelect = (which) =>
+      `<select class="cutplan-card__end-select" data-row-id="${id}" data-end="${which}" aria-label="${which === "first" ? "First" : "Last"} strip handling">
+        ${endModes
+          .map(([v, label]) => `<option value="${v}" ${(endOv[which] || "auto") === v ? "selected" : ""}>${label}</option>`)
+          .join("")}
+      </select>`;
+    const endStripBar = `<div class="cutplan-card__end-bar">
+      <span class="cutplan-card__end-title">End strips</span>
+      <label class="cutplan-card__end-label">First ${endSelect("first")}</label>
+      <label class="cutplan-card__end-label">Last ${endSelect("last")}</label>
+    </div>`;
+
     card.innerHTML = `
       <div class="cutplan-card__head">
         <span class="cutplan-card__rl">RL ${escapeHtml(r.rl) || "—"}</span>
@@ -4328,6 +4417,7 @@ function renderCutPlan(results) {
         </label>
         <button type="button" class="btn btn--ghost cutplan-card__manual-toggle" data-row-id="${id}">${isManual ? "Auto layout" : "Build manually"}</button>
       </div>
+      ${isManual ? "" : endStripBar}
       ${
         isManual
           ? `<div class="cutplan-card__manual-toolbar">
@@ -6338,6 +6428,9 @@ function buildStateSnapshot() {
     // an explicit null (JSON keeps that, unlike an omitted key), so a reloaded project can still
     // tell that apart from an old save that never had this field at all — see applyStateSnapshot.
     faceCycle: row._faceCycle,
+    // Per-lift end-strip overrides ({first, last}: auto | backToBack | squareToFace | omit). Absent
+    // on any project saved before this existed, which applyStateSnapshot reads as "auto both ends".
+    endOverrides: row._endOverrides || null,
     batteredLevel: !!row._batteredLevel,
     product: row.querySelector(".product-select").value,
     // A manually built mixed-product sequence — null when the row is on ordinary automatic layout.
@@ -6462,6 +6555,7 @@ function applyStateSnapshot(state) {
       // the automatic pick," which must survive the round-trip rather than being treated the same
       // as a genuinely old save that never had this field and needs the extentsSwapped migration.
       row._faceCycle = r.faceCycle !== undefined ? r.faceCycle : r.extentsSwapped ? 1 : 0;
+      row._endOverrides = r.endOverrides && typeof r.endOverrides === "object" ? r.endOverrides : null;
       row._batteredLevel = !!r.batteredLevel;
       if (Array.isArray(r.manualStrips)) row._manualStrips = r.manualStrips;
       if (Array.isArray(r.manualStripsSaved)) row._manualStripsSaved = r.manualStripsSaved;
