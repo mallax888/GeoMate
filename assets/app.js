@@ -1332,7 +1332,16 @@ function computeManualCutPlan(rawPoints, manualStrips, productSpecs, faceCycle, 
   const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
   const chains = chainEdges(poly);
   if (chains.length < 2) return null;
-  const { face, back, chosenIndex } = faceCycle != null ? pickFaceByIndex(chains, faceCycle) : pickFaceAndBack(chains, refDir, poly, null, null, neighborDir);
+  const { face: pickedFace, back, chosenIndex } = faceCycle != null ? pickFaceByIndex(chains, faceCycle) : pickFaceAndBack(chains, refDir, poly, null, null, neighborDir);
+  // Extended exactly as the automatic layout extends it (see extendFaceToFullExtent). Without this
+  // the manual builder ran on the raw picked chain while everything else in the app ran on the
+  // extended one — on RL 63.50 that is a 9.46 m face against the real 11.99 m, so the build declared
+  // itself "fully built" with 2.53 m of the lift left over and no way to place a strip there.
+  const face = extendFaceToFullExtent(pickedFace, poly);
+  const faceCoreStart =
+    (pickedFace.edges[0].from.x - face.edges[0].from.x) * face.dir.x +
+    (pickedFace.edges[0].from.y - face.edges[0].from.y) * face.dir.y;
+  const faceCoreEnd = faceCoreStart + pickedFace.length;
 
   const inward = inwardNormal(face.dir);
   const faceOrigin = face.edges[0].from;
@@ -1404,6 +1413,8 @@ function computeManualCutPlan(rawPoints, manualStrips, productSpecs, faceCycle, 
     seamOverlaps,
     manual: true,
     polygonArea: Math.abs(signedArea(poly)),
+    faceCoreStart,
+    faceCoreEnd,
   };
 }
 
