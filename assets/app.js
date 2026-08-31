@@ -4734,6 +4734,10 @@ function faceStationSpans(cutPlan) {
 
 function annotateFaceLine(svg, facePts, W, H, projectedPts = []) {
   const ns = "http://www.w3.org/2000/svg";
+  // A floor has no wall face to tie into — it is ground being blanketed — so there is no line the
+  // strips are square to and nothing for this to mark. Drawing it anyway states something untrue
+  // about the layout and adds a heavy line across a diagram that is busy enough.
+  if (settingsInputs.reinforcementType && settingsInputs.reinforcementType.value === "floor") return;
   if (!facePts || facePts.length < 2) return;
   const clean = (list) => (list || []).filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
   const pts = clean(facePts);
