@@ -1075,6 +1075,32 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .cutplan-status.is-error { color: var(--critical); }
 .cutplan-status.is-ok { color: var(--good); }
 
+/* Wall-or-floor asked at upload time. Sits between the two uploads it can follow, and only takes up
+   room while it is actually asking something. */
+.cutplan-typeprompt {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: -0.4rem 0 1rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+.cutplan-typeprompt__q { font-size: 0.8rem; margin-right: auto; }
+.cutplan-typeprompt .btn.is-current { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+.cutplan-typeprompt__dismiss {
+  background: transparent;
+  border: none;
+  color: var(--ink-muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0.2rem 0.3rem;
+}
+.cutplan-typeprompt__dismiss:hover { color: var(--ink); }
+
 .cutplan-list { display: flex; flex-direction: column; gap: 0.8rem; }
 .cutplan-card {
   border: 1px solid var(--line);
@@ -1091,6 +1117,17 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   margin-bottom: 0.5rem;
 }
 .cutplan-card__rl { font-family: var(--font-mono); font-weight: 700; font-size: 0.92rem; }
+/* Bin this lift. Same ✕ as the takeoff table's row remove, since it does the same thing to the same
+   row — this card is only a view of it. */
+.cutplan-card__delete {
+  background: transparent;
+  border: none;
+  color: var(--ink-muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0.2rem 0.35rem;
+}
+.cutplan-card__delete:hover { color: var(--critical); }
 .cutplan-card__meta { font-size: 0.76rem; color: var(--ink-muted); }
 /* End-strip overrides. Sits in the card head, not on the strip's own row in the list, because
    "Omit" removes that row — a control that deletes the element it lives on can't be undone. */

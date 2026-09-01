@@ -2287,6 +2287,34 @@ settingsInputs.packSideValue.addEventListener("change", computeAndRender);
 settingsInputs.avoidStitches.addEventListener("change", computeAndRender);
 settingsInputs.reinforcementType.addEventListener("change", computeAndRender);
 
+/* Wall-or-floor, asked next to the upload that just landed. The setting itself lives in Settings and
+ * is easy to leave on the last job's answer, but it decides the whole layout. Nothing here is
+ * blocking: the strips are already laid either way, and answering re-lays them on the spot. */
+function askReinforcementType(question) {
+  const bar = document.getElementById("dxfTypePrompt");
+  if (!bar) return;
+  bar.querySelector(".cutplan-typeprompt__q").textContent = question;
+  const current = settingsInputs.reinforcementType.value;
+  bar.querySelectorAll("[data-set-type]").forEach((btn) => {
+    btn.classList.toggle("is-current", btn.dataset.setType === current);
+  });
+  bar.hidden = false;
+}
+
+{
+  const bar = document.getElementById("dxfTypePrompt");
+  if (bar) {
+    bar.addEventListener("click", (e) => {
+      const pick = e.target.closest("[data-set-type]");
+      if (pick) {
+        settingsInputs.reinforcementType.value = pick.dataset.setType;
+        computeAndRender();
+      }
+      if (pick || e.target.closest(".cutplan-typeprompt__dismiss")) bar.hidden = true;
+    });
+  }
+}
+
 {
   const input = document.getElementById("dxfCentrelineInput");
   const status = document.getElementById("dxfCentrelineStatus");
@@ -2304,6 +2332,11 @@ settingsInputs.reinforcementType.addEventListener("change", computeAndRender);
           setCentrelines([]);
         } else {
           setCentrelines(paths.map((pth) => pth.points));
+          // Centrelines only drive the floor layout. Loading them on a project still set to Wall
+          // looks like nothing happened at all, so say so rather than leaving it to be discovered.
+          if (settingsInputs.reinforcementType.value !== "floor") {
+            askReinforcementType("Centrelines only lay out floors — this project is set to Wall.");
+          }
         }
         computeAndRender();
       } catch (err) {
@@ -4383,6 +4416,11 @@ document.getElementById("dxfExtentsInput").addEventListener("change", async (e) 
     statusEl.className = matched ? "cutplan-status is-ok" : "cutplan-status is-error";
     switchTab("cutplan");
     computeAndRender();
+    // Wall or floor changes the whole layout, and the setting that decides it lives back in Settings —
+    // easy to leave on whatever the last job used. Asked here, next to the file that was just loaded,
+    // where the answer is obvious. It can be answered at any point: the choice re-lays the strips
+    // whenever it is made, so nothing has to be uploaded again.
+    if (matched) askReinforcementType(`${polygons.length} extent${polygons.length === 1 ? "" : "s"} loaded — is this a wall or a floor?`);
   } catch (err) {
     statusEl.textContent = `Couldn't read that file: ${err.message}`;
     statusEl.className = "cutplan-status is-error";
@@ -4668,6 +4706,26 @@ cutPlanList.addEventListener("click", (e) => {
     return;
   }
 
+  // Bin one lift from the cut plan itself, so finishing with an RL doesn't mean starting the whole
+  // project again. It removes that lift's row from the takeoff table — the card is only a view of it
+  // — and everything downstream (rolls, totals, export) follows from the next recompute. Asks first,
+  // naming the RL: the row can carry typed lengths and a hand-built strip sequence, and there is no
+  // undo for it.
+  const deleteBtn = e.target.closest(".cutplan-card__delete");
+  if (deleteBtn) {
+    const row = window.__geogridRowsById.get(deleteBtn.dataset.rowId);
+    const rl = deleteBtn.dataset.rl;
+    // Names the strip count as well as the RL: a job can carry several lifts at the same RL (one DXF
+    // of nine 313.25 platforms is a real case), and the RL alone wouldn't say which card was clicked.
+    const n = parseInt(deleteBtn.dataset.strips, 10) || 0;
+    const what = `RL ${rl || "—"} (${n} strip${n === 1 ? "" : "s"})`;
+    if (row && window.confirm(`Delete lift ${what}? Its strips come off the takeoff and the roll schedule.`)) {
+      row.remove();
+      computeAndRender();
+    }
+    return;
+  }
+
   const undoBtn = e.target.closest(".cutplan-card__undo");
   if (undoBtn) {
     const row = window.__geogridRowsById.get(undoBtn.dataset.rowId);
@@ -4890,6 +4948,7 @@ function renderCutPlan(results) {
           </select>
         </label>
         <button type="button" class="btn btn--ghost cutplan-card__manual-toggle" data-row-id="${id}">${isManual ? "Auto layout" : "Build manually"}</button>
+        <button type="button" class="cutplan-card__delete" data-row-id="${id}" data-rl="${escapeHtml(r.rl) || ""}" data-strips="${r.n}" title="Delete this lift" aria-label="Delete lift RL ${escapeHtml(r.rl) || "—"}">✕</button>
       </div>
       ${isManual ? "" : endStripBar}
       ${
