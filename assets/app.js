@@ -1968,9 +1968,28 @@ function computeCentrelineCutPlan(rawPoints, centrelines, w, oMin) {
   const pitch = Math.max(w - oMin, 0.01);
   const cutLengths = [], stitches = [], extentsReach = [], frontReach = [], stripWidths = [];
   const stripStarts = [], stripLocalStarts = [], stripSegmentIndex = [], stripDirs = [], stripIsStitch = [];
+  // Strips already laid, so a later road can tell whether ground is spoken for.
+  const laid = [];
+  const alreadyCovered = (q) =>
+    laid.some((b) => {
+      const ax = q.x - b.c.x, ay = q.y - b.c.y;
+      const along = ax * b.d.x + ay * b.d.y;
+      const across = ax * b.n.x + ay * b.n.y;
+      return Math.abs(along) <= w / 2 + 1e-9 && across >= b.near - 1e-9 && across <= b.far + 1e-9;
+    });
   let flat = 0;
   chains.forEach((chain, ci) => {
-    for (let s = w / 2; s - w / 2 <= chain.length + 1e-9; s += pitch) {
+    // Where this road's own run begins. A road meeting one already laid should not start at its own
+    // station zero: that first strip sits on ground the other road has already covered, so it is
+    // material for nothing. Starting at the first station that is NOT yet covered removes it and
+    // keeps the rest of the run back-to-back from there, rather than leaving a half-pitch stagger.
+    let runStart = w / 2;
+    for (let s = w / 2; s - w / 2 <= chain.length + 1e-9; s += pitch / 4) {
+      const probe = pointAtStationExtrapolated(chain, Math.min(s, chain.length));
+      if (!pointInPolygon(probe.x, probe.y, poly) || nearest(probe) !== ci) continue;
+      if (!alreadyCovered(probe)) { runStart = s; break; }
+    }
+    for (let s = runStart; s - w / 2 <= chain.length + 1e-9; s += pitch) {
       const station = Math.min(s, chain.length);
       const pt = pointAtStationExtrapolated(chain, station);
       const tangent = pt.tangent || chain.dir;
@@ -1989,6 +2008,7 @@ function computeCentrelineCutPlan(rawPoints, centrelines, w, oMin) {
       stripSegmentIndex.push(ci);
       stripDirs.push({ x: tangent.x, y: tangent.y });
       stripIsStitch.push(false);
+      laid.push({ c: { x: pt.x, y: pt.y }, d: tangent, n: normal, near, far });
     }
     flat += chain.length;
   });
