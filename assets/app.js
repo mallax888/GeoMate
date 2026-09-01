@@ -1851,6 +1851,282 @@ function parseDXFPolygons(text) {
   return polygons;
 }
 
+/**
+ * Open paths from a DXF — the counterpart to parseDXFPolygons, which deliberately keeps only CLOSED
+ * shapes because an extents boundary must be a loop. A centreline is the opposite: a road alignment
+ * is an open run, and the one thing it must never be is closed.
+ *
+ * Takes LWPOLYLINE/POLYLINE that are not closed, and LINE (a straight alignment drawn as a single
+ * line is still an alignment). Bulges are tessellated the same way, so a curved alignment arrives as
+ * a real curve rather than a chord across it.
+ */
+/**
+ * A cut plan laid out from ROAD CENTRELINES rather than from the extents boundary.
+ *
+ * On a floor there is no wall face to work off, and deriving strip direction from the boundary is
+ * what produced fans of 27-34 m diagonals where two roads meet. A centreline states the traffic
+ * direction directly, and the grid works best lengthwise perpendicular to it — so strips step ALONG
+ * each alignment at the product's pitch and run ACROSS it, and a junction stops being a geometric
+ * puzzle: it is just two roads, each with its own strips.
+ *
+ * Ground belongs to whichever centreline is nearest, so the two runs meet along that line and
+ * neither lays grid where grid already is. Curves fan naturally about the alignment's own curvature,
+ * which is the one place overlap is expected and fine.
+ *
+ * Returns the same shape computeCutPlan does, with each alignment as a "corner segment" and every
+ * strip carrying its own bearing in stripDirs, so the existing diagrams, roll packing, CSV and print
+ * sheets all read it without changes. A strip spans both sides of its centreline, which the model
+ * already allows: frontReach is negative on one side, extentsReach positive on the other.
+ */
+const CENTRELINE_KEY = "geogrid-centrelines";
+// Road alignments, project-wide: one entry per open path in the uploaded DXF. Kept out of the
+// per-lift rows because an alignment spans the site, not a single lift.
+let projectCentrelines = [];
+
+function setCentrelines(paths) {
+  projectCentrelines = Array.isArray(paths) ? paths : [];
+  const status = document.getElementById("dxfCentrelineStatus");
+  const clearBtn = document.getElementById("clearCentrelines");
+  if (status) {
+    const total = projectCentrelines.reduce((a, pts) => {
+      let L = 0;
+      for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+      return a + L;
+    }, 0);
+    status.textContent = projectCentrelines.length
+      ? `${projectCentrelines.length} centreline${projectCentrelines.length === 1 ? "" : "s"} loaded — ${fmt.m(total)} m total`
+      : "";
+  }
+  if (clearBtn) clearBtn.hidden = !projectCentrelines.length;
+}
+
+function computeCentrelineCutPlan(rawPoints, centrelines, w, oMin) {
+  if (!centrelines || !centrelines.length || !(w > 0) || !(oMin >= 0) || oMin >= w) return null;
+  const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
+  const chains = centrelines
+    .map((pts) => {
+      const edges = [];
+      for (let i = 1; i < pts.length; i++) {
+        const dx = pts[i].x - pts[i - 1].x, dy = pts[i].y - pts[i - 1].y;
+        const len = Math.hypot(dx, dy);
+        if (len < 1e-9) continue;
+        edges.push({ x: dx / len, y: dy / len, len, from: pts[i - 1], to: pts[i] });
+      }
+      if (!edges.length) return null;
+      const total = edges.reduce((a, e) => a + e.len, 0);
+      const ax = edges.reduce((a, e) => a + e.x * e.len, 0) / total;
+      const ay = edges.reduce((a, e) => a + e.y * e.len, 0) / total;
+      const m = Math.hypot(ax, ay) || 1;
+      return { edges, length: total, dir: { x: ax / m, y: ay / m } };
+    })
+    .filter(Boolean);
+  if (!chains.length) return null;
+
+  const distTo = (pt, chain) => distanceToChain(pt, chain);
+  const nearest = (pt) => {
+    let best = 0, bd = Infinity;
+    chains.forEach((c, i) => {
+      const d = distTo(pt, c);
+      if (d < bd) { bd = d; best = i; }
+    });
+    return best;
+  };
+  // How far a strip at this station reaches to one side before it leaves the lift, or before the
+  // ground stops belonging to this alignment.
+  // Reaches to the edge of the lift, and NOT cut short where the ground starts being nearer another
+  // alignment. Nearest decides which road lays a strip at all (below); using it here as well cut the
+  // strips either side of a junction down to a fraction of the corridor — 5.0 m and 5.5 m against a
+  // 8.5-9.8 m norm — and left the seam covered by neither road. The strips either side of a junction
+  // now overlap a little instead, which is the case where overlap is expected and fine.
+  // Stops at the edge of the lift, or shortly after the ground stops being nearest THIS alignment.
+  //
+  // The ownership test has to be here: without it the perpendicular at a junction runs straight up
+  // the other branch and the strip is cut to match — the 34 m diagonals this layout exists to remove.
+  // But stopping dead on it cut the strips either side of a junction to a fraction of the corridor
+  // (5.0 m and 5.5 m against an 8.5-9.8 m norm) and left the seam covered by neither road. So a strip
+  // may carry on a little past that line — half its own width, no more — which closes the seam by
+  // overlapping the neighbouring road rather than leaving a hole. That is the case where overlap is
+  // expected and fine, and the allowance is bounded by the strip itself so it can never run away.
+  const reachFrom = (ci, origin, normal, sign) => {
+    const STEP = 0.25;
+    const allowance = w / 2;
+    let u = 0;
+    let past = null;
+    for (let k = 0; k < 400; k++) {
+      const next = u + sign * STEP;
+      const q = { x: origin.x + normal.x * next, y: origin.y + normal.y * next };
+      if (!pointInPolygon(q.x, q.y, poly)) break;
+      if (nearest(q) !== ci) {
+        if (past === null) past = Math.abs(next);
+        if (Math.abs(next) - past >= allowance) break;
+      }
+      u = next;
+    }
+    return u;
+  };
+
+  const pitch = Math.max(w - oMin, 0.01);
+  const cutLengths = [], stitches = [], extentsReach = [], frontReach = [], stripWidths = [];
+  const stripStarts = [], stripLocalStarts = [], stripSegmentIndex = [], stripDirs = [], stripIsStitch = [];
+  let flat = 0;
+  chains.forEach((chain, ci) => {
+    for (let s = w / 2; s - w / 2 <= chain.length + 1e-9; s += pitch) {
+      const station = Math.min(s, chain.length);
+      const pt = pointAtStationExtrapolated(chain, station);
+      const tangent = pt.tangent || chain.dir;
+      const normal = inwardNormal(tangent);
+      if (!pointInPolygon(pt.x, pt.y, poly) || nearest(pt) !== ci) continue;
+      const far = reachFrom(ci, pt, normal, 1);
+      const near = reachFrom(ci, pt, normal, -1);
+      if (far - near < MIN_STRIP_LENGTH) continue;
+      cutLengths.push(roundToPracticalLength(far - near, ROUND_STEP));
+      stitches.push([]);
+      extentsReach.push(far);
+      frontReach.push(near);
+      stripWidths.push(w);
+      stripStarts.push(flat + station);
+      stripLocalStarts.push(Math.max(0, station - w / 2));
+      stripSegmentIndex.push(ci);
+      stripDirs.push({ x: tangent.x, y: tangent.y });
+      stripIsStitch.push(false);
+    }
+    flat += chain.length;
+  });
+  if (!cutLengths.length) return null;
+
+  return {
+    poly,
+    face: chains[0],
+    back: chains[0],
+    faceIndex: 0,
+    faceLength: chains.reduce((a, c) => a + c.length, 0),
+    n: cutLengths.length,
+    overlap: oMin,
+    stripStarts,
+    materialWidth: stripWidths.reduce((a, b) => a + b, 0),
+    cutLengths,
+    stitches,
+    extentsReach,
+    frontReach,
+    stripWidths,
+    polygonArea: Math.abs(signedArea(poly)),
+    cornerSegments: chains,
+    stripSegmentIndex,
+    stripLocalStarts,
+    stripDirs,
+    stripIsStitch,
+    centrelineMode: true,
+    lastStripAutoTurns: false,
+    firstStripCanTurn: false,
+    lastStripCanTurn: false,
+  };
+}
+
+/** Shortest distance from a point to a chain of edges. */
+function distanceToChain(pt, chain) {
+  let best = Infinity;
+  for (const e of chain.edges) {
+    const vx = e.to.x - e.from.x, vy = e.to.y - e.from.y;
+    const len2 = vx * vx + vy * vy;
+    let t = len2 > 1e-12 ? ((pt.x - e.from.x) * vx + (pt.y - e.from.y) * vy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const dx = pt.x - (e.from.x + vx * t), dy = pt.y - (e.from.y + vy * t);
+    const d = dx * dx + dy * dy;
+    if (d < best) best = d;
+  }
+  return Math.sqrt(best);
+}
+
+function parseDXFPaths(text) {
+  const linesRaw = text.split(/\r?\n/);
+  const pairs = [];
+  for (let i = 0; i + 1 < linesRaw.length; i += 2) {
+    const code = parseInt(linesRaw[i].trim(), 10);
+    const value = linesRaw[i + 1] !== undefined ? linesRaw[i + 1].trim() : "";
+    if (Number.isFinite(code)) pairs.push({ code, value });
+  }
+
+  const paths = [];
+  let inEntities = false;
+  let buf = null;
+  let polylineOpen = null;
+
+  const flushLwVertex = () => {
+    if (buf && buf.type === "LWPOLYLINE" && buf._x !== undefined) {
+      buf.pts.push({ x: buf._x, y: buf._y ?? 0, bulge: buf._bulge || 0 });
+      buf._x = undefined;
+      buf._bulge = undefined;
+    }
+  };
+  const finishPath = (entity) => {
+    if (!entity || !entity.pts || entity.pts.length < 2) return;
+    const pts = entity.pts.slice();
+    const first = pts[0], last = pts[pts.length - 1];
+    const endpointsCoincide = Math.hypot(last.x - first.x, last.y - first.y) < 1e-6;
+    if (entity.flags & 1 || endpointsCoincide) return; // a closed loop is not an alignment
+    const expanded = [];
+    for (let i = 0; i < pts.length; i++) {
+      expanded.push({ x: pts[i].x, y: pts[i].y });
+      if (i + 1 < pts.length && pts[i].bulge) expanded.push(...tessellateBulge(pts[i], pts[i + 1], pts[i].bulge));
+    }
+    paths.push({ layer: entity.layer || "0", points: expanded });
+  };
+
+  for (let i = 0; i < pairs.length; i++) {
+    const { code, value } = pairs[i];
+    if (code === 0) {
+      if (buf && buf._vertexOf) {
+        buf._vertexOf.pts.push({ x: buf._x || 0, y: buf._y || 0, bulge: buf._bulge || 0 });
+      } else if (buf && buf.type === "LWPOLYLINE") {
+        flushLwVertex();
+        finishPath(buf);
+      } else if (buf && buf.type === "LINE" && buf._x1 !== undefined && buf._x2 !== undefined) {
+        paths.push({ layer: buf.layer || "0", points: [{ x: buf._x1, y: buf._y1 || 0 }, { x: buf._x2, y: buf._y2 || 0 }] });
+      }
+      if (value === "ENDSEC") {
+        inEntities = false;
+        if (polylineOpen) finishPath(polylineOpen);
+        polylineOpen = null;
+        buf = null;
+        continue;
+      }
+      if (value === "LWPOLYLINE") buf = { type: "LWPOLYLINE", layer: "0", pts: [], flags: 0 };
+      else if (value === "POLYLINE") { buf = { type: "POLYLINE", layer: "0", pts: [], flags: 0 }; polylineOpen = buf; }
+      else if (value === "VERTEX" && polylineOpen) buf = { _vertexOf: polylineOpen, _x: 0, _y: 0 };
+      else if (value === "SEQEND") { if (polylineOpen) finishPath(polylineOpen); polylineOpen = null; buf = null; }
+      else if (value === "LINE") buf = { type: "LINE", layer: "0" };
+      else buf = null;
+      continue;
+    }
+    if (code === 2 && value === "ENTITIES") { inEntities = true; continue; }
+    if (!inEntities || !buf) continue;
+
+    if (buf._vertexOf) {
+      if (code === 10) buf._x = parseFloat(value);
+      if (code === 20) buf._y = parseFloat(value);
+      if (code === 42) buf._bulge = parseFloat(value);
+      continue;
+    }
+    if (buf.type === "LWPOLYLINE") {
+      if (code === 8) buf.layer = value;
+      if (code === 70) buf.flags = parseInt(value, 10);
+      if (code === 10) { flushLwVertex(); buf._x = parseFloat(value); }
+      if (code === 20) buf._y = parseFloat(value);
+      if (code === 42) buf._bulge = parseFloat(value);
+    } else if (buf.type === "POLYLINE") {
+      if (code === 8) buf.layer = value;
+      if (code === 70) buf.flags = parseInt(value, 10);
+    } else if (buf.type === "LINE") {
+      if (code === 8) buf.layer = value;
+      if (code === 10) buf._x1 = parseFloat(value);
+      if (code === 20) buf._y1 = parseFloat(value);
+      if (code === 11) buf._x2 = parseFloat(value);
+      if (code === 21) buf._y2 = parseFloat(value);
+    }
+  }
+  return paths;
+}
+
 /** Greedy first-fit-decreasing bin packing of strip lengths into fixed-length rolls. */
 /**
  * First-fit-decreasing bin packing of labelled pieces (which lift, which strip) onto fixed-length
@@ -1990,6 +2266,40 @@ settingsInputs.packSide.addEventListener("change", () => {
 settingsInputs.packSideValue.addEventListener("change", computeAndRender);
 settingsInputs.avoidStitches.addEventListener("change", computeAndRender);
 settingsInputs.reinforcementType.addEventListener("change", computeAndRender);
+
+{
+  const input = document.getElementById("dxfCentrelineInput");
+  const status = document.getElementById("dxfCentrelineStatus");
+  const clearBtn = document.getElementById("clearCentrelines");
+  if (input) {
+    input.addEventListener("change", async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      try {
+        const paths = parseDXFPaths(await file.text());
+        if (!paths.length) {
+          // Worth naming the likely cause: an alignment drawn as a closed loop is the one thing this
+          // deliberately rejects, and it is an easy mistake to make when tracing over a sealed area.
+          status.textContent = "No open paths found — a centreline must be an open polyline or line, not a closed loop.";
+          setCentrelines([]);
+        } else {
+          setCentrelines(paths.map((pth) => pth.points));
+        }
+        computeAndRender();
+      } catch (err) {
+        status.textContent = `Could not read that DXF: ${err.message}`;
+      } finally {
+        e.target.value = "";
+      }
+    });
+  }
+  if (clearBtn) {
+    clearBtn.addEventListener("click", () => {
+      setCentrelines([]);
+      computeAndRender();
+    });
+  }
+}
 
 /* ============================================================
    Products — an open-ended, editable list of rolled products (RE580, Strata, or whatever a job
@@ -2973,7 +3283,14 @@ function computeAndRender() {
         cp = computeManualCutPlan(row._extentsPoints, row._manualStrips, productSpecs, row._faceCycle, refDir, prevFaceDir);
       } else {
         const p = productFor(row);
-        cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle, refDir, packSide, stripSide, avoidStitches, prevFaceDir, floorMode, row._endOverrides) : null;
+        // A floor with road alignments loaded is laid out from those instead of from the boundary — see
+        // computeCentrelineCutPlan. Falls through to the ordinary layout when there is no alignment
+        // near this lift, so a partly-surveyed site still produces a plan for every lift.
+        cp = null;
+        if (floorMode && projectCentrelines.length && p.oMin < p.w) {
+          cp = computeCentrelineCutPlan(row._extentsPoints, projectCentrelines, p.w, p.oMin);
+        }
+        if (!cp) cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle, refDir, packSide, stripSide, avoidStitches, prevFaceDir, floorMode, row._endOverrides) : null;
         // How many stitch patches EVERY candidate face would produce, not just the active one — lets
         // the Face picker show the consequence of each option up front (see renderCutPlan) instead of
         // the user clicking through them blind to find the one with zero patches. Also records each
@@ -5107,10 +5424,15 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
   // u = distance along the OVERALL face direction, v = distance along its inward normal — a genuine
   // rotation of true world (x, y), not the arc-length flattening the ordinary diagram uses, so a real
   // bend between segments stays a real bend here instead of being straightened out.
-  const proj = (p) => ({
-    u: (p.x - overallOrigin.x) * face.dir.x + (p.y - overallOrigin.y) * face.dir.y,
-    v: (p.x - overallOrigin.x) * overallInward.x + (p.y - overallOrigin.y) * overallInward.y,
-  });
+  // A centreline plan is read against the site, not against a face: there is no face to lay
+  // left-to-right, and rotating the lift to fake one turns a Y-junction sideways and makes it
+  // unreadable next to the CAD it came from. Drawn in true plan orientation instead.
+  const proj = cutPlan.centrelineMode
+    ? (p) => ({ u: p.x - overallOrigin.x, v: p.y - overallOrigin.y })
+    : (p) => ({
+        u: (p.x - overallOrigin.x) * face.dir.x + (p.y - overallOrigin.y) * face.dir.y,
+        v: (p.x - overallOrigin.x) * overallInward.x + (p.y - overallOrigin.y) * overallInward.y,
+      });
 
   // Every strip's true world corner points, computed against its OWN segment's own direction — each
   // one independently correct regardless of which segment it's in, before any screen-space layout
@@ -6617,6 +6939,7 @@ function buildStateSnapshot() {
       baseLevel: settingsInputs.baseLevel.value,
       extendFace: settingsInputs.extendFace.checked,
       reinforcementType: settingsInputs.reinforcementType.value,
+      centrelines: projectCentrelines.length ? projectCentrelines : null,
       packSide: settingsInputs.packSide.checked,
       packSideValue: settingsInputs.packSideValue.value,
       avoidStitches: settingsInputs.avoidStitches.checked,
@@ -6655,6 +6978,7 @@ function applyStateSnapshot(state) {
   if (s.baseLevel != null) settingsInputs.baseLevel.value = s.baseLevel;
   if (s.extendFace != null) settingsInputs.extendFace.checked = !!s.extendFace;
   if (s.reinforcementType != null) settingsInputs.reinforcementType.value = s.reinforcementType;
+  setCentrelines(Array.isArray(s.centrelines) ? s.centrelines : []);
   if (s.packSideValue != null) settingsInputs.packSideValue.value = s.packSideValue;
   if (s.packSide != null) {
     settingsInputs.packSide.checked = !!s.packSide;

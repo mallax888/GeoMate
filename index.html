@@ -397,6 +397,20 @@
               </label>
               <span id="dxfExtentsStatus" class="cutplan-status"></span>
             </div>
+            <div class="cutplan-upload cutplan-upload--centreline">
+              <label class="btn btn--ghost btn--upload">
+                Upload road centrelines DXF
+                <input type="file" id="dxfCentrelineInput" accept=".dxf" hidden />
+              </label>
+              <span id="dxfCentrelineStatus" class="cutplan-status"></span>
+              <button type="button" id="clearCentrelines" class="btn btn--ghost" hidden>Clear</button>
+            </div>
+            <p class="hint hint--centreline">
+              Floor lifts only. Open polylines or lines — one per road. Strips then run perpendicular
+              to the nearest centreline instead of being set by the boundary, which is what the grid
+              wants: lengthwise across the traffic direction. Ground belongs to whichever centreline is
+              nearest, so two roads meet along that line rather than laying grid over each other.
+            </p>
           </div>
 
           <div class="cutplan-method">
