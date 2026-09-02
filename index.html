@@ -33,6 +33,9 @@
       <input type="text" id="projectName" value="Untitled cut-face reinforcement" />
     </label>
     <button id="newProjectBtn" class="btn btn--ghost" type="button" title="Clear everything and start a blank project">New</button>
+    <!-- Every explainer in the app is hidden until this is on. The controls are meant to read on their
+         own; the prose is there for the first time you meet one, not on every visit. -->
+    <button id="helpToggle" class="btn btn--ghost" type="button" aria-pressed="false" title="Show the notes under each setting">Help</button>
     <button id="themeToggle" class="btn btn--ghost" type="button" aria-label="Toggle color theme" title="Toggle color theme">
       <svg id="themeIconDark" viewBox="0 0 20 20" width="16" height="16"><path d="M10 2a8 8 0 108 8 6.5 6.5 0 01-8-8z" fill="currentColor"/></svg>
       <svg id="themeIconLight" viewBox="0 0 20 20" width="16" height="16" hidden><circle cx="10" cy="10" r="4" fill="currentColor"/><g stroke="currentColor" stroke-width="1.4"><path d="M10 1v2M10 17v2M1 10h2M17 10h2M3.5 3.5l1.4 1.4M15.1 15.1l1.4 1.4M3.5 16.5l1.4-1.4M15.1 4.9l1.4-1.4"/></g></svg>
@@ -74,12 +77,9 @@
             </table>
           </div>
           <p class="generator__hint">
-            Each product is its own roll spec — width, minimum overlap, roll length, cost, and an optional
-            wrap/lap allowance (extra length folded onto every strip's cut length, e.g. a wrap around the
-            compacted face and a lap under the next lift up — not modelled as a strip diagram detail, just
-            added straight onto the material length; leave at 0 for a product that doesn't need it). Pick
-            the product per lift with the selector next to its RL. A product already used on a lift can't
-            be deleted — reassign or delete those lifts first.
+            One row per roll spec. Wrap/lap is extra length added to every cut (a wrap round the face and
+            a lap under the next lift) — leave it 0 if you don't need it. Pick the product per lift next
+            to its RL; a product in use can't be deleted.
           </p>
           <p id="productSpecWarning" class="warning-text" hidden></p>
         </div>
@@ -123,28 +123,10 @@
       <span>Extend face length instead of spreading overlap</span>
     </label>
     <p class="generator__hint">
-      A face length rarely divides evenly into whole roll widths, so there's always some leftover —
-      normally spread thinly across every seam as extra overlap above the minimum. Turn this on and
-      every seam sits at exactly the minimum overlap instead, with the leftover pushed into the face
-      length itself (rounded up to whatever whole strips at that overlap actually cover) — the field
-      updates to the real as-built length. Only applies to manually-typed face lengths, not DXF
-      extents/benched/battered lifts, which are already bound to a real surveyed boundary. Applies to
-      whichever product a lift uses.
-    </p>
-    <label class="field">
-      <span>Reinforcement type</span>
-      <select id="reinforcementType">
-        <option value="wall">Wall</option>
-        <option value="floor">Floor</option>
-      </select>
-    </label>
-    <p class="generator__hint">
-      Wall: every straight run (no corner in it) fits flush at both ends, so a real tie-in point on
-      either side lands exactly on the design line — that costs a little extra overlap wherever the
-      length doesn't divide evenly. Floor: there's no wall face to tie into, just ground to blanket,
-      so every seam sits at exactly the minimum overlap instead and the last strip simply runs past
-      the far edge, same as a corner already does at every seam but the shared corner point itself.
-      Applies project-wide, to every DXF extents/benched/battered lift.
+      A face length rarely divides evenly into roll widths. Normally the leftover is spread across
+      every seam as extra overlap; turn this on and every seam sits at the minimum instead, with the
+      leftover added to the face length (the field updates to the as-built figure). Typed lengths
+      only — DXF lifts are already bound to a surveyed boundary.
     </p>
     <label class="field">
       <span>Strip 1 starts from</span>
@@ -154,54 +136,36 @@
       </select>
     </label>
     <p class="generator__hint">
-      Which end of the face strip 1 is numbered/packed from — set this to Right when the right-hand
-      tie-in is the critical reference point on site, so strip 1 is the first one rolled out from
-      there. On its own this just mirrors today's layout (same overlap-spreading, same strip
-      positions) so it counts from the opposite end — nothing physically moves. For DXF
-      extents/benched/battered lifts this is which end of the already-detected face strip 1 starts
-      against (use the "Face" picker on the Cut Plan tab to change <em>which edge</em> is treated as
-      the face in the first place); for a manually-typed length, every strip is the same depth
-      anyway so this only affects numbering/roll order, not the layout.
+      Which end of the face strip 1 is counted from — set it to the tie-in your crew works out from.
+      Nothing physically moves, only the numbering and roll order. To change <em>which edge</em> is
+      the face, use the Face picker on a Cut Plan card.
     </p>
     <label class="checkbox">
       <input type="checkbox" id="packSideToggle" />
       <span>Also force every strip to the same length (minimum overlap only)</span>
     </label>
     <p class="generator__hint" id="packSideHint" hidden>
-      Every strip is a full, uncut roll width, working in from the side above — strip 1 is always
-      flush against that side. Every seam, including the last, sits at exactly the minimum overlap —
-      never more. Whatever's left over once no more full-width strips fit isn't turned into extra
-      overlap or a narrower cut strip; the last strip just runs past the far edge of the design line
-      by that amount, same as any other roll off-cut. Unlike "Extend face length" above, this works
-      on DXF extents/benched/battered lifts too, not just manually-typed lengths. Takes priority over
-      "Extend face length" if both are turned on.
+      Every strip is a full roll width at exactly the minimum overlap, working in from the side
+      above. The leftover isn't spread or cut off — the last strip just runs past the far edge.
+      Works on DXF lifts too, and beats "Extend face length" if both are on.
     </p>
     <label class="checkbox">
       <input type="checkbox" id="avoidStitchesToggle" />
       <span>Never split into a stitch patch — extend the strip straight through instead</span>
     </label>
     <p class="generator__hint">
-      A stitch patch covers a pocket of true boundary sitting past a gap the main strip's single
-      straight cut can't reach in one piece — normally its own small supplementary piece, cut and
-      installed separately from the main strip beside it. Turn this on and every strip becomes one
-      continuous piece instead: its cut length stretches straight through any such gap out to the
-      true far reach, so nothing needs a second cut or a separate patch. Uses more material at the
-      gap (it's buried under the strip rather than trimmed to it), but every strip in every diagram,
-      list, and roll count is a single, ordinary piece — nothing marked as a stitch anywhere.
+      A stitch patch is a small separate piece covering a pocket the main strip's straight cut can't
+      reach. Turn this on and the strip runs straight through instead — one ordinary piece
+      everywhere, at the cost of some material buried at the gap.
     </p>
     <p class="generator__hint">
-      The Roll schedule packs strips onto the fewest possible rolls by pooling every lift together —
-      lowest waste, but any one roll can end up with pieces from lifts scattered right across the job.
-      Set a lift count here (e.g. 3) to only ever share a roll between that many <em>adjacent</em>
-      lifts — a bit more offcut, but each roll stays close to where it's actually used. Leave blank to
-      pool everything. Different products are always packed onto separate rolls regardless of this
-      setting — they're physically different rolls.
+      Rolls are packed across the whole job by default — least waste, but one roll can carry pieces
+      from lifts far apart. Set a number (say 3) to share a roll between that many adjacent lifts
+      only. Different products always get their own rolls.
     </p>
     <p class="generator__hint">
-      Base level is the RL fill started from, below the lowest lift — needed to work out that lift's
-      own fill volume (every lift above it uses the RL gap to the lift below, so only the bottom one
-      needs this). Leave blank if you don't need fill volumes, or don't mind the bottom lift missing
-      from the total.
+      The RL fill starts from, below the lowest lift — only needed for that lift's fill volume.
+      Leave blank if you don't need volumes.
     </p>
 
     <div class="generator">
@@ -397,11 +361,18 @@
               </label>
               <span id="dxfExtentsStatus" class="cutplan-status"></span>
             </div>
-            <div id="dxfTypePrompt" class="cutplan-typeprompt" hidden>
-              <span class="cutplan-typeprompt__q"></span>
-              <button type="button" class="btn btn--ghost" data-set-type="wall">Wall</button>
-              <button type="button" class="btn btn--ghost" data-set-type="floor">Floor</button>
-              <button type="button" class="cutplan-typeprompt__dismiss" aria-label="Dismiss">✕</button>
+            <!-- Wall or floor for the job. Asked here, next to the upload, because that is when it is
+                 known; it stays on afterwards so it can be changed without loading the file again.
+                 The select is the state every other part of the app already reads (settingsInputs,
+                 save/load, reset) — the buttons drive it, so nothing else had to change. -->
+            <div id="dxfTypePrompt" class="cutplan-typeprompt">
+              <span class="cutplan-typeprompt__q">Layout</span>
+              <button type="button" class="btn btn--ghost" data-set-type="wall" aria-pressed="true">Wall</button>
+              <button type="button" class="btn btn--ghost" data-set-type="floor" aria-pressed="false">Floor</button>
+              <select id="reinforcementType" class="sr-only" tabindex="-1" aria-hidden="true">
+                <option value="wall">Wall</option>
+                <option value="floor">Floor</option>
+              </select>
             </div>
             <div class="cutplan-upload cutplan-upload--centreline">
               <label class="btn btn--ghost btn--upload">
@@ -412,10 +383,9 @@
               <button type="button" id="clearCentrelines" class="btn btn--ghost" hidden>Clear</button>
             </div>
             <p class="hint hint--centreline">
-              Floor lifts only. Open polylines or lines — one per road. Strips then run perpendicular
-              to the nearest centreline instead of being set by the boundary, which is what the grid
-              wants: lengthwise across the traffic direction. Ground belongs to whichever centreline is
-              nearest, so two roads meet along that line rather than laying grid over each other.
+              Floor lifts only. One open polyline or line per road. Strips then run perpendicular to
+              the nearest centreline — lengthwise across the traffic — instead of being set by the
+              boundary, and two roads meet along the line between them.
             </p>
           </div>
 
@@ -496,7 +466,7 @@
 
     <div id="view3DPanel" class="view3d-panel" hidden>
       <div class="view3d-controls">
-        <p class="view3d-hint">Drag to rotate, scroll to zoom, or use the wheel top-right (angle = rotation, distance from centre = tilt). All lifts share one frame (aligned to the longest face) so their true relative shape and position carries over from the DXF — it's rotated to face front-on, not in survey coordinates.</p>
+        <p class="view3d-hint">Drag to rotate, scroll to zoom, or use the wheel top-right. All lifts share one frame aligned to the longest face, so their true relative shape and position carries over from the DXF — rotated front-on, not in survey coordinates.</p>
         <div class="view3d-controls__actions">
           <button id="view3DExportDxf" class="btn btn--ghost" type="button" disabled>Export DXF</button>
           <button id="view3DReset" class="btn btn--ghost" type="button">Reset view</button>
@@ -594,7 +564,7 @@
 
     <div id="rollScheduleView" class="roll-schedule-view" hidden>
       <div class="roll-schedule-head">
-        <p id="rollScheduleIntro" class="roll-schedule-intro">Every strip and stitch across every lift, pooled together and packed onto numbered rolls to get the least possible off-cut — not one roll per lift. A strip can share a roll with pieces from other levels, and a roll can supply pieces to more than one level.</p>
+        <p id="rollScheduleIntro" class="roll-schedule-intro">Every strip and stitch pooled and packed onto numbered rolls for the least off-cut — not one roll per lift, so a roll can supply pieces to several levels.</p>
         <div class="roll-schedule-head__actions">
           <button id="printRollLabelsBtn" class="btn btn--ghost" type="button" hidden>Print roll labels</button>
           <button id="printRollScheduleBtn" class="btn btn--ghost" type="button" hidden>Print / save PDF</button>
@@ -609,7 +579,7 @@
 
     <div id="linerView" class="liner-view" hidden>
       <div class="liner-head">
-        <p class="liner-intro">A separate calculator: lines a dug excavation — floor and battered sides — with a continuous layer to stop leachate reaching the natural ground, and works out how the rolls best lay across it. Assumes a rectangular floor with the same side slope on all four sides (a truncated-pyramid cell). Has its own roll width, minimum overlap and roll length below — a liner is usually a different product on different rolls from the geogrid reinforcement, so it's kept separate from the spec panel on the left rather than sharing it. Not part of the lift takeoff above, so it doesn't touch the Material schedule sidebar either.</p>
+        <p class="liner-intro">A separate calculator: lines a dug excavation — floor and battered sides — and works out how the rolls lay across it. Assumes a rectangular floor with the same side slope all round. Its own roll spec, and separate from the lift takeoff above.</p>
         <button id="linerResetBtn" class="btn btn--ghost" type="button">Reset</button>
       </div>
       <div class="liner-inputs liner-inputs--specs">
@@ -631,10 +601,8 @@
         <span>Extend face length instead of spreading overlap</span>
       </label>
       <p class="generator__hint">
-        Same idea as the takeoff table's own version of this setting — panels sit at exactly the
-        minimum overlap instead of a bit more, spread thin to divide evenly. The floor and wall
-        dimensions themselves never change (they're the real dug excavation), only how the panel
-        count's overlap is reported.
+        Panels sit at exactly the minimum overlap instead of a bit more. The excavation dimensions
+        never change, only how the overlap is reported.
       </p>
       <p id="linerSpecWarning" class="warning-text" hidden></p>
       <div class="liner-inputs">

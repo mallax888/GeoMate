@@ -612,7 +612,34 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 .generator__row { display: grid; grid-template-columns: 0.9fr 1.3fr 0.8fr; gap: 0.5rem; margin-bottom: 0.7rem; }
 .generator__row--pair { grid-template-columns: 1fr 1fr; }
 .generator__row .field__unit input { min-width: 0; }
-.generator__hint { font-size: 0.76rem; color: var(--ink-muted); margin: 0 0 0.7rem; }
+.generator__hint,
+.hint { font-size: 0.76rem; color: var(--ink-muted); margin: 0 0 0.7rem; }
+
+/* Explainers are opt-in — the Help button in the header turns them on, and the choice is remembered.
+   Every control is meant to read on its own; the prose is for the first time someone meets one, not
+   for every visit. Hidden rather than deleted, so nothing that was worth writing down is lost.
+   :not([hidden]) so a note the app itself keeps hidden (packSideHint) stays hidden with Help on. */
+.generator__hint,
+.hint,
+.view3d-hint,
+.sequence-intro,
+.roll-schedule-intro,
+.roll-table-note,
+.liner-intro,
+.cutplan-method ul { display: none; }
+body.show-help .generator__hint:not([hidden]),
+body.show-help .hint,
+body.show-help .view3d-hint,
+body.show-help .sequence-intro,
+body.show-help .roll-schedule-intro,
+body.show-help .roll-table-note,
+body.show-help .liner-intro { display: revert; }
+body.show-help .cutplan-method ul { display: flex; flex-direction: column; }
+#helpToggle[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+/* With the explainers off, the settings ran together — each one used to be spaced by the paragraph
+   underneath it. Puts that gap back on the control itself, only when there is no paragraph there. */
+body:not(.show-help) .panel--settings > .checkbox,
+body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
 .generator > .field { margin-bottom: 0.7rem; }
 .generator__btnrow { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 .btn--danger { color: var(--critical); border-color: var(--critical); }
@@ -1056,11 +1083,11 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 .cutplan-method__title svg { flex: none; opacity: 0.85; }
 .cutplan-method p { margin: 0 0 0.8rem; }
+/* No display here — whether this list shows at all is the Help toggle's business (see .show-help
+   above), and a display declared this far down the file would quietly win over it. */
 .cutplan-method ul {
   margin: 0 0 0.8rem;
   padding-left: 1.1rem;
-  display: flex;
-  flex-direction: column;
   gap: 0.35rem;
 }
 .cutplan-method ul li::marker { color: var(--accent); }
@@ -1088,8 +1115,10 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   border-left: 3px solid var(--accent);
   border-radius: 6px;
   background: var(--surface-2);
+  width: fit-content;
+  max-width: 100%;
 }
-.cutplan-typeprompt__q { font-size: 0.8rem; margin-right: auto; }
+.cutplan-typeprompt__q { font-size: 0.8rem; }
 .cutplan-typeprompt .btn.is-current { border-color: var(--accent); color: var(--accent); font-weight: 700; }
 .cutplan-typeprompt__dismiss {
   background: transparent;

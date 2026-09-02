@@ -30,6 +30,26 @@ if ("serviceWorker" in navigator) {
 }
 
 /* ============================================================
+   Help toggle — every explainer in the app is hidden until this is on (see the .show-help rules in
+   style.css). Off by default: someone who already knows what a minimum overlap is shouldn't have to
+   scroll past a paragraph saying so to reach the next field. Remembered per browser.
+   ============================================================ */
+(function initHelp() {
+  const btn = document.getElementById("helpToggle");
+  if (!btn) return;
+  const apply = (on) => {
+    document.body.classList.toggle("show-help", on);
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+  };
+  apply(localStorage.getItem("geogrid-help") === "on");
+  btn.addEventListener("click", () => {
+    const on = btn.getAttribute("aria-pressed") !== "true";
+    apply(on);
+    localStorage.setItem("geogrid-help", on ? "on" : "off");
+  });
+})();
+
+/* ============================================================
    Theme toggle
    ============================================================ */
 (function initTheme() {
@@ -2287,18 +2307,26 @@ settingsInputs.packSideValue.addEventListener("change", computeAndRender);
 settingsInputs.avoidStitches.addEventListener("change", computeAndRender);
 settingsInputs.reinforcementType.addEventListener("change", computeAndRender);
 
-/* Wall-or-floor, asked next to the upload that just landed. The setting itself lives in Settings and
- * is easy to leave on the last job's answer, but it decides the whole layout. Nothing here is
- * blocking: the strips are already laid either way, and answering re-lays them on the spot. */
+/* Wall or floor. The bar lives next to the uploads and is always there — asking the question is just
+ * a change of wording on it, so answering never makes the control disappear. Nothing blocks: the
+ * strips are laid either way, and picking re-lays them on the spot. */
+function markReinforcementType() {
+  const bar = document.getElementById("dxfTypePrompt");
+  if (!bar) return;
+  const current = settingsInputs.reinforcementType.value;
+  bar.querySelectorAll("[data-set-type]").forEach((btn) => {
+    const on = btn.dataset.setType === current;
+    btn.classList.toggle("is-current", on);
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+}
+
 function askReinforcementType(question) {
   const bar = document.getElementById("dxfTypePrompt");
   if (!bar) return;
   bar.querySelector(".cutplan-typeprompt__q").textContent = question;
-  const current = settingsInputs.reinforcementType.value;
-  bar.querySelectorAll("[data-set-type]").forEach((btn) => {
-    btn.classList.toggle("is-current", btn.dataset.setType === current);
-  });
-  bar.hidden = false;
+  bar.classList.add("is-asking");
+  markReinforcementType();
 }
 
 {
@@ -2306,12 +2334,14 @@ function askReinforcementType(question) {
   if (bar) {
     bar.addEventListener("click", (e) => {
       const pick = e.target.closest("[data-set-type]");
-      if (pick) {
-        settingsInputs.reinforcementType.value = pick.dataset.setType;
-        computeAndRender();
-      }
-      if (pick || e.target.closest(".cutplan-typeprompt__dismiss")) bar.hidden = true;
+      if (!pick) return;
+      settingsInputs.reinforcementType.value = pick.dataset.setType;
+      bar.querySelector(".cutplan-typeprompt__q").textContent = "Layout";
+      bar.classList.remove("is-asking");
+      markReinforcementType();
+      computeAndRender();
     });
+    markReinforcementType();
   }
 }
 
@@ -7057,6 +7087,7 @@ function applyStateSnapshot(state) {
   if (s.baseLevel != null) settingsInputs.baseLevel.value = s.baseLevel;
   if (s.extendFace != null) settingsInputs.extendFace.checked = !!s.extendFace;
   if (s.reinforcementType != null) settingsInputs.reinforcementType.value = s.reinforcementType;
+  markReinforcementType();
   setCentrelines(Array.isArray(s.centrelines) ? s.centrelines : []);
   if (s.packSideValue != null) settingsInputs.packSideValue.value = s.packSideValue;
   if (s.packSide != null) {
@@ -7305,6 +7336,7 @@ document.getElementById("newProjectBtn").addEventListener("click", () => {
   settingsInputs.baseLevel.value = "";
   settingsInputs.extendFace.checked = false;
   settingsInputs.reinforcementType.value = "wall";
+  markReinforcementType();
   settingsInputs.packSide.checked = false;
   settingsInputs.packSideValue.value = "left";
   packSideHint.hidden = true;
