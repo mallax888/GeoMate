@@ -1951,35 +1951,23 @@ function computeCentrelineCutPlan(rawPoints, centrelines, w, oMin) {
     });
     return best;
   };
-  // How far a strip at this station reaches to one side before it leaves the lift, or before the
-  // ground stops belonging to this alignment.
-  // Reaches to the edge of the lift, and NOT cut short where the ground starts being nearer another
-  // alignment. Nearest decides which road lays a strip at all (below); using it here as well cut the
-  // strips either side of a junction down to a fraction of the corridor — 5.0 m and 5.5 m against a
-  // 8.5-9.8 m norm — and left the seam covered by neither road. The strips either side of a junction
-  // now overlap a little instead, which is the case where overlap is expected and fine.
-  // Stops at the edge of the lift, or shortly after the ground stops being nearest THIS alignment.
+  // How far a strip reaches to one side: to the edge of the lift, or to the line where the ground
+  // stops being nearest THIS alignment, whichever comes first.
   //
   // The ownership test has to be here: without it the perpendicular at a junction runs straight up
   // the other branch and the strip is cut to match — the 34 m diagonals this layout exists to remove.
-  // But stopping dead on it cut the strips either side of a junction to a fraction of the corridor
-  // (5.0 m and 5.5 m against an 8.5-9.8 m norm) and left the seam covered by neither road. So a strip
-  // may carry on a little past that line — half its own width, no more — which closes the seam by
-  // overlapping the neighbouring road rather than leaving a hole. That is the case where overlap is
-  // expected and fine, and the allowance is bounded by the strip itself so it can never run away.
+  // It stops dead on that line rather than running a little past it: a strip that overruns its own
+  // road lands at an angle across the neighbouring road's strips, which is the mess a crew has to
+  // sort out on the ground. Each road now ends cleanly on its own boundary and the pocket left in
+  // the middle of the junction is covered by its own pieces (see the junction pass below).
   const reachFrom = (ci, origin, normal, sign) => {
     const STEP = 0.25;
-    const allowance = w / 2;
     let u = 0;
-    let past = null;
     for (let k = 0; k < 400; k++) {
       const next = u + sign * STEP;
       const q = { x: origin.x + normal.x * next, y: origin.y + normal.y * next };
       if (!pointInPolygon(q.x, q.y, poly)) break;
-      if (nearest(q) !== ci) {
-        if (past === null) past = Math.abs(next);
-        if (Math.abs(next) - past >= allowance) break;
-      }
+      if (nearest(q) !== ci) break;
       u = next;
     }
     return u;
@@ -2032,6 +2020,104 @@ function computeCentrelineCutPlan(rawPoints, centrelines, w, oMin) {
     }
     flat += chain.length;
   });
+
+  // The junction. Each road stops on its own boundary, which leaves the pocket in the middle of a
+  // fork covered by neither — so it gets its own pieces, squared to whichever road is nearest, the
+  // way a crew would patch it rather than by dragging a road's own strips across the seam.
+  {
+    const xs = poly.map((p) => p.x), ys = poly.map((p) => p.y);
+    const GRID = 0.5;
+    const key = (i, j) => `${i},${j}`;
+    const open = new Map();
+    const i0 = Math.floor(Math.min(...xs) / GRID), i1 = Math.ceil(Math.max(...xs) / GRID);
+    const j0 = Math.floor(Math.min(...ys) / GRID), j1 = Math.ceil(Math.max(...ys) / GRID);
+    for (let i = i0; i <= i1; i++) {
+      for (let j = j0; j <= j1; j++) {
+        const q = { x: (i + 0.5) * GRID, y: (j + 0.5) * GRID };
+        if (!pointInPolygon(q.x, q.y, poly)) continue;
+        if (alreadyCovered(q)) continue;
+        open.set(key(i, j), q);
+      }
+    }
+    // Connected pockets, so two separate holes never get merged into one impossible patch.
+    const seen = new Set();
+    const pockets = [];
+    open.forEach((_, k) => {
+      if (seen.has(k)) return;
+      const stack = [k];
+      const cells = [];
+      seen.add(k);
+      while (stack.length) {
+        const cur = stack.pop();
+        const q = open.get(cur);
+        cells.push(q);
+        const [ci2, cj2] = cur.split(",").map(Number);
+        [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([di, dj]) => {
+          const nk = key(ci2 + di, cj2 + dj);
+          if (open.has(nk) && !seen.has(nk)) { seen.add(nk); stack.push(nk); }
+        });
+      }
+      pockets.push(cells);
+    });
+
+    const MIN_POCKET_AREA = 2; // m² — below this it is a rounding sliver, not a piece of grid
+    pockets.forEach((cells) => {
+      if (cells.length * GRID * GRID < MIN_POCKET_AREA) return;
+      // Only a pocket that straddles two roads gets patched — that is a junction, and neither road
+      // owns it. A pocket belonging to one road is the wedge left on the outside of a bend between
+      // two square strips: unavoidable with rectangular grid, and covering it means laying a piece
+      // over ground the strips either side already reach. Left as it is, the way the drawing does.
+      const owners = new Set(cells.map((q) => nearest(q)));
+      if (owners.size < 2) return;
+      const cx = cells.reduce((a, q) => a + q.x, 0) / cells.length;
+      const cy = cells.reduce((a, q) => a + q.y, 0) / cells.length;
+      const ci = nearest({ x: cx, y: cy });
+      const chain = chains[ci];
+      // Where this pocket sits along its road, and how far it runs either side of that.
+      let best = 0, bd = Infinity;
+      for (let s = 0; s <= chain.length; s += 0.5) {
+        const p = pointAtStationExtrapolated(chain, s);
+        const d = (p.x - cx) ** 2 + (p.y - cy) ** 2;
+        if (d < bd) { bd = d; best = s; }
+      }
+      const anchor = pointAtStationExtrapolated(chain, best);
+      const tan = anchor.tangent || chain.dir;
+      let aMin = Infinity, aMax = -Infinity;
+      cells.forEach((q) => {
+        const a = (q.x - anchor.x) * tan.x + (q.y - anchor.y) * tan.y;
+        aMin = Math.min(aMin, a);
+        aMax = Math.max(aMax, a);
+      });
+      const pieces = Math.max(1, Math.ceil((aMax - aMin) / pitch));
+      for (let k = 0; k < pieces; k++) {
+        const station = best + aMin + w / 2 + k * pitch;
+        const pt = pointAtStationExtrapolated(chain, Math.max(0, Math.min(chain.length, station)));
+        const tangent = pt.tangent || chain.dir;
+        const normal = inwardNormal(tangent);
+        let near = Infinity, far = -Infinity;
+        cells.forEach((q) => {
+          const along = (q.x - pt.x) * tangent.x + (q.y - pt.y) * tangent.y;
+          if (Math.abs(along) > w / 2) return;
+          const across = (q.x - pt.x) * normal.x + (q.y - pt.y) * normal.y;
+          near = Math.min(near, across - GRID / 2);
+          far = Math.max(far, across + GRID / 2);
+        });
+        if (!(far - near >= MIN_STRIP_LENGTH)) continue;
+        cutLengths.push(roundToPracticalLength(far - near, ROUND_STEP));
+        stitches.push([]);
+        extentsReach.push(far);
+        frontReach.push(near);
+        stripWidths.push(w);
+        stripStarts.push(station);
+        stripLocalStarts.push(Math.max(0, station - w / 2));
+        stripSegmentIndex.push(ci);
+        stripDirs.push({ x: tangent.x, y: tangent.y });
+        stripIsStitch.push(true);
+        laid.push({ c: { x: pt.x, y: pt.y }, d: tangent, n: normal, near, far });
+      }
+    });
+  }
+
   if (!cutLengths.length) return null;
 
   return {
