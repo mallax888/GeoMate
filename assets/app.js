@@ -2021,9 +2021,56 @@ function computeCentrelineCutPlan(rawPoints, centrelines, w, oMin) {
     flat += chain.length;
   });
 
-  // The junction. Each road stops on its own boundary, which leaves the pocket in the middle of a
-  // fork covered by neither — so it gets its own pieces, squared to whichever road is nearest, the
-  // way a crew would patch it rather than by dragging a road's own strips across the seam.
+  // The junction, first pass: reach into it with the strips that are already there. A strip beside
+  // the pocket simply runs on — a longer cut off the same roll — until it meets grid that is already
+  // down or the edge of the lift. Cheaper on site than a separate piece, and it is what a crew does
+  // anyway. Only where the whole width of the strip stays on bare ground, so a strip never creeps
+  // over its neighbour to reach a hole beyond it.
+  {
+    const EXT_STEP = 0.25;
+    const coveredByOther = (q, self) =>
+      laid.some((b, k) => {
+        if (k === self) return false;
+        const ax = q.x - b.c.x, ay = q.y - b.c.y;
+        const along = ax * b.d.x + ay * b.d.y;
+        const across = ax * b.n.x + ay * b.n.y;
+        return Math.abs(along) <= w / 2 + 1e-9 && across >= b.near - 1e-9 && across <= b.far + 1e-9;
+      });
+    const OFFSETS = [-0.45, -0.2, 0, 0.2, 0.45];
+    laid.forEach((b, i) => {
+      const grow = (sign) => {
+        let u = sign > 0 ? b.far : b.near;
+        for (let k = 0; k < 200; k++) {
+          const next = u + sign * EXT_STEP;
+          // Most of the strip's width has to be landing on bare ground inside the lift — not all of
+          // it. Demanding all five points be clear stopped every strip dead on its own boundary,
+          // because the corner of a strip meets the neighbouring road's grid before its middle does.
+          const clear = OFFSETS.filter((f) => {
+            const q = {
+              x: b.c.x + b.d.x * (f * w) + b.n.x * next,
+              y: b.c.y + b.d.y * (f * w) + b.n.y * next,
+            };
+            return pointInPolygon(q.x, q.y, poly) && !coveredByOther(q, i);
+          }).length;
+          if (clear < 3) break;
+          u = next;
+        }
+        return u;
+      };
+      const far = grow(1);
+      const near = grow(-1);
+      if (far - b.far > 1e-9 || b.near - near > 1e-9) {
+        b.far = far;
+        b.near = near;
+        extentsReach[i] = far;
+        frontReach[i] = near;
+        cutLengths[i] = roundToPracticalLength(far - near, ROUND_STEP);
+      }
+    });
+  }
+
+  // Anything the strips either side still cannot reach — a pocket behind a bend, or one whose whole
+  // width never lines up with a strip — gets its own piece, squared to whichever road is nearest.
   {
     const xs = poly.map((p) => p.x), ys = poly.map((p) => p.y);
     const GRID = 0.5;
@@ -2131,6 +2178,46 @@ function computeCentrelineCutPlan(rawPoints, centrelines, w, oMin) {
         remaining = remaining.filter((q) => !done.has(q));
       }
     });
+  }
+
+  // Last pass: throw out any piece the others have already covered. Two roads both lay strips near a
+  // fork, and once each one has been extended into the pocket some of them end up sitting on ground
+  // that is already grid — a strip over a strip over a strip, which is waste on the schedule and
+  // unreadable on the drawing. A piece with almost nothing of its own left to do comes out. Dropped
+  // one at a time, worst first, because removing one gives its neighbours back their reason to exist.
+  {
+    const REDUNDANT = 0.85; // of its own area already under other grid
+    const SAMPLE = 0.4;
+    const areaOf = (i) => {
+      const b = laid[i];
+      let own = 0, dup = 0;
+      for (let a = -w / 2; a <= w / 2; a += SAMPLE) {
+        for (let c = b.near; c <= b.far; c += SAMPLE) {
+          const q = { x: b.c.x + b.d.x * a + b.n.x * c, y: b.c.y + b.d.y * a + b.n.y * c };
+          if (!pointInPolygon(q.x, q.y, poly)) continue;
+          own += 1;
+          const covered = laid.some((o, k) => {
+            if (k === i) return false;
+            const ax = q.x - o.c.x, ay = q.y - o.c.y;
+            const along = ax * o.d.x + ay * o.d.y;
+            const across = ax * o.n.x + ay * o.n.y;
+            return Math.abs(along) <= w / 2 + 1e-9 && across >= o.near - 1e-9 && across <= o.far + 1e-9;
+          });
+          if (covered) dup += 1;
+        }
+      }
+      return own ? dup / own : 1;
+    };
+    for (let pass = 0; pass < laid.length; pass++) {
+      let worst = -1, worstShare = 0;
+      for (let i = 0; i < laid.length; i++) {
+        const share = areaOf(i);
+        if (share > worstShare) { worstShare = share; worst = i; }
+      }
+      if (worst < 0 || worstShare < REDUNDANT || laid.length <= 1) break;
+      [cutLengths, stitches, extentsReach, frontReach, stripWidths, stripStarts, stripLocalStarts,
+        stripSegmentIndex, stripDirs, stripIsStitch, laid].forEach((arr) => arr.splice(worst, 1));
+    }
   }
 
   if (!cutLengths.length) return null;
