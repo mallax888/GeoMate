@@ -2062,6 +2062,141 @@ function computeCentrelineCutPlan(rawPoints, centrelines, w, oMin) {
   };
 }
 
+/* A floor with no alignments supplied. The longest run in the extents sets one bearing for the whole
+ * lift: every strip is perpendicular to it, and therefore parallel to every other strip, which is
+ * what a crew can actually roll out. Nothing is supplied and nothing fans — the price is that a leg
+ * running off at an angle gets strips at the main run's bearing rather than its own, which on a floor
+ * is a trim, not a redesign.
+ *
+ * Each strip is the chord the extents cut across that bearing, so a strip is exactly as long as the
+ * ground is wide there. Where the extents pinch into two separate pockets at one station, each pocket
+ * gets its own strip rather than one strip bridging the gap between them. */
+/* How far a floor strip may run past the chord at its own centre to pick up a taper across its width.
+ * An armful of grid trimmed on site; anything more is material cut for nothing. */
+const FLOOR_OVERRUN = 1.5;
+
+function computeParallelCutPlan(rawPoints, w, oMin) {
+  if (!(w > 0) || !(oMin >= 0) || oMin >= w) return null;
+  const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
+  const runChain = candidateFaceChains(poly)[0];
+  if (!runChain) return null;
+  const run = runChain.dir;
+  const across = inwardNormal(run);
+
+  // Where the lift starts and ends along the run, and a lateral origin near the middle of it so the
+  // reaches either side of the line come out balanced rather than all measured off one edge.
+  let sMin = Infinity, sMax = -Infinity, tSum = 0;
+  poly.forEach((p) => {
+    const s = p.x * run.x + p.y * run.y;
+    sMin = Math.min(sMin, s);
+    sMax = Math.max(sMax, s);
+    tSum += p.x * across.x + p.y * across.y;
+  });
+  const tMid = tSum / poly.length;
+  const origin = { x: run.x * sMin + across.x * tMid, y: run.y * sMin + across.y * tMid };
+
+  // Every piece of ground the sweep line crosses at this station, as offsets along `across` from the
+  // sweep line's own origin point. Two pockets at one station come back as two intervals.
+  const chordsAt = (s) => {
+    const ox = origin.x + run.x * s, oy = origin.y + run.y * s;
+    const ts = [];
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const a = poly[j], b = poly[i];
+      const da = (a.x - ox) * run.x + (a.y - oy) * run.y;
+      const db = (b.x - ox) * run.x + (b.y - oy) * run.y;
+      if (da > 0 === db > 0) continue;
+      const f = da / (da - db);
+      const px = a.x + (b.x - a.x) * f, py = a.y + (b.y - a.y) * f;
+      ts.push((px - ox) * across.x + (py - oy) * across.y);
+    }
+    ts.sort((x, y) => x - y);
+    const out = [];
+    for (let k = 0; k + 1 < ts.length; k += 2) out.push([ts[k], ts[k + 1]]);
+    return out;
+  };
+
+  const pitch = Math.max(w - oMin, 0.01);
+  const runLength = sMax - sMin;
+  const cutLengths = [], stitches = [], extentsReach = [], frontReach = [], stripWidths = [];
+  const stripStarts = [], stripLocalStarts = [], stripSegmentIndex = [], stripDirs = [], stripIsStitch = [];
+  const chainStart = sMin - w;
+
+  for (let s = w / 2; s - w / 2 <= runLength + 1e-9; s += pitch) {
+    // The last strip is pulled back to finish flush with the end of the lift instead of hanging past
+    // it, so the run ends on covered ground rather than on an offcut.
+    const station = Math.min(s, Math.max(w / 2, runLength - w / 2));
+    chordsAt(station).forEach(([lo0, hi0]) => {
+      // The chord is measured at the strip's centre, but the strip is w wide: sampling across its
+      // width and taking the widest reach means a tapering edge is covered to its true extent rather
+      // than to whatever the centreline of the strip happened to catch. Floors have the leeway for
+      // it; the alternative is a sliver of bare ground down every taper.
+      let lo = lo0, hi = hi0;
+      [-w / 2, -w / 4, w / 4, w / 2].forEach((off) => {
+        const at = station + off;
+        if (at < 0 || at > runLength) return;
+        chordsAt(at).forEach(([a, b]) => {
+          if (b > lo0 && a < hi0) { lo = Math.min(lo, a); hi = Math.max(hi, b); }
+        });
+      });
+      // Capped, or a strip at the pointed end of a lift takes the whole width of the widest station
+      // it touches and ends up mostly hanging off the ground it is supposed to cover. Past the edge
+      // by an armful is a trim on site; past it by ten metres is a strip cut for nothing.
+      lo = Math.max(lo, lo0 - FLOOR_OVERRUN);
+      hi = Math.min(hi, hi0 + FLOOR_OVERRUN);
+      if (hi - lo < MIN_STRIP_LENGTH) return;
+      cutLengths.push(roundToPracticalLength(hi - lo, ROUND_STEP));
+      stitches.push([]);
+      frontReach.push(lo);
+      extentsReach.push(hi);
+      stripWidths.push(w);
+      stripStarts.push(station);
+      stripLocalStarts.push(station + (sMin - chainStart) - w / 2);
+      stripSegmentIndex.push(0);
+      stripDirs.push({ x: run.x, y: run.y });
+      stripIsStitch.push(false);
+    });
+    if (station >= runLength - w / 2) break;
+  }
+  if (!cutLengths.length) return null;
+
+  // One straight synthetic chain along the run, so the strips carry stations on it exactly the way a
+  // supplied centreline's would and the plan renderer needs no special case.
+  const from = { x: origin.x + run.x * (chainStart - sMin), y: origin.y + run.y * (chainStart - sMin) };
+  const chainLength = runLength + 2 * w;
+  const to = { x: from.x + run.x * chainLength, y: from.y + run.y * chainLength };
+  const chain = { edges: [{ x: run.x, y: run.y, len: chainLength, from, to }], length: chainLength, dir: run };
+
+  return {
+    poly,
+    face: chain,
+    back: chain,
+    faceIndex: 0,
+    faceLength: runLength,
+    n: cutLengths.length,
+    overlap: oMin,
+    stripStarts,
+    materialWidth: stripWidths.reduce((a, b) => a + b, 0),
+    cutLengths,
+    stitches,
+    extentsReach,
+    frontReach,
+    stripWidths,
+    polygonArea: Math.abs(signedArea(poly)),
+    cornerSegments: [chain],
+    stripSegmentIndex,
+    stripLocalStarts,
+    stripDirs,
+    stripIsStitch,
+    // Same as a centreline plan as far as the renderer is concerned: laid to the site, not to a face,
+    // so it is drawn in true plan orientation rather than rotated to lay a face out left to right.
+    centrelineMode: true,
+    parallelRun: true,
+    lastStripAutoTurns: false,
+    firstStripCanTurn: false,
+    lastStripCanTurn: false,
+  };
+}
+
 /** Shortest distance from a point to a chain of edges. */
 function distanceToChain(pt, chain) {
   let best = Infinity;
@@ -3373,6 +3508,11 @@ function computeAndRender() {
         if (floorMode && projectCentrelines.length && p.oMin < p.w) {
           cp = computeCentrelineCutPlan(row._extentsPoints, projectCentrelines, p.w, p.oMin);
         }
+        // No alignments supplied: the lift's own longest run sets the bearing instead, so a floor
+        // still gets parallel strips without anyone having to draw a centreline for every lift.
+        if (!cp && floorMode && p.oMin < p.w) {
+          cp = computeParallelCutPlan(row._extentsPoints, p.w, p.oMin);
+        }
         if (!cp) cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle, refDir, packSide, stripSide, avoidStitches, prevFaceDir, floorMode, row._endOverrides) : null;
         // How many stitch patches EVERY candidate face would produce, not just the active one — lets
         // the Face picker show the consequence of each option up front (see renderCutPlan) instead of
@@ -4029,7 +4169,7 @@ function buildCutPlanSvgMarkup(cutPlan, w, stripRollNumbers) {
   svg.setAttribute("viewBox", "0 0 400 260");
   svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
   svg.setAttribute("class", "cutplan-print-page__plan");
-  if (cutPlan.cornerSegments && cutPlan.cornerSegments.length > 1) {
+  if (cutPlan.centrelineMode || (cutPlan.cornerSegments && cutPlan.cornerSegments.length > 1)) {
     renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers);
   } else {
     renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers);
@@ -5083,7 +5223,10 @@ function renderCutPlan(results) {
     const svgEl = card.querySelector(".cutplan-card__plan");
     if (isManual) {
       renderCutPlanSvgManual(svgEl, r.cutPlan, productSpecs, activeProductId, id);
-    } else if (r.cutPlan.cornerSegments && r.cutPlan.cornerSegments.length > 1) {
+      // A plan-oriented layout goes to the true-geometry renderer even on a single segment: the flat
+      // one straightens the lift onto one axis, which is exactly what a plan laid to the site must
+      // not do — it turns a bent corridor into a rectangle nobody can match against the CAD.
+    } else if (r.cutPlan.centrelineMode || (r.cutPlan.cornerSegments && r.cutPlan.cornerSegments.length > 1)) {
       renderCutPlanSvgCornered(svgEl, r.cutPlan, r.w, stripRollNumbersFor(r, rollLookup));
     } else {
       renderCutPlanSvg(svgEl, r.cutPlan, r.w, stripRollNumbersFor(r, rollLookup));
