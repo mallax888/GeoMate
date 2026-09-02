@@ -4756,6 +4756,20 @@ cutPlanList.addEventListener("click", (e) => {
     return;
   }
 
+  // Face, end strips, manual build and delete all live behind this — four controls above every
+  // diagram, of which most days you touch none. Whatever a lift is set to still shows in the head.
+  const adjustBtn = e.target.closest(".cutplan-card__adjust");
+  if (adjustBtn) {
+    const row = window.__geogridRowsById.get(adjustBtn.dataset.rowId);
+    if (row) {
+      row._toolsOpen = !row._toolsOpen;
+      const tools = adjustBtn.closest(".cutplan-card").querySelector(".cutplan-card__tools");
+      if (tools) tools.hidden = !row._toolsOpen;
+      adjustBtn.setAttribute("aria-expanded", row._toolsOpen ? "true" : "false");
+    }
+    return;
+  }
+
   const undoBtn = e.target.closest(".cutplan-card__undo");
   if (undoBtn) {
     const row = window.__geogridRowsById.get(undoBtn.dataset.rowId);
@@ -4952,16 +4966,31 @@ function renderCutPlan(results) {
         ${modes.map(([v, label]) => `<option value="${v}" ${current === v ? "selected" : ""}>${label}</option>`).join("")}
       </select>`;
     };
-    const endStripBar = `<div class="cutplan-card__end-bar">
+    const endStripBar = `<span class="cutplan-card__end-bar">
       <span class="cutplan-card__end-title">End strips</span>
       <label class="cutplan-card__end-label">First ${endSelect("first")}</label>
       <label class="cutplan-card__end-label">Last ${endSelect("last")}</label>
-    </div>`;
+    </span>`;
+
+    // What this lift has been told to do differently, said in the head so collapsing the controls
+    // never hides a setting that is actually in force. Nothing here on a lift left alone.
+    const endLabel = (which) => (endModes(which).find(([v]) => v === endOv[which]) || [])[1];
+    const flags = [];
+    if (r.row._faceCycle != null) flags.push(`face ${faceIdx + 1}`);
+    if (endLabel("first")) flags.push(`first: ${endLabel("first").toLowerCase()}`);
+    if (endLabel("last")) flags.push(`last: ${endLabel("last").toLowerCase()}`);
+    // Kept open across renders — every change here triggers a full re-render, and a panel that shut
+    // itself after each click would make changing two things in a row a fight.
+    const toolsOpen = !!r.row._toolsOpen;
 
     card.innerHTML = `
       <div class="cutplan-card__head">
         <span class="cutplan-card__rl">RL ${escapeHtml(r.rl) || "—"}</span>
         <span class="cutplan-card__meta">${metaParts.join(" · ")}</span>
+        ${flags.length ? `<span class="cutplan-card__flags">${escapeHtml(flags.join(" · "))}</span>` : ""}
+        <button type="button" class="btn btn--ghost cutplan-card__adjust" data-row-id="${id}" aria-expanded="${toolsOpen}">Adjust</button>
+      </div>
+      <div class="cutplan-card__tools" ${toolsOpen ? "" : "hidden"}>
         <label class="cutplan-card__face-label">Face
           <select class="cutplan-card__face-select" data-row-id="${id}">
             ${faceChains
@@ -4977,10 +5006,10 @@ function renderCutPlan(results) {
               .join("")}
           </select>
         </label>
+        ${isManual ? "" : endStripBar}
         <button type="button" class="btn btn--ghost cutplan-card__manual-toggle" data-row-id="${id}">${isManual ? "Auto layout" : "Build manually"}</button>
-        <button type="button" class="cutplan-card__delete" data-row-id="${id}" data-rl="${escapeHtml(r.rl) || ""}" data-strips="${r.n}" title="Delete this lift" aria-label="Delete lift RL ${escapeHtml(r.rl) || "—"}">✕</button>
+        <button type="button" class="cutplan-card__delete" data-row-id="${id}" data-rl="${escapeHtml(r.rl) || ""}" data-strips="${r.n}" title="Delete this lift" aria-label="Delete lift RL ${escapeHtml(r.rl) || "—"}">Delete lift</button>
       </div>
-      ${isManual ? "" : endStripBar}
       ${
         isManual
           ? `<div class="cutplan-card__manual-toolbar">

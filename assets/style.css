@@ -1170,16 +1170,35 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
   white-space: nowrap;
 }
 
+/* Everything a lift can be told to do differently, folded away behind Adjust. The head keeps the RL,
+   the counts and a note of anything actually overridden; this row is only open while it is in use. */
+.cutplan-card__tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.9rem;
+  margin-bottom: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+/* Pushed to the far end, away from the settings — it is the one control here with no undo. */
+.cutplan-card__tools .cutplan-card__delete { font-size: 0.76rem; margin-left: auto; }
+.cutplan-card__flags {
+  font-size: 0.72rem;
+  color: var(--accent-strong);
+  background: var(--accent-tint);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+}
+.cutplan-card__adjust { margin-left: auto; font-size: 0.76rem; padding: 0.25rem 0.6rem; }
+.cutplan-card__adjust[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
 .cutplan-card__end-bar {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 0.5rem 0.75rem;
-  margin-bottom: 0.6rem;
-  padding: 0.4rem 0.6rem;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  background: var(--surface-2);
 }
 .cutplan-card__end-title {
   font-size: 0.72rem;
@@ -1284,7 +1303,10 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
   font-family: var(--font-mono);
   font-size: 0.76rem;
   font-variant-numeric: tabular-nums;
-  max-height: 160px;
+  /* 160px showed four strips of a twenty-strip lift beside a diagram three times that tall, so the
+     list was scrolled far more often than it needed to be. Capped high enough that an ordinary lift
+     reads in one go, and still capped so a 70-strip lift can't run the card off the screen. */
+  max-height: min(70vh, 480px);
   overflow-y: auto;
   overflow-x: auto;
   border: 1px solid var(--line);
@@ -1303,7 +1325,16 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
   min-width: max-content;
 }
 .cutplan-card__strips li:last-child { border-bottom: none; }
-.cutplan-card__strips li.is-stitch { justify-content: space-between; color: var(--accent-strong); background: var(--accent-tint); font-style: italic; }
+/* A stitch note is a sentence, not a row of fields: it wraps rather than inheriting the max-content
+   width above, which pushed the end of it out of the column behind a horizontal scroll. */
+.cutplan-card__strips li.is-stitch {
+  justify-content: space-between;
+  color: var(--accent-strong);
+  background: var(--accent-tint);
+  font-style: italic;
+  min-width: 0;
+  flex-wrap: wrap;
+}
 .cutplan-card__strip-label { flex: none; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-muted); }
 .cutplan-card__strip-chip {
   flex: none;
