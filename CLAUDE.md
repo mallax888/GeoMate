@@ -39,6 +39,31 @@ These come from the user directly. Violating them makes output wrong on site.
    pitch and lets the last strip overshoot (`minPitchLift`). Minimum overlap
    stays user-configurable in both modes because it is product-dependent.
    Corner segments (`segCount > 1`) always use minimum pitch regardless.
+5. **A floor is never laid off the boundary.** The boundary layout fans the
+   strips round every bend, which is the thing this app exists to avoid. A
+   floor uses one of two layouts instead, both drawn in true plan orientation
+   (`centrelineMode`, which is what sends a plan to `renderCutPlanSvgCornered`
+   even on a single segment — the flat renderer straightens a bent corridor
+   into a rectangle nobody can match against the CAD):
+   - **Road centrelines loaded** (`computeCentrelineCutPlan`) — strips square
+     to the nearest alignment. Ground belongs to whichever centreline is
+     nearest and a road stops dead on that line, so both sides of a fork end
+     square. Then strips grow into any ground no other strip covers, the piece
+     whose neighbours already cover ≥45% of it is dropped, and the survivors
+     grow again — alternating, because each move makes room for the other.
+     What is still bare and straddles two roads gets a patch piece
+     (`stripIsStitch`, drawn in the stitch colour).
+   - **No centrelines** (`computeParallelCutPlan`) — one bearing for the whole
+     lift, square to its longest run, so every strip is parallel to every
+     other. The Face picker chooses *which* run and is labelled "Run".
+   The user's standing instruction: on a floor, **extend the strips rather
+   than cut extra pieces, and small bare corners are fine.** Do not trade that
+   away for a coverage percentage.
+6. **A control that cannot act must not be shown.** The Face picker and the
+   end-strip overrides only mean something to the boundary layout, so they are
+   left out of the card on a centreline plan; the wedges left on the outside
+   of a bend are not patched, because a rectangle covering one lies on ground
+   the strips either side already reach.
 
 ## Architecture map (`assets/app.js`, ~6400 lines, no modules)
 
