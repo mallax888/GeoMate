@@ -2088,32 +2088,47 @@ function computeCentrelineCutPlan(rawPoints, centrelines, w, oMin) {
         aMin = Math.min(aMin, a);
         aMax = Math.max(aMax, a);
       });
-      const pieces = Math.max(1, Math.ceil((aMax - aMin) / pitch));
-      for (let k = 0; k < pieces; k++) {
-        const station = best + aMin + w / 2 + k * pitch;
-        const pt = pointAtStationExtrapolated(chain, Math.max(0, Math.min(chain.length, station)));
-        const tangent = pt.tangent || chain.dir;
-        const normal = inwardNormal(tangent);
-        let near = Infinity, far = -Infinity;
-        cells.forEach((q) => {
-          const along = (q.x - pt.x) * tangent.x + (q.y - pt.y) * tangent.y;
-          if (Math.abs(along) > w / 2) return;
-          const across = (q.x - pt.x) * normal.x + (q.y - pt.y) * normal.y;
-          near = Math.min(near, across - GRID / 2);
-          far = Math.max(far, across + GRID / 2);
-        });
-        if (!(far - near >= MIN_STRIP_LENGTH)) continue;
-        cutLengths.push(roundToPracticalLength(far - near, ROUND_STEP));
+      // Each piece goes where it covers the most ground that is still bare, then that ground comes
+      // off the list and the next piece is chosen against what is left. Stepping evenly across the
+      // pocket instead produced a middle piece whose neighbours already reached three quarters of
+      // it — 16 m² of grid cut to cover 4 m² of ground. Stops as soon as the best piece left would
+      // be doing less than a piece's worth of work.
+      let remaining = cells.filter((q) => !alreadyCovered(q));
+      for (let guard = 0; guard < 12 && remaining.length; guard++) {
+        let pick = null;
+        for (let a = aMin - w / 2; a <= aMax + w / 2 + 1e-9; a += pitch / 4) {
+          const station = Math.max(0, Math.min(chain.length, best + a));
+          const pt = pointAtStationExtrapolated(chain, station);
+          const tangent = pt.tangent || chain.dir;
+          const normal = inwardNormal(tangent);
+          let near = Infinity, far = -Infinity;
+          const served = [];
+          remaining.forEach((q) => {
+            const along = (q.x - pt.x) * tangent.x + (q.y - pt.y) * tangent.y;
+            if (Math.abs(along) > w / 2) return;
+            served.push(q);
+            const across = (q.x - pt.x) * normal.x + (q.y - pt.y) * normal.y;
+            near = Math.min(near, across - GRID / 2);
+            far = Math.max(far, across + GRID / 2);
+          });
+          const bare = served.length * GRID * GRID;
+          if (!served.length || far - near < MIN_STRIP_LENGTH) continue;
+          if (!pick || bare > pick.bare) pick = { station, pt, tangent, normal, near, far, served, bare };
+        }
+        if (!pick || pick.bare < MIN_POCKET_AREA) break;
+        cutLengths.push(roundToPracticalLength(pick.far - pick.near, ROUND_STEP));
         stitches.push([]);
-        extentsReach.push(far);
-        frontReach.push(near);
+        extentsReach.push(pick.far);
+        frontReach.push(pick.near);
         stripWidths.push(w);
-        stripStarts.push(station);
-        stripLocalStarts.push(Math.max(0, station - w / 2));
+        stripStarts.push(pick.station);
+        stripLocalStarts.push(Math.max(0, pick.station - w / 2));
         stripSegmentIndex.push(ci);
-        stripDirs.push({ x: tangent.x, y: tangent.y });
+        stripDirs.push({ x: pick.tangent.x, y: pick.tangent.y });
         stripIsStitch.push(true);
-        laid.push({ c: { x: pt.x, y: pt.y }, d: tangent, n: normal, near, far });
+        laid.push({ c: { x: pick.pt.x, y: pick.pt.y }, d: pick.tangent, n: pick.normal, near: pick.near, far: pick.far });
+        const done = new Set(pick.served);
+        remaining = remaining.filter((q) => !done.has(q));
       }
     });
   }
