@@ -2161,11 +2161,16 @@ function computeCentrelineCutPlan(rawPoints, centrelines, w, oMin) {
  * An armful of grid trimmed on site; anything more is material cut for nothing. */
 const FLOOR_OVERRUN = 1.5;
 
-function computeParallelCutPlan(rawPoints, w, oMin) {
+function computeParallelCutPlan(rawPoints, w, oMin, faceCycle) {
   if (!(w > 0) || !(oMin >= 0) || oMin >= w) return null;
   const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
-  const runChain = candidateFaceChains(poly)[0];
-  if (!runChain) return null;
+  const runs = candidateFaceChains(poly);
+  if (!runs.length) return null;
+  // The longest run by default, but the Face picker overrides it: on a floor that control means
+  // "run the strips square to this edge instead", which is the one call an engineer needs to make
+  // when the longest edge is not the one the traffic follows.
+  const runIdx = faceCycle == null ? 0 : ((faceCycle % runs.length) + runs.length) % runs.length;
+  const runChain = runs[runIdx];
   const run = runChain.dir;
   const across = inwardNormal(run);
 
@@ -2256,7 +2261,7 @@ function computeParallelCutPlan(rawPoints, w, oMin) {
     poly,
     face: chain,
     back: chain,
-    faceIndex: 0,
+    faceIndex: runIdx,
     faceLength: runLength,
     n: cutLengths.length,
     overlap: oMin,
@@ -3597,7 +3602,7 @@ function computeAndRender() {
         // No alignments supplied: the lift's own longest run sets the bearing instead, so a floor
         // still gets parallel strips without anyone having to draw a centreline for every lift.
         if (!cp && floorMode && p.oMin < p.w) {
-          cp = computeParallelCutPlan(row._extentsPoints, p.w, p.oMin);
+          cp = computeParallelCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle);
         }
         if (!cp) cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle, refDir, packSide, stripSide, avoidStitches, prevFaceDir, floorMode, row._endOverrides) : null;
         // How many stitch patches EVERY candidate face would produce, not just the active one — lets
@@ -3607,7 +3612,14 @@ function computeAndRender() {
         // candidateFaceChains reports — a corner poking out past a chain's own last vertex can add a
         // real amount onto it (see extendFaceToFullExtent), and showing the raw figure next to a
         // stitch count computed on the extended one told two different stories about the same option.
-        if (cp) {
+        // A plan laid to the site has no face and no stitch patches, so the boundary layout's numbers
+        // would describe a layout this lift is not using. The picker still means something on the
+        // longest-run layout — it is which run sets the bearing — so it lists the candidate runs by
+        // their own length, and means nothing at all on a centreline plan.
+        if (cp && cp.centrelineMode) {
+          row._faceStitchCounts = null;
+          row._faceLengths = cp.parallelRun ? candidateFaceChains(row._extentsPoints).map((c) => c.length) : null;
+        } else if (cp) {
           const chains = candidateFaceChains(row._extentsPoints);
           // With nothing explicitly clicked (_faceCycle null), cp comes from pickFaceAndBack, which
           // since the negative-depth safety check can land on a candidate other than index 0 ("the
@@ -5202,9 +5214,13 @@ function renderCutPlan(results) {
     // never hides a setting that is actually in force. Nothing here on a lift left alone.
     const endLabel = (which) => (endModes(which).find(([v]) => v === endOv[which]) || [])[1];
     const flags = [];
-    if (r.row._faceCycle != null) flags.push(`face ${faceIdx + 1}`);
-    if (endLabel("first")) flags.push(`first: ${endLabel("first").toLowerCase()}`);
-    if (endLabel("last")) flags.push(`last: ${endLabel("last").toLowerCase()}`);
+    if (r.row._faceCycle != null && !(r.cutPlan.centrelineMode && !r.cutPlan.parallelRun)) {
+      flags.push(`${r.cutPlan.parallelRun ? "run" : "face"} ${faceIdx + 1}`);
+    }
+    if (!r.cutPlan.centrelineMode) {
+      if (endLabel("first")) flags.push(`first: ${endLabel("first").toLowerCase()}`);
+      if (endLabel("last")) flags.push(`last: ${endLabel("last").toLowerCase()}`);
+    }
     // Kept open across renders — every change here triggers a full re-render, and a panel that shut
     // itself after each click would make changing two things in a row a fight.
     const toolsOpen = !!r.row._toolsOpen;
@@ -5217,7 +5233,13 @@ function renderCutPlan(results) {
         <button type="button" class="btn btn--ghost cutplan-card__adjust" data-row-id="${id}" aria-expanded="${toolsOpen}">Adjust</button>
       </div>
       <div class="cutplan-card__tools" ${toolsOpen ? "" : "hidden"}>
-        <label class="cutplan-card__face-label">Face
+        ${
+          // On a centreline plan the alignments set every bearing, so there is nothing for this to
+          // pick and it is left out rather than sitting there doing nothing when clicked. On the
+          // longest-run layout it picks WHICH run the strips are square to, so it is called that.
+          r.cutPlan.centrelineMode && !r.cutPlan.parallelRun
+            ? ""
+            : `<label class="cutplan-card__face-label">${r.cutPlan.parallelRun ? "Run" : "Face"}
           <select class="cutplan-card__face-select" data-row-id="${id}">
             ${faceChains
               .map((c, i) => {
@@ -5231,8 +5253,9 @@ function renderCutPlan(results) {
               })
               .join("")}
           </select>
-        </label>
-        ${isManual ? "" : endStripBar}
+        </label>`
+        }
+        ${isManual || r.cutPlan.centrelineMode ? "" : endStripBar}
         <button type="button" class="btn btn--ghost cutplan-card__manual-toggle" data-row-id="${id}">${isManual ? "Auto layout" : "Build manually"}</button>
         <button type="button" class="cutplan-card__delete" data-row-id="${id}" data-rl="${escapeHtml(r.rl) || ""}" data-strips="${r.n}" title="Delete this lift" aria-label="Delete lift RL ${escapeHtml(r.rl) || "—"}">Delete lift</button>
       </div>
