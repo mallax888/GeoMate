@@ -350,45 +350,59 @@
               <li>Longest edge becomes the face; every strip is clipped to it, so tapered ends come back shorter with an exact cut length.</li>
               <li>A second file for a different product at the same RLs adds alongside, not replaces — pick the product below first.</li>
             </ul>
-            <div class="cutplan-upload">
-              <label class="field cutplan-upload__product">
-                <span class="sr-only">Product this upload is for</span>
-                <select id="dxfExtentsProduct"></select>
-              </label>
-              <label class="btn btn--primary btn--upload">
-                Upload extents DXF
-                <input type="file" id="dxfExtentsInput" accept=".dxf" hidden />
-              </label>
-              <span id="dxfExtentsStatus" class="cutplan-status"></span>
+            <!-- Two halves: what the lift is (left), how the strips run across it (right). The
+                 centrelines upload belongs with Wall/Floor, not under the extents upload — it is
+                 only ever read on a floor, and it answers the same question the Layout buttons do. -->
+            <div class="cutplan-method__cols">
+              <div class="cutplan-method__col">
+                <span class="cutplan-method__coltitle">Lift extents</span>
+                <div class="cutplan-upload">
+                  <label class="field cutplan-upload__product">
+                    <span class="sr-only">Product this upload is for</span>
+                    <select id="dxfExtentsProduct"></select>
+                  </label>
+                  <label class="btn btn--primary btn--upload">
+                    Upload extents DXF
+                    <input type="file" id="dxfExtentsInput" accept=".dxf" hidden />
+                  </label>
+                </div>
+                <span id="dxfExtentsStatus" class="cutplan-status"></span>
+              </div>
+              <div class="cutplan-method__col">
+                <span class="cutplan-method__coltitle">Layout</span>
+                <!-- Wall or floor for the job. Asked here, next to the upload, because that is when
+                     it is known; it stays on afterwards so it can be changed without loading the
+                     file again. The select is the state every other part of the app already reads
+                     (settingsInputs, save/load, reset) — the buttons drive it. -->
+                <div id="dxfTypePrompt" class="cutplan-typeprompt">
+                  <span class="cutplan-typeprompt__q">Wall or floor?</span>
+                  <button type="button" class="btn btn--ghost" data-set-type="wall" aria-pressed="true">Wall</button>
+                  <button type="button" class="btn btn--ghost" data-set-type="floor" aria-pressed="false">Floor</button>
+                  <select id="reinforcementType" class="sr-only" tabindex="-1" aria-hidden="true">
+                    <option value="wall">Wall</option>
+                    <option value="floor">Floor</option>
+                  </select>
+                </div>
+                <div class="cutplan-upload cutplan-upload--centreline">
+                  <label class="btn btn--ghost btn--upload">
+                    Upload road centrelines DXF
+                    <input type="file" id="dxfCentrelineInput" accept=".dxf" hidden />
+                  </label>
+                  <button type="button" id="clearCentrelines" class="btn btn--ghost" hidden>Clear</button>
+                </div>
+                <span id="dxfCentrelineStatus" class="cutplan-status"></span>
+                <p class="hint hint--centreline">
+                  Floor lifts only. One open polyline or line per road. Strips then run perpendicular
+                  to the nearest centreline — lengthwise across the traffic — instead of being set by
+                  the boundary, and two roads meet along the line between them.
+                </p>
+              </div>
             </div>
-            <!-- Wall or floor for the job. Asked here, next to the upload, because that is when it is
-                 known; it stays on afterwards so it can be changed without loading the file again.
-                 The select is the state every other part of the app already reads (settingsInputs,
-                 save/load, reset) — the buttons drive it, so nothing else had to change. -->
-            <div id="dxfTypePrompt" class="cutplan-typeprompt">
-              <span class="cutplan-typeprompt__q">Layout</span>
-              <button type="button" class="btn btn--ghost" data-set-type="wall" aria-pressed="true">Wall</button>
-              <button type="button" class="btn btn--ghost" data-set-type="floor" aria-pressed="false">Floor</button>
-              <select id="reinforcementType" class="sr-only" tabindex="-1" aria-hidden="true">
-                <option value="wall">Wall</option>
-                <option value="floor">Floor</option>
-              </select>
-            </div>
-            <div class="cutplan-upload cutplan-upload--centreline">
-              <label class="btn btn--ghost btn--upload">
-                Upload road centrelines DXF
-                <input type="file" id="dxfCentrelineInput" accept=".dxf" hidden />
-              </label>
-              <span id="dxfCentrelineStatus" class="cutplan-status"></span>
-              <button type="button" id="clearCentrelines" class="btn btn--ghost" hidden>Clear</button>
-            </div>
-            <p class="hint hint--centreline">
-              Floor lifts only. One open polyline or line per road. Strips then run perpendicular to
-              the nearest centreline — lengthwise across the traffic — instead of being set by the
-              boundary, and two roads meet along the line between them.
-            </p>
           </div>
 
+          <!-- The two mesh routes are alternatives to each other and to Extents above, so they sit
+               side by side rather than each taking a full-width band of the page. -->
+          <div class="cutplan-methods__pair">
           <div class="cutplan-method">
             <h3 class="cutplan-method__title">
               <svg viewBox="0 0 16 16" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 13.5h2.6v-3h2.6v-3h2.6v-3h2.6"/></svg>
@@ -453,6 +467,7 @@
               <button id="rebuildBatteredBtn" class="btn btn--ghost" type="button" hidden title="Re-slice the last uploaded surface with the current Start RL/Spacing/Count, without picking the file again">Rebuild rows</button>
             </div>
             <span id="batteredStatus" class="cutplan-status"></span>
+          </div>
           </div>
         </div>
       </div>

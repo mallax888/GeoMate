@@ -2336,7 +2336,7 @@ function askReinforcementType(question) {
       const pick = e.target.closest("[data-set-type]");
       if (!pick) return;
       settingsInputs.reinforcementType.value = pick.dataset.setType;
-      bar.querySelector(".cutplan-typeprompt__q").textContent = "Layout";
+      bar.querySelector(".cutplan-typeprompt__q").textContent = "Wall or floor?";
       bar.classList.remove("is-asking");
       markReinforcementType();
       computeAndRender();

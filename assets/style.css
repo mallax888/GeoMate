@@ -1064,6 +1064,37 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
    (the common one) stays a loud primary button; LandXML is the same result via an alternate file
    format, so it's a ghost button, not a second equally-weighted CTA. */
 .cutplan-methods { display: flex; flex-direction: column; gap: 0.9rem; }
+.cutplan-methods__pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.9rem; align-items: start; }
+/* Extents splits into what the lift is and how the strips run across it. The divider is the only
+   thing separating them, so the two halves read as one card rather than two stacked panels. */
+.cutplan-method__cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.9rem 1.4rem; }
+.cutplan-method__col { display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; }
+.cutplan-method__col + .cutplan-method__col { border-left: 1px solid var(--line); padding-left: 1.4rem; }
+.cutplan-method__coltitle {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+}
+.cutplan-method__col .cutplan-upload { margin-bottom: 0; }
+/* Two columns only pay off if the buttons stay on one line in them — a wrapped "Upload road
+   centrelines DXF" is worse than the single column it replaced. */
+.cutplan-method__col .btn--upload,
+.cutplan-method__col .cutplan-typeprompt { white-space: nowrap; }
+@media (max-width: 1180px) {
+  .cutplan-method__col .btn { font-size: 0.76rem; padding: 0.4rem 0.6rem; }
+}
+@media (max-width: 700px) {
+  .cutplan-methods__pair,
+  .cutplan-method__cols { grid-template-columns: 1fr; }
+  .cutplan-method__col + .cutplan-method__col {
+    border-left: none;
+    padding-left: 0;
+    border-top: 1px solid var(--line);
+    padding-top: 0.8rem;
+  }
+}
 .cutplan-method {
   background: var(--surface-2);
   border: 1px solid var(--line);
@@ -1109,14 +1140,19 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
   align-items: center;
   gap: 0.5rem;
   flex-wrap: wrap;
-  margin: -0.4rem 0 1rem;
-  padding: 0.5rem 0.7rem;
+  margin: 0;
+  padding: 0.35rem 0;
+  width: fit-content;
+  max-width: 100%;
+}
+/* Only dressed up while it is actually asking — the rest of the time it is just the pair of buttons
+   under the Layout heading, and a permanent tinted box round them would shout for no reason. */
+.cutplan-typeprompt.is-asking {
+  padding: 0.45rem 0.7rem;
   border: 1px solid var(--line);
   border-left: 3px solid var(--accent);
   border-radius: 6px;
-  background: var(--surface-2);
-  width: fit-content;
-  max-width: 100%;
+  background: var(--accent-tint);
 }
 .cutplan-typeprompt__q { font-size: 0.8rem; }
 .cutplan-typeprompt .btn.is-current { border-color: var(--accent); color: var(--accent); font-weight: 700; }
