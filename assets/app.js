@@ -5806,11 +5806,20 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
     // Small per-strip label — the strip's own sequence number (1, 2, 3…), left-to-right, always in
     // order, every strip (a dense diagram shrinks the font instead of skipping numbers, so there's
     // never a confusing gap in the sequence).
+    //
+    // Sits INSIDE the strip, just in from its far end. Floating above the strip put every number in
+    // the same band of white space, where it read as a row of numbers over the diagram rather than
+    // as this strip's number; a stepped top edge then left them at a dozen different heights with
+    // nothing tying each one to its own strip. A halo keeps it legible on the fill.
     {
       const margin = 6;
       const label = document.createElementNS(ns, "text");
       const lx = Math.max(margin, Math.min(W - margin, tx(station)));
-      const ly = Math.max(margin, Math.min(H - margin, yFar - 8));
+      const inset = Math.min(labelFontSize + 3, Math.max(0, (yNear - yFar) * 0.4));
+      const ly = Math.max(margin, Math.min(H - margin, yFar + inset));
+      label.setAttribute("stroke", "var(--surface)");
+      label.setAttribute("stroke-width", "2.2");
+      label.setAttribute("paint-order", "stroke");
       label.setAttribute("x", lx.toFixed(1));
       label.setAttribute("y", ly.toFixed(1));
       label.setAttribute("font-size", labelFontSize.toFixed(1));
@@ -6092,10 +6101,16 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
     });
 
     {
+      // Inside the strip, stepped in from its far end towards the near one — the strip can point any
+      // way in plan here, so the step follows the strip's own axis rather than "up the screen".
       const margin = 6;
       const fc = screenOf(g.farCenter);
-      const lx = Math.max(margin, Math.min(W - margin, fc.x));
-      const baseLy = Math.max(margin, Math.min(H - margin, fc.y - 8));
+      const nc = screenOf(g.centerNear);
+      const dx = nc.x - fc.x, dy = nc.y - fc.y;
+      const span = Math.hypot(dx, dy) || 1;
+      const inset = Math.min(labelFontSize + 3, span * 0.4);
+      const lx = Math.max(margin, Math.min(W - margin, fc.x + (dx / span) * inset));
+      const baseLy = Math.max(margin, Math.min(H - margin, fc.y + (dy / span) * inset));
       const digits = String(i + 1).length;
       const halfW = (labelFontSize * 0.62 * digits) / 2 + 1.2;
       const laneStep = labelFontSize + 2;
@@ -6136,6 +6151,9 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
       label.setAttribute("font-family", "var(--font-mono)");
       label.setAttribute("font-weight", "700");
       label.setAttribute("fill", "var(--ink)");
+      label.setAttribute("stroke", "var(--surface)");
+      label.setAttribute("stroke-width", "2.2");
+      label.setAttribute("paint-order", "stroke");
       label.setAttribute("text-anchor", "middle");
       label.textContent = String(i + 1);
       svg.appendChild(label);
