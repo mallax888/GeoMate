@@ -2718,8 +2718,11 @@ let products = [];
 
 function defaultProductRows() {
   return [
-    { id: "re580", colorSlot: "id-1", name: "RE580", w: "1.3", oMinMm: "300", rollLength: "50", costPerRoll: "", wrapAllowance: "0" },
-    { id: "strata", colorSlot: "id-2", name: "Strata", w: "5.8", oMinMm: "150", rollLength: "100", costPerRoll: "", wrapAllowance: "2.6" },
+    // Overlap and wrap/lap start at 0 deliberately. Both are job decisions, not properties of the
+    // roll, and a figure carried over from another job is worse than a blank one: it quietly changes
+    // every strip position and material total on a lift nobody has typed a number into yet.
+    { id: "re580", colorSlot: "id-1", name: "RE580", w: "1.3", oMinMm: "0", rollLength: "50", costPerRoll: "", wrapAllowance: "0" },
+    { id: "strata", colorSlot: "id-2", name: "Strata", w: "5.8", oMinMm: "0", rollLength: "100", costPerRoll: "", wrapAllowance: "0" },
   ];
 }
 
@@ -7752,5 +7755,25 @@ refreshProjectList();
 // individually removed, since that's a deliberate "start from empty" choice, not a fresh install.
 if (localStorage.getItem(PRODUCT_LIBRARY_KEY) == null) {
   saveProductLibrary(defaultProductRows().map(({ name, w, oMinMm, rollLength, costPerRoll, wrapAllowance }) => ({ name, w, oMinMm, rollLength, costPerRoll, wrapAllowance })));
+} else {
+  // The two built-ins used to ship with an overlap and a wrap/lap already filled in, and anyone who
+  // ran the app before now has those figures sitting in their library. Clear them back to 0 — but
+  // only where the entry is still exactly as it shipped, so a spec somebody has actually typed their
+  // own numbers into is never touched.
+  const SHIPPED = {
+    RE580: { w: "1.3", oMinMm: "300", rollLength: "50", wrapAllowance: "0" },
+    Strata: { w: "5.8", oMinMm: "150", rollLength: "100", wrapAllowance: "2.6" },
+  };
+  const library = loadProductLibrary();
+  let changed = false;
+  library.forEach((p) => {
+    const was = SHIPPED[p.name];
+    if (!was) return;
+    if (p.w !== was.w || p.oMinMm !== was.oMinMm || p.rollLength !== was.rollLength || p.wrapAllowance !== was.wrapAllowance) return;
+    p.oMinMm = "0";
+    p.wrapAllowance = "0";
+    changed = true;
+  });
+  if (changed) saveProductLibrary(library);
 }
 computeAndRender();
