@@ -679,7 +679,40 @@ function insideSegments(origin, dir, poly) {
     inside = !inside;
     prev = t;
   });
-  return segments;
+  return mergeGrazingSegments(segments);
+}
+
+/* A ray that leaves the boundary and comes straight back has not found a pocket — it has clipped a
+ * vertex, or run along a face that bows a few millimetres. Left split, the sliver before the gap
+ * becomes "the segment starting at the face" and sets the strip's whole length: a 2.0 m strip (the
+ * practical minimum) with the real 8.5 m of ground behind it reported as a separate patch starting
+ * 0.1 m back from the face. Nobody cuts a patch to bridge a gap this size; the strip runs through
+ * it. A genuine notch is metres wide and survives this untouched. */
+const GRAZE_GAP = 0.25; // metres
+
+/* The strip's own body: the run of ground starting AT the face, not somewhere behind it.
+ *
+ * "Starting at the face" cannot mean "starting at exactly zero". The face is a chain fitted through
+ * surveyed vertices and the boundary bows between them, so a ray fired from a face station can enter
+ * the extents 20-40mm along instead of at 0. Requiring zero found no body at all on those strips:
+ * the reach collapsed to nothing, the cut length fell back to the 2 m practical minimum, and the
+ * real 9.8 m of ground behind it was reported as a stitch patch "starting 0.1 m back from face" —
+ * two pieces on the schedule where one strip does the job. Anything within a hand's breadth of the
+ * face is the face. A genuine setback is metres, and still reads as a patch. */
+const FACE_TOUCH = 0.25; // metres
+function mainSegmentAt(segments) {
+  return segments.find((s) => s.start <= FACE_TOUCH);
+}
+
+function mergeGrazingSegments(segments) {
+  if (segments.length < 2) return segments;
+  const out = [segments[0]];
+  for (let i = 1; i < segments.length; i++) {
+    const last = out[out.length - 1];
+    if (segments[i].start - last.end <= GRAZE_GAP) last.end = segments[i].end;
+    else out.push(segments[i]);
+  }
+  return out;
 }
 
 function inwardNormal(tangent) {
@@ -780,7 +813,7 @@ function roundToPracticalLength(value, step) {
 function stripBoundaryReach(station, w, poly, face, inward, vertexStations, avoidStitches = false) {
   const pt = pointAtStation(face, station);
   const segments = insideSegments(pt, inward, poly);
-  const main = segments.find((s) => s.start <= 1e-6);
+  const main = mainSegmentAt(segments);
 
   // The true boundary reach for this strip, sampled across its full width — a boundary that kinks
   // partway across the strip's width can dodge a coarse, evenly-spaced sample and leave a real,
@@ -803,7 +836,7 @@ function stripBoundaryReach(station, w, poly, face, inward, vertexStations, avoi
   edgeStations.forEach((s) => {
     const p = pointAtStation(face, s);
     const segs = insideSegments(p, inward, poly);
-    const m = segs.find((seg) => seg.start <= 1e-6);
+    const m = mainSegmentAt(segs);
     if (m) {
       farReach = Math.max(farReach, m.end);
       nearReach = Math.min(nearReach, m.start);
@@ -1224,7 +1257,7 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     cutLengths[idx] = roundToPracticalLength(turned.farReach, ROUND_STEP);
     // Recomputed against the turned ray — a pocket past a gap sits somewhere else entirely once the
     // strip changes bearing, so the old segment's patches no longer describe this strip.
-    const mainSeg = turned.centerSegments.find((s) => s.start <= 1e-6);
+    const mainSeg = mainSegmentAt(turned.centerSegments);
     stitches[idx] = avoidStitches
       ? []
       : turned.centerSegments
