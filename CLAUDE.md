@@ -76,7 +76,7 @@ Geometry / cut planning — the part that is subtle:
 - `pickFaceAndBack` / `candidateFaceChains` — choose which chain is the face.
 - `splitFaceIntoCornerSegments(face)` — splits the chosen face into segments
   the strips fan around. Uses `groupDirsByAngleFromStart` at
-  `CORNER_SPLIT_ANGLE_DEG` (1°).
+  `CORNER_SPLIT_ANGLE_DEG` (3°).
 - `computeCutPlan(rawPoints, w, oMin, faceCycle, refDir, packSide, stripSide,
   avoidStitches, neighborDir, floorMode)` — the core planner.
 - `computeManualCutPlan(...)` — the click-to-place manual strip builder.
@@ -93,7 +93,7 @@ edge, so a smooth curve's cumulative drift can't be silently averaged away.
 They are deliberately separate:
 
 - `chainEdges` (face-picking, 20°) uses `groupDirsByAngle`.
-- `splitFaceIntoCornerSegments` (corner splitting, 5°) uses
+- `splitFaceIntoCornerSegments` (corner splitting, `CORNER_SPLIT_ANGLE_DEG`) uses
   `groupDirsByAngleFromStart`.
 
 Switching face-picking over to the cumulative version **has already been tried
@@ -124,7 +124,7 @@ export, and state persistence.
 ## Conventions
 
 - **Bump `CACHE_NAME` in `sw.js` on every deploy that touches
-  `index.html`/`app.js`/`style.css`.** Currently `geomate-v111`. Forgetting
+  `index.html`/`app.js`/`style.css`.** Currently `geomate-v138`. Forgetting
   this means users keep running stale code offline.
 - Product library commits happen on `focusout`, **not** `input` — committing
   on `input` created a library entry per keystroke ("Sta", "Star", "Start"…).
@@ -158,8 +158,18 @@ tangent **at that strip's own station** (worst deviation from 90°, across
 every lift, both pack directions, wall and floor). Comparing against the
 segment's averaged direction proves nothing — that is perpendicular by
 construction. The current worst case across all four real project DXFs is
-0.835°, bounded by `CORNER_SPLIT_ANGLE_DEG`; treat a regression past ~1° as a
+2.683°, bounded by `CORNER_SPLIT_ANGLE_DEG`; treat a regression past that as a
 defect.
+
+That bound is a **priced trade, not a target to tighten**. At 1° a 14.6 m face
+split into six segments, each starting its own run at its own bearing, so the
+runs crossed at every join and the lift carried four narrow gap-filling pieces
+— overlap on overlap, on the drawing and on the schedule. Measured across
+RE580: 1° → 536 strips / 661.0 m / 0.835°; 3° → 520 / 656.3 / 2.61°; 5° → 510 /
+655.0 / 4.74°; 8° → 504 / 651.8 / 7.92°. Material moves ~1% across that whole
+range, so the tolerance buys legibility and piece count and pays in squareness.
+The user priced it at 3°. Do not move it without putting the same measurements
+back in front of them.
 
 **Never ship a change that regresses a previously-working, verified case**,
 even if it fixes the case in front of you. Revert and find a narrower fix.

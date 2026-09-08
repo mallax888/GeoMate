@@ -365,7 +365,17 @@ function chainEdges(poly, angleThresholdDeg = 20) {
 // without tripping on ordinary survey wobble along a straight run. This is a DIFFERENT question from
 // which edge gets picked as the face in the first place (pickFaceAndBack/refDir) — it only ever
 // fires on a genuine bend partway through a face that's already been chosen.
-const CORNER_SPLIT_ANGLE_DEG = 1;
+// 3°, chosen against measurements rather than feel. At 1° a 14.6 m face came out as six segments,
+// each starting its own run at its own bearing, so the runs crossed each other at every join and the
+// lift carried four narrow gap-filling pieces — overlap on overlap, on the drawing and on the roll
+// schedule. Each degree of tolerance buys fewer of those and costs squareness to the face:
+//   1°  536 strips, 661.0 m, worst strip 0.835° off square   (RL 52.70: 6 segments, 4 gap pieces)
+//   3°  520 strips, 656.3 m, worst 2.61°                     (RL 52.70: 5 segments, 3 gap pieces)
+//   5°  510 strips, 655.0 m, worst 4.74°                     (RL 52.70: 4 segments, 2 gap pieces)
+//   8°  504 strips, 651.8 m, worst 7.92°                     (RL 52.70: 3 segments, 1 gap piece)
+// Material barely moves across that whole range — about 1% — so what is being bought is legibility
+// and pieces, and what is being paid is rule 1. The user priced it at 3.
+const CORNER_SPLIT_ANGLE_DEG = 3;
 
 /** Real DXF vertex noise can produce a segment that's technically past the angle threshold but only
  *  a few tens of centimetres long — not anything a crew could treat as its own direction, just a
