@@ -776,6 +776,11 @@ function clipPolyToConvex(subject, clip) {
 // Below this, a gap or leftover pocket along a strip's ray isn't worth a separate stitch strip.
 const STITCH_MIN = 0.05;
 
+/* How far a strip runs past the extents once it reaches them. A strip is cut square and trimmed on
+ * site, so finishing a hair over the line covers the ground; finishing a hair under it leaves a bare
+ * sliver somebody has to patch. Small — this is a trim allowance, not a way to cover more ground. */
+const EXTENTS_OVERRUN = 0.1;
+
 // Reported strip/stitch lengths are rounded up to this step — practical site numbers, never a raw
 // CAD-precision decimal. Always UP: rounding must never leave a strip shorter than the design requires.
 // Was 500mm; that coarse a step could flatten several genuinely-different true reaches (say 10.3m and
@@ -2005,13 +2010,31 @@ function computeCentrelineCutPlan(rawPoints, centrelines, w, oMin) {
   // the middle of the junction is covered by its own pieces (see the junction pass below).
   const reachFrom = (ci, origin, normal, sign) => {
     const STEP = 0.25;
+    const at = (t) => ({ x: origin.x + normal.x * t, y: origin.y + normal.y * t });
     let u = 0;
+    let leftTheLift = false;
     for (let k = 0; k < 400; k++) {
       const next = u + sign * STEP;
-      const q = { x: origin.x + normal.x * next, y: origin.y + normal.y * next };
-      if (!pointInPolygon(q.x, q.y, poly)) break;
+      const q = at(next);
+      if (!pointInPolygon(q.x, q.y, poly)) { leftTheLift = true; break; }
       if (nearest(q) !== ci) break;
       u = next;
+    }
+    // The walk moves in 250mm steps, so it stops at the last step that was still inside and can
+    // finish up to 250mm short of the extents — the dark slivers between the strips and the dashed
+    // line. Where the walk stopped because it left the LIFT, bisect down to the real boundary and
+    // then run a little past it: a strip is trimmed on site, and short of the line is a gap somebody
+    // has to patch. Where it stopped on the line between two roads, it stays exactly there — running
+    // past that is what put one road's strips at an angle across the other's.
+    if (leftTheLift) {
+      let lo = u, hi = u + sign * STEP;
+      for (let k = 0; k < 12; k++) {
+        const mid = (lo + hi) / 2;
+        const q = at(mid);
+        if (pointInPolygon(q.x, q.y, poly) && nearest(q) === ci) lo = mid;
+        else hi = mid;
+      }
+      u = lo + sign * EXTENTS_OVERRUN;
     }
     return u;
   };
@@ -2086,6 +2109,7 @@ function computeCentrelineCutPlan(rawPoints, centrelines, w, oMin) {
       laid.forEach((b, i) => {
         const grow = (sign) => {
           let u = sign > 0 ? b.far : b.near;
+          let stopped = false;
           for (let k = 0; k < 200; k++) {
             const next = u + sign * EXT_STEP;
             // Most of the strip's width has to be landing on bare ground inside the lift — not all
@@ -2098,8 +2122,26 @@ function computeCentrelineCutPlan(rawPoints, centrelines, w, oMin) {
               };
               return pointInPolygon(q.x, q.y, poly) && !coveredByOther(q, i);
             }).length;
-            if (clear < 3) break;
+            if (clear < 3) { stopped = true; break; }
             u = next;
+          }
+          // Same 250mm quantisation as reachFrom, same fix: settle on where the strip actually runs
+          // out rather than on the last whole step before it.
+          if (stopped) {
+            let lo = u, hi = u + sign * EXT_STEP;
+            for (let k = 0; k < 10; k++) {
+              const mid = (lo + hi) / 2;
+              const clear = OFFSETS.filter((f) => {
+                const q = {
+                  x: b.c.x + b.d.x * (f * w) + b.n.x * mid,
+                  y: b.c.y + b.d.y * (f * w) + b.n.y * mid,
+                };
+                return pointInPolygon(q.x, q.y, poly) && !coveredByOther(q, i);
+              }).length;
+              if (clear >= 3) lo = mid;
+              else hi = mid;
+            }
+            u = lo;
           }
           return u;
         };
