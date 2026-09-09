@@ -776,10 +776,12 @@ function clipPolyToConvex(subject, clip) {
 // Below this, a gap or leftover pocket along a strip's ray isn't worth a separate stitch strip.
 const STITCH_MIN = 0.05;
 
-/* How far a strip runs past the extents once it reaches them. A strip is cut square and trimmed on
- * site, so finishing a hair over the line covers the ground; finishing a hair under it leaves a bare
- * sliver somebody has to patch. Small — this is a trim allowance, not a way to cover more ground. */
-const EXTENTS_OVERRUN = 0.1;
+/* How far a strip runs past the extents once it reaches them. The rule is on the line or just over,
+ * never under: a strip is cut square and trimmed on site, so a hair over covers the ground while a
+ * hair under leaves a bare sliver somebody has to patch. 10mm — enough to be unambiguously over
+ * after the boundary is found to well under a millimetre, and close enough to read as on the line at
+ * any drawing scale. This is a trim allowance, not a way to cover more ground. */
+const EXTENTS_OVERRUN = 0.01;
 
 // Reported strip/stitch lengths are rounded up to this step — practical site numbers, never a raw
 // CAD-precision decimal. Always UP: rounding must never leave a strip shorter than the design requires.
