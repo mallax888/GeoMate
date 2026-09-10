@@ -1229,23 +1229,27 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     }
 
     // Whatever the segment could not cover before its corner. Now that strips stop at the corner
-    // instead of barrelling past it, this is real uncovered ground — so it is planned as its own
-    // narrow piece rather than left for someone to notice on site. Cut to the width of the gap
-    // itself, so it closes the lane exactly without reintroducing the double coverage that stopping
-    // short was meant to remove.
+    // instead of barrelling past it, this is real uncovered ground, so it gets a piece of its own.
+    //
+    // A FULL ROLL WIDTH, always. Geogrid is manufactured at its roll width and can only be cut to
+    // LENGTH — nobody slits a 1.3 m roll down to 0.3 m on site, so planning a 0.3 m wide piece
+    // ordered material that cannot exist. The piece is laid against the corner instead, its far edge
+    // flush with the segment end, and it laps back over the strip before it by whatever the gap did
+    // not need. That lap is real and is what actually happens on the ground.
     const covered = segStarts[segStarts.length - 1] + w;
     const shortfall = segLen - covered;
     if (endsAtCorner && shortfall > STITCH_MIN) {
-      const stitchStart = covered;
-      const station = Math.max(0, Math.min(segFace.length, stitchStart + shortfall / 2));
-      const r = stripBoundaryReach(station, shortfall, poly, segFace, segInward, segVertexStations, avoidStitches);
+      const stitchWidth = w;
+      const stitchStart = Math.max(0, segLen - stitchWidth);
+      const station = Math.max(0, Math.min(segFace.length, stitchStart + stitchWidth / 2));
+      const r = stripBoundaryReach(station, stitchWidth, poly, segFace, segInward, segVertexStations, avoidStitches);
       cutLengths.push(r.cutLength);
       stitches.push(r.stitches);
       extentsReach.push(r.farReach);
       frontReach.push(r.nearReach);
-      stripWidths.push(shortfall);
+      stripWidths.push(stitchWidth);
       stripStarts.push(flatOffset + stitchStart);
-      stripLocalStarts.push(mirror ? segLen - stitchStart - shortfall : stitchStart);
+      stripLocalStarts.push(mirror ? segLen - stitchStart - stitchWidth : stitchStart);
       stripSegmentIndex.push(segIdx);
       stripIsStitch.push(true);
       overallResultN++;
@@ -5496,9 +5500,14 @@ function renderCutPlan(results) {
       const stripWord = isStitchStrip
         ? `<span class="cutplan-card__strip-label">Stitch</span>`
         : `<span class="cutplan-card__strip-label">Strip</span>`;
-      const widthNote = isStitchStrip
-        ? `<span class="cutplan-card__stitch-width">${fmt.m1((r.cutPlan.stripWidths || [])[i] || 0)} m wide</span>`
-        : "";
+      // Only worth saying when it is NOT the roll width — which, now that every piece is cut from a
+      // full roll, it always is. Left in as a guard rather than deleted: if a narrower piece ever
+      // reappears in a plan, it says so on the card instead of passing as an ordinary strip.
+      const stitchW = (r.cutPlan.stripWidths || [])[i] || 0;
+      const widthNote =
+        isStitchStrip && Math.abs(stitchW - r.w) > 0.01
+          ? `<span class="cutplan-card__stitch-width">${fmt.m1(stitchW)} m wide</span>`
+          : "";
       li.innerHTML = `${stripWord}<span class="cutplan-card__strip-chip">${i + 1}</span>${midBit}${widthNote}<span class="cutplan-card__strip-cut">${lenBit}</span>`;
       stripsList.appendChild(li);
 
