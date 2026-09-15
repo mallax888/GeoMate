@@ -59,7 +59,19 @@ These come from the user directly. Violating them makes output wrong on site.
    The user's standing instruction: on a floor, **extend the strips rather
    than cut extra pieces, and small bare corners are fine.** Do not trade that
    away for a coverage percentage.
-6. **A control that cannot act must not be shown.** The Face picker and the
+6. **Nothing is planned that covers no ground.** Two pieces used to reach the
+   schedule carrying nothing: a strip starting at or past the end of its own
+   corner segment (entirely outside the extents, its cut length falling back to
+   the 2 m practical minimum), and a strip every square metre of which was
+   already under its neighbours. Both are now dropped after the layout is
+   built, on measurement (`stripLapShare`, `stripCoversNothing`), never on a
+   guess. A strip still holding any ground of its own stays, however much of it
+   laps — that is what ties the face in.
+   Where a corner leaves a gap narrower than one strip, the last strip **slides
+   up flush with the corner** instead of a separate piece being added. Adding
+   one put a full roll width on top of a strip that was already there and left
+   the earlier one covering nothing.
+7. **A control that cannot act must not be shown.** The Face picker and the
    end-strip overrides only mean something to the boundary layout, so they are
    left out of the card on a centreline plan; the wedges left on the outside
    of a bend are not patched, because a rectangle covering one lies on ground

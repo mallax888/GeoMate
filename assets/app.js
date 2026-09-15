@@ -776,6 +776,11 @@ function clipPolyToConvex(subject, clip) {
 // Below this, a gap or leftover pocket along a strip's ray isn't worth a separate stitch strip.
 const STITCH_MIN = 0.05;
 
+/* At or past this share of its own area already under other grid, a strip is drawn as "you may not
+ * need this" rather than as ordinary cover. Deliberately high: at a corner every strip laps its
+ * neighbours a little, and flagging those would say nothing. */
+const LAP_FLAG_SHARE = 0.95;
+
 /* How far a strip runs past the extents once it reaches them. The rule is on the line or just over,
  * never under: a strip is cut square and trimmed on site, so a hair over covers the ground while a
  * hair under leaves a bare sliver somebody has to patch. 10mm — enough to be unambiguously over
@@ -1238,7 +1243,22 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     // not need. That lap is real and is what actually happens on the ground.
     const covered = segStarts[segStarts.length - 1] + w;
     const shortfall = segLen - covered;
-    if (endsAtCorner && shortfall > STITCH_MIN) {
+    // A gap narrower than one strip does not need a piece of its own — the last strip just slides up
+    // to finish flush with the corner. Adding a piece instead put a full roll width on top of a strip
+    // that was already there: two pieces where one does the job, and the earlier one left covering
+    // nothing. Only a gap at least a strip wide gets its own piece.
+    if (endsAtCorner && shortfall > STITCH_MIN && shortfall < w) {
+      const lastIdxHere = cutLengths.length - 1;
+      const slidStart = Math.max(0, segLen - w);
+      const station = Math.max(0, Math.min(segFace.length, slidStart + w / 2));
+      const r = stripBoundaryReach(station, w, poly, segFace, segInward, segVertexStations, avoidStitches);
+      cutLengths[lastIdxHere] = r.cutLength;
+      stitches[lastIdxHere] = r.stitches;
+      extentsReach[lastIdxHere] = r.farReach;
+      frontReach[lastIdxHere] = r.nearReach;
+      stripStarts[lastIdxHere] = flatOffset + slidStart;
+      stripLocalStarts[lastIdxHere] = mirror ? segLen - slidStart - w : slidStart;
+    } else if (endsAtCorner && shortfall >= w) {
       const stitchWidth = w;
       const stitchStart = Math.max(0, segLen - stitchWidth);
       const station = Math.max(0, Math.min(segFace.length, stitchStart + stitchWidth / 2));
@@ -1359,8 +1379,69 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
   // every existing consumer (summary text, roll schedule, CSV) already knows how to fall back to.
   const overallOverlap = segOverlaps.every((o) => Math.abs(o - segOverlaps[0]) < 1e-6) ? segOverlaps[0] : null;
 
+  // How much of each strip lands on ground another strip already covers. Nothing is removed on this
+  // number — a strip is what ties the face in and the plan stays the plan — but a piece that is very
+  // nearly all lap is worth SAYING SO on the drawing, the same way material past the extents is
+  // drawn faint: here is a piece you may not need. Only ever computed for a cornered lift, where
+  // runs from neighbouring segments can genuinely land on top of each other.
+  const stripLapShare = cutLengths.map(() => 0);
+  const stripCoversNothing = cutLengths.map(() => false);
+  if (cornerSegments.length > 1 && cutLengths.length > 1) {
+    const SAMPLE = 0.35;
+    const frames = cutLengths.map((_, i) => {
+      const seg = cornerSegments[stripSegmentIndex[i]];
+      const dir = stripDirs[i] || seg.dir;
+      return {
+        c: pointAtStationExtrapolated(seg, stripLocalStarts[i] + stripWidths[i] / 2),
+        d: dir,
+        n: inwardNormal(dir),
+        width: stripWidths[i],
+        near: frontReach[i],
+        far: extentsReach[i],
+      };
+    });
+    frames.forEach((b, i) => {
+      let own = 0, dup = 0;
+      for (let a = -b.width / 2; a <= b.width / 2; a += SAMPLE) {
+        for (let c = b.near; c <= b.far; c += SAMPLE) {
+          const q = { x: b.c.x + b.d.x * a + b.n.x * c, y: b.c.y + b.d.y * a + b.n.y * c };
+          if (!pointInPolygon(q.x, q.y, poly)) continue;
+          own += 1;
+          const covered = frames.some((o, k) => {
+            if (k === i) return false;
+            const ax = q.x - o.c.x, ay = q.y - o.c.y;
+            const along = ax * o.d.x + ay * o.d.y;
+            const across = ax * o.n.x + ay * o.n.y;
+            return Math.abs(along) <= o.width / 2 + 1e-9 && across >= o.near - 1e-9 && across <= o.far + 1e-9;
+          });
+          if (covered) dup += 1;
+        }
+      }
+      stripLapShare[i] = own ? dup / own : 1; // nothing of its own inside the lift at all
+      stripCoversNothing[i] = own === 0;
+    });
+  }
+
+  // Pieces that cover no ground of their own come out of the plan. Two kinds, both seen on a lift
+  // whose face ends in a segment only one strip wide:
+  //   - a strip starting at or past the end of its own segment, entirely outside the extents. It had
+  //     no reach at all, so its cut length fell back to the 2 m practical minimum and it appeared on
+  //     the schedule as a real piece of grid.
+  //   - a strip every square metre of which is already under its neighbours.
+  // Neither is a judgement call about material worth ordering: there is nothing under them. A strip
+  // still holding any ground of its own stays, however much of it laps.
+  for (let i = cutLengths.length - 1; i >= 0; i--) {
+    if (cutLengths.length <= 1) break;
+    if (stripCoversNothing[i] || stripLapShare[i] >= 0.995) {
+      dropStripAt(i);
+      stripLapShare.splice(i, 1);
+      stripCoversNothing.splice(i, 1);
+    }
+  }
+
   return {
     poly,
+    stripLapShare,
     face,
     back,
     faceIndex: chosenIndex,
@@ -6147,6 +6228,13 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
     stripFull.setAttribute("stroke-dasharray", "2,2");
     svg.appendChild(stripFull);
 
+    // A piece whose ground the rest of the lift already covers is drawn the way material past the
+    // extents is drawn — faint, with a dashed outline — because it says the same thing: here is
+    // grid you may not need. It is still in the plan and still in the counts; nothing is decided for
+    // the user by a fill colour. Only the solid overlay changes, so the piece keeps its real size
+    // and position on the drawing.
+    const lapShare = (cutPlan.stripLapShare || [])[i] || 0;
+    const fullyLapped = lapShare >= LAP_FLAG_SHARE;
     const stripClipped = clipPolyToConvex(cutPlan.poly, stripQuad);
     if (stripClipped.length >= 3) {
       const stripPts = stripClipped.map(screenOf);
@@ -6156,9 +6244,10 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
       // which segment a strip is in — the bend and overlap in the shapes themselves now carry the
       // "this is a corner" signal, so a colour break on top of that was just noise.
       stripShape.setAttribute("fill", color);
-      stripShape.setAttribute("fill-opacity", "0.75");
+      stripShape.setAttribute("fill-opacity", fullyLapped ? "0.18" : "0.75");
       stripShape.setAttribute("stroke", colorStrong);
-      stripShape.setAttribute("stroke-width", "1");
+      stripShape.setAttribute("stroke-width", fullyLapped ? "1.4" : "1");
+      if (fullyLapped) stripShape.setAttribute("stroke-dasharray", "4,3");
       svg.appendChild(stripShape);
     }
 
