@@ -5640,9 +5640,11 @@ function annotateFaceLine(svg, facePts, W, H, projectedPts = []) {
   const pts = clean(facePts);
   if (pts.length < 2) return;
 
-  // Where the face had to be projected past its surveyed ends so strips could reach a corner
-  // jutting beyond it. Same line, lighter and dashed: the strips there ARE square to it, so it can't
-  // just be missing, but it isn't surveyed wall either and shouldn't claim to be.
+  // Where the face had to be projected past its surveyed ends so strips could reach a corner jutting
+  // beyond it. Drawn exactly like the surveyed run: one solid blue face line, never dashed. It was
+  // dashed once, to say "projected, not surveyed" — the user's instruction is that the face reads as
+  // one line, so the distinction comes out. The dashed line on these diagrams is the extents
+  // boundary and nothing else.
   projectedPts.forEach((span) => {
     const ext = clean(span);
     if (ext.length < 2) return;
@@ -5650,13 +5652,9 @@ function annotateFaceLine(svg, facePts, W, H, projectedPts = []) {
     extLine.setAttribute("points", ext.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "));
     extLine.setAttribute("fill", "none");
     extLine.setAttribute("stroke", "var(--face-line)");
-    // Same weight and near the same strength as the surveyed run. At 2px and 0.45 opacity this read
-    // as the line simply stopping partway along the lift — the exact confusion it was added to
-    // remove. The dash alone carries "projected, not surveyed"; it does not need to be faint too.
     extLine.setAttribute("stroke-width", "3");
-    extLine.setAttribute("stroke-opacity", "0.85");
-    extLine.setAttribute("stroke-dasharray", "6,4");
     extLine.setAttribute("stroke-linecap", "round");
+    extLine.setAttribute("stroke-linejoin", "round");
     svg.appendChild(extLine);
   });
 
