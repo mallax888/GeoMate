@@ -67,11 +67,29 @@ These come from the user directly. Violating them makes output wrong on site.
    built, on measurement (`stripLapShare`, `stripCoversNothing`), never on a
    guess. A strip still holding any ground of its own stays, however much of it
    laps — that is what ties the face in.
-   Where a corner leaves a gap narrower than one strip, the last strip **slides
-   up flush with the corner** instead of a separate piece being added. Adding
-   one put a full roll width on top of a strip that was already there and left
-   the earlier one covering nothing.
-7. **A control that cannot act must not be shown.** The Face picker and the
+7. **No gaps. "All strips need to be back to back at least."** Two rules
+   deliver this on a wall, and both are measured, not assumed:
+   - A **corner segment spreads its strips evenly** across its own length
+     (`segPitch`), landing flush at both ends. Minimum pitch plus a floored
+     strip count left the segment short of its corner and slid the last strip
+     up to close it, which only moved the shortfall inland and opened it as a
+     gap between that strip and the one before — 2.6 m² of bare ground per
+     segment. Even spreading only ever *adds* overlap beyond the product
+     minimum, so it is always safe to lay.
+   - A **sweep over what is actually bare**, at the end of `computeCutPlan`.
+     Each pass grids the lift, takes the biggest patch no strip covers, and
+     lays one full roll width over as much of it as a single piece can reach,
+     square to whichever segment's bearing takes most of it, cut from where its
+     band enters the lift out to the far end of the hole. A piece that takes
+     nothing ends the sweep. Written as a sweep rather than a rule about
+     corners because the same hole appears at a bend, at a raking end, and
+     either side of a short segment. **Floors are excluded** (rule 5).
+
+   Two rectangles at different bearings, both flush to a face that bends,
+   cannot also be flush to each other: the options are doubling up, a gap, or a
+   piece across the join. This is the third. Expect ~20% more grid than lift
+   area on a bendy wall — that is the lap, and it is the price of no gaps.
+8. **A control that cannot act must not be shown.** The Face picker and the
    end-strip overrides only mean something to the boundary layout, so they are
    left out of the card on a centreline plan; the wedges left on the outside
    of a bend are not patched, because a rectangle covering one lies on ground
@@ -86,6 +104,13 @@ Geometry / cut planning — the part that is subtle:
 - `chainEdges(poly, angleThresholdDeg = 20)` — splits the boundary into
   candidate faces. Uses `groupDirsByAngle`.
 - `pickFaceAndBack` / `candidateFaceChains` — choose which chain is the face.
+  Its safety check (`facePlaneMinDepth` vs `SEVERE_BEHIND_FACE_TOL`) measures
+  the boundary against the face **polyline**, not against one averaged plane
+  through the chain's first vertex. A curved face swings behind its own
+  averaged plane all by itself — 17° of gentle bend over 24 m put its far end
+  2.9 m "behind" — which rejected the real face on three lifts and handed them
+  to a 7 m chain off the end of the extents, 65% of the lift with no grid on
+  it. Curvature is the normal case and says nothing about coverage.
 - `splitFaceIntoCornerSegments(face)` — splits the chosen face into segments
   the strips fan around. Uses `groupDirsByAngleFromStart` at
   `CORNER_SPLIT_ANGLE_DEG` (3°).
@@ -113,6 +138,14 @@ and was reverted**: it changed which chain won as the face on some lifts,
 turning correct renders into crossing, wrong-shape ones with ~63% more
 material. If you think both should use the same function, they shouldn't.
 
+`stripDirs` is written **by index**, not pushed, so it is short and sparse
+while the install loop runs. It is filled out with explicit nulls before
+anything splices the per-strip arrays in step — `splice` clamps its index to
+the array's own length, so on a short `stripDirs` a bearing meant for one piece
+silently lands on strip 1 instead, which is a rotated strip and a hole in the
+lift. Every reader is `stripDirs[i] || seg.dir`, so a null reads as no
+override.
+
 `mergeShortCornerSegments(segments)` uses a **fixed 0.1 m noise floor**. It
 once scaled with strip width, which over-merged tight-radius curves into
 coarse segments and broke rule 1 on narrower strips. Don't retie it to width,
@@ -136,7 +169,7 @@ export, and state persistence.
 ## Conventions
 
 - **Bump `CACHE_NAME` in `sw.js` on every deploy that touches
-  `index.html`/`app.js`/`style.css`.** Currently `geomate-v138`. Forgetting
+  `index.html`/`app.js`/`style.css`.** Currently `geomate-v144`. Forgetting
   this means users keep running stale code offline.
 - Product library commits happen on `focusout`, **not** `input` — committing
   on `input` created a library entry per keystroke ("Sta", "Star", "Start"…).
@@ -165,13 +198,23 @@ breaks another. The established workflow, which has caught real regressions:
 Verify a bulge/arc change against **ground-truth circles**, checking centre
 and side — endpoint-only matching passes for a mirrored circle.
 
+Also measure **bare ground**: grid the lift, mark every cell no strip covers,
+cluster them, and report the total and the biggest patch (`bare_levels.js` in
+the scratchpad). A layout change that reads fine on the drawing can still open
+a hole, and the percentage is the only thing that catches it. Nothing should be
+above ~1% bare, in patches no bigger than a 0.25 m boundary sliver.
+
 For anything touching strip orientation, measure each strip against the face
 tangent **at that strip's own station** (worst deviation from 90°, across
 every lift, both pack directions, wall and floor). Comparing against the
 segment's averaged direction proves nothing — that is perpendicular by
-construction. The current worst case across all four real project DXFs is
-2.683°, bounded by `CORNER_SPLIT_ANGLE_DEG`; treat a regression past that as a
-defect.
+construction. Exclude pieces the planner deliberately turned (`stripDirs[i]`
+set, the sliver rule) and the patch pieces from rule 7 — both are laid against
+a neighbour or over a hole, not set out off the face, and a turn of 20°+ on a
+sub-width segment is the rule working, not a defect. Ordinary strips come out
+at 0.002° on the synthetic wall; the worst case across all four real project
+DXFs was 2.683°, bounded by `CORNER_SPLIT_ANGLE_DEG`. Treat a regression past
+that as a defect.
 
 That bound is a **priced trade, not a target to tighten**. At 1° a 14.6 m face
 split into six segments, each starting its own run at its own bearing, so the

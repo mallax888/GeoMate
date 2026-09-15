@@ -505,10 +505,39 @@ function candidateFaceChains(extentsPoints) {
 // return/wrap section — several metres, not centimetres — trips this.
 const SEVERE_BEHIND_FACE_TOL = 1.5;
 
+/**
+ * How far the worst point of the boundary sits BEHIND the face — behind the face as drawn, not
+ * behind one averaged plane through its first vertex.
+ *
+ * The distinction decides which side of the lift gets stripped. A face that curves swings away from
+ * its own averaged plane all by itself: a 24 m run of gentle 17° bends left its own far end 2.9 m
+ * "behind" that plane, tripped the safety check below, and handed three lifts of a motorway wall to
+ * a 7 m chain off the end of the extents — 65% of the lift with no grid on it at all. Curvature is
+ * the normal case here and says nothing about coverage, because the face is split into corner
+ * segments and sampled segment by segment.
+ *
+ * What the check is really asking is whether part of the boundary lies behind the face, where a
+ * strip can never sample it. So each point is measured off the NEAREST point of the chain, along
+ * that edge's own inward normal: a curve reads as the zero it is, and only a genuine return or wrap
+ * section reads back as negative.
+ */
 function facePlaneMinDepth(chain, poly) {
-  const inward = inwardNormal(chain.dir);
-  const origin = chain.edges[0].from;
-  return Math.min(...poly.map((p) => (p.x - origin.x) * inward.x + (p.y - origin.y) * inward.y));
+  let worst = Infinity;
+  poly.forEach((p) => {
+    let bestDist = Infinity, depth = 0;
+    chain.edges.forEach((e) => {
+      const s = Math.max(0, Math.min(e.len, (p.x - e.from.x) * e.x + (p.y - e.from.y) * e.y));
+      const cx = e.from.x + e.x * s, cy = e.from.y + e.y * s;
+      const d = Math.hypot(p.x - cx, p.y - cy);
+      if (d < bestDist) {
+        bestDist = d;
+        const inward = inwardNormal(e);
+        depth = (p.x - cx) * inward.x + (p.y - cy) * inward.y;
+      }
+    });
+    worst = Math.min(worst, depth);
+  });
+  return worst === Infinity ? 0 : worst;
 }
 
 /** Total stitch count a candidate face would produce — used to break ties between several
@@ -854,27 +883,48 @@ function stripBoundaryReach(station, w, poly, face, inward, vertexStations, avoi
   vertexStations.forEach((s) => {
     if (s > laneMin && s < laneMax) edgeStations.push(s);
   });
-  let farReach = 0, nearReach = 0;
+  let farReach = 0, nearReach = 0, anyMain = false;
+  // Where the ray starts OUTSIDE the lift, there is no segment at the face to measure from. That is
+  // not an empty strip: the face has been extended in a straight line to span the whole extents (see
+  // extendFaceToFullExtent), so past the wall's real end the line can run outside the boundary while
+  // the lift itself carries on beside it — a wall whose extents rake off at an angle. Those stations
+  // were reading back as no reach at all, so the strips covering the rake were cut to the 2 m minimum
+  // or dropped outright as covering nothing, leaving a tenth of the lift bare. Kept as a fallback,
+  // used only when NOT ONE sample across the strip's width starts at the face: entry to exit is the
+  // ground the strip genuinely crosses, and taking it only in that case leaves every ordinary strip,
+  // and the stitch rule that handles a pocket past a gap, exactly as they were.
+  let firstEntry = Infinity, lastExit = -Infinity;
   edgeStations.forEach((s) => {
     const p = pointAtStation(face, s);
     const segs = insideSegments(p, inward, poly);
     const m = mainSegmentAt(segs);
     if (m) {
+      anyMain = true;
       farReach = Math.max(farReach, m.end);
       nearReach = Math.min(nearReach, m.start);
+    }
+    if (segs.length) {
+      firstEntry = Math.min(firstEntry, segs[0].start);
+      lastExit = Math.max(lastExit, segs[segs.length - 1].end);
     }
     // Avoiding stitches: there's no separate "supplementary patch" for a pocket past a gap — the
     // strip's own single cut has to bridge straight through it, so the far reach has to extend to
     // the end of the LAST segment on the ray (past the gap), not just the first one.
     if (avoidStitches && segs.length) farReach = Math.max(farReach, segs[segs.length - 1].end);
   });
+  if (!anyMain && lastExit > firstEntry) {
+    farReach = Math.max(farReach, lastExit);
+    nearReach = firstEntry;
+  }
 
   // Reported/cut length: the true reach rounded up to a practical site number, never below
   // MIN_STRIP_LENGTH. Rounding only ever goes up, so this can end up longer than the true extents
   // reach — that overshoot is exactly the bit that needs trimming back on site to avoid burying
   // wasted material past the design boundary, shown separately in the diagram rather than folded
   // silently into this number.
-  const cutLength = roundToPracticalLength(farReach, ROUND_STEP);
+  // A strip that starts at the face is cut to its far reach; one measured entry-to-exit off an
+  // extended face line starts partway in, so it is cut to the stretch it actually spans.
+  const cutLength = roundToPracticalLength(anyMain ? farReach : farReach - nearReach, ROUND_STEP);
   const stitches = avoidStitches
     ? []
     : segments
@@ -1188,18 +1238,28 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     //
     // At a CORNER it is not harmless: the overshooting strip lands on top of the next segment's
     // first strip, which is anchored flush at that same corner. That is the doubling-up visible
-    // where a face turns. Stopping short instead leaves a gap under one pitch wide, which site
-    // closes with a stitch strip — a deliberate, visible, cheap piece of material, rather than a
-    // whole strip's width of silent double coverage.
+    // where a face turns.
+    //
+    // So a corner segment takes the strip count that covers it (ceil, not floor) and spreads them
+    // EVENLY across its own length, flush at both ends. Minimum pitch plus floor left the segment
+    // short of its corner and slid the last strip up to close that end — which just moved the
+    // shortfall inland, opening a gap of it between the slid strip and the one before. A 0.3 m gap
+    // running the full depth of the lift is 2.6 m2 of bare ground per segment, and "all strips need
+    // to be back to back at least" rules it out. Even spreading can only ever ADD overlap beyond the
+    // product's minimum, never take it below, so it is always safe to lay.
     const endsAtCorner = orderPos < installOrder.length - 1;
     const segN =
       segLen <= w
         ? 1
         : endsAtCorner
-        ? Math.max(1, Math.floor((segLen - w) / pitch + 1e-9) + 1)
+        ? Math.max(1, Math.ceil((segLen - w) / pitch - 1e-9) + 1)
         : Math.max(1, Math.ceil((segLen - w) / pitch) + 1);
-    const segStarts = Array.from({ length: segN }, (_, i) => i * pitch);
-    const segOverlapForReport = oMin;
+    const segPitch = endsAtCorner && segN > 1 ? (segLen - w) / (segN - 1) : pitch;
+    const segStarts = Array.from({ length: segN }, (_, i) => i * segPitch);
+    // What this segment's seams actually lap by, which is the minimum only when its length happened
+    // to divide evenly — reported per segment so the schedule quotes the lap being laid, not the one
+    // that was asked for.
+    const segOverlapForReport = segN > 1 ? Math.max(0, w - segPitch) : oMin;
     segOverlaps.push(segOverlapForReport);
     // Either fit's last strip can run past this segment's own far edge (a genuine calcLift n=1 short
     // segment; the true-wall-end pitch fit, by design) — extending the chain so that overhang's
@@ -1233,49 +1293,22 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
       overallResultN++;
     }
 
-    // Whatever the segment could not cover before its corner. Now that strips stop at the corner
-    // instead of barrelling past it, this is real uncovered ground, so it gets a piece of its own.
-    //
-    // A FULL ROLL WIDTH, always. Geogrid is manufactured at its roll width and can only be cut to
-    // LENGTH — nobody slits a 1.3 m roll down to 0.3 m on site, so planning a 0.3 m wide piece
-    // ordered material that cannot exist. The piece is laid against the corner instead, its far edge
-    // flush with the segment end, and it laps back over the strip before it by whatever the gap did
-    // not need. That lap is real and is what actually happens on the ground.
-    const covered = segStarts[segStarts.length - 1] + w;
-    const shortfall = segLen - covered;
-    // A gap narrower than one strip does not need a piece of its own — the last strip just slides up
-    // to finish flush with the corner. Adding a piece instead put a full roll width on top of a strip
-    // that was already there: two pieces where one does the job, and the earlier one left covering
-    // nothing. Only a gap at least a strip wide gets its own piece.
-    if (endsAtCorner && shortfall > STITCH_MIN && shortfall < w) {
-      const lastIdxHere = cutLengths.length - 1;
-      const slidStart = Math.max(0, segLen - w);
-      const station = Math.max(0, Math.min(segFace.length, slidStart + w / 2));
-      const r = stripBoundaryReach(station, w, poly, segFace, segInward, segVertexStations, avoidStitches);
-      cutLengths[lastIdxHere] = r.cutLength;
-      stitches[lastIdxHere] = r.stitches;
-      extentsReach[lastIdxHere] = r.farReach;
-      frontReach[lastIdxHere] = r.nearReach;
-      stripStarts[lastIdxHere] = flatOffset + slidStart;
-      stripLocalStarts[lastIdxHere] = mirror ? segLen - slidStart - w : slidStart;
-    } else if (endsAtCorner && shortfall >= w) {
-      const stitchWidth = w;
-      const stitchStart = Math.max(0, segLen - stitchWidth);
-      const station = Math.max(0, Math.min(segFace.length, stitchStart + stitchWidth / 2));
-      const r = stripBoundaryReach(station, stitchWidth, poly, segFace, segInward, segVertexStations, avoidStitches);
-      cutLengths.push(r.cutLength);
-      stitches.push(r.stitches);
-      extentsReach.push(r.farReach);
-      frontReach.push(r.nearReach);
-      stripWidths.push(stitchWidth);
-      stripStarts.push(flatOffset + stitchStart);
-      stripLocalStarts.push(mirror ? segLen - stitchStart - stitchWidth : stitchStart);
-      stripSegmentIndex.push(segIdx);
-      stripIsStitch.push(true);
-      overallResultN++;
-    }
+    // Nothing is left over at the corner any more: a corner segment's strips are spread evenly
+    // across its own length (see segPitch above), so the last one finishes exactly on the corner. The
+    // shortfall this used to close — by sliding the last strip up, or by laying a full-width piece
+    // against the corner — no longer exists, and both of those left a gap of their own inland.
+
     flatOffset += segLen;
   });
+
+  // stripDirs is filled in BY INDEX, not pushed, so up to here it is a short, sparse array — its
+  // length is however far the last turned strip reached, usually zero. From now on every per-strip
+  // array is spliced in step (dropStripAt, and the corner-wedge pieces below), and splice CLAMPS its
+  // index to the array's own length: on a short stripDirs that silently writes a bearing onto the
+  // wrong strip — strip 1 picking up an override meant for a piece twenty strips away, which is a
+  // rotated strip and a hole in the lift. Filled out with explicit nulls so it splices like the rest;
+  // every reader is `stripDirs[i] || seg.dir`, so a null reads exactly like the hole it replaces.
+  for (let i = 0; i < cutLengths.length; i++) if (stripDirs[i] === undefined) stripDirs[i] = null;
 
   // Turning an end strip to lie against its neighbour instead of square to its own segment. Shared
   // by the automatic sliver rule below and by an explicit "back-to-back" override from the user.
@@ -1436,6 +1469,150 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
       dropStripAt(i);
       stripLapShare.splice(i, 1);
       stripCoversNothing.splice(i, 1);
+    }
+  }
+
+  // Whatever is still bare gets a piece laid over it.
+  //
+  // The hole this exists for is the wedge at a bend. Two runs of strips meet at the corner, both
+  // flush to the face, both square to their own bearing, so they touch at the corner point and then
+  // diverge going back into the fill — over a 9 m deep strip a 14 deg change of bearing opens a
+  // triangle of about 10 m2. A rectangle cannot be flush to the face AND to its neighbour at a
+  // different bearing, so there are only three outcomes: double the strips up, leave the hole, or lay
+  // pieces across the join. "All strips need to be back to back at least" is the third.
+  //
+  // Written as a sweep over what is actually bare rather than as a rule about corners, because the
+  // same hole turns up wherever the geometry runs out: at a bend, at a raking end where the extents
+  // cut off at an angle to the face, either side of a short segment. Each pass measures the lift,
+  // takes the biggest patch of ground no strip covers, and lays ONE full roll width over as much of
+  // it as a single piece can reach, square to whichever segment's bearing covers most of it, cut from
+  // where its band enters the lift (reinforcement works by its connection to the face, so a piece
+  // floating in the middle of the fill is no use) out to the far end of the hole. Then it measures
+  // again. A piece that turns out to cover nothing new ends the sweep, and so does a patch too small
+  // to be worth a roll.
+  //
+  // Floors are left alone: a floor's standing instruction is to extend the strips rather than cut
+  // extra pieces, and small bare corners there are fine.
+  if (!floorMode && cutLengths.length && cornerSegments.length) {
+    const SAMPLE = 0.25, CELL = SAMPLE * SAMPLE;
+    const MIN_PATCH = 0.75; // m² — under this it is a sliver along the boundary, not a hole
+    const MAX_PATCHES = 12;
+    const frameOf = (i) => {
+      const seg = cornerSegments[stripSegmentIndex[i]];
+      const dir = stripDirs[i] || seg.dir;
+      return { c: pointAtStationExtrapolated(seg, stripLocalStarts[i] + stripWidths[i] / 2),
+               d: dir, n: inwardNormal(dir), width: stripWidths[i],
+               near: frontReach[i], far: extentsReach[i] };
+    };
+    const coveredBy = (frames, x, y) =>
+      frames.some((b) => {
+        const ax = x - b.c.x, ay = y - b.c.y;
+        const along = ax * b.d.x + ay * b.d.y;
+        const across = ax * b.n.x + ay * b.n.y;
+        return Math.abs(along) <= b.width / 2 + 1e-9 && across >= b.near - 1e-9 && across <= b.far + 1e-9;
+      });
+
+    // The lift's own ground, gridded once — every pass re-tests coverage, never this.
+    const xs = poly.map((p) => p.x), ys = poly.map((p) => p.y);
+    const ground = [];
+    for (let i = Math.floor(Math.min(...xs) / SAMPLE); i <= Math.ceil(Math.max(...xs) / SAMPLE); i++) {
+      for (let j = Math.floor(Math.min(...ys) / SAMPLE); j <= Math.ceil(Math.max(...ys) / SAMPLE); j++) {
+        const x = (i + 0.5) * SAMPLE, y = (j + 0.5) * SAMPLE;
+        if (pointInPolygon(x, y, poly)) ground.push({ i, j, x, y });
+      }
+    }
+
+    // Measured against every strip once; after that only the cells still open are re-tested, and only
+    // against the piece just laid. Coverage only ever grows, so that is the same answer for a
+    // fraction of the work — it is the difference between a big lift costing milliseconds and costing
+    // most of a second, on a page that recomputes every lift on every keystroke.
+    const frames = cutLengths.map((_, i) => frameOf(i));
+    let open = new Map();
+    ground.forEach((g) => { if (!coveredBy(frames, g.x, g.y)) open.set(g.i + "," + g.j, g); });
+
+    for (let pass = 0; pass < MAX_PATCHES; pass++) {
+      if (open.size * CELL < MIN_PATCH) break;
+
+      let biggest = null;
+      const seen = new Set();
+      open.forEach((_, k) => {
+        if (seen.has(k)) return;
+        const stack = [k]; seen.add(k); const cells = [];
+        while (stack.length) {
+          const cur = stack.pop();
+          cells.push(open.get(cur));
+          const [ci, cj] = cur.split(",").map(Number);
+          [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([di, dj]) => {
+            const nk = (ci + di) + "," + (cj + dj);
+            if (open.has(nk) && !seen.has(nk)) { seen.add(nk); stack.push(nk); }
+          });
+        }
+        if (!biggest || cells.length > biggest.length) biggest = cells;
+      });
+      if (!biggest || biggest.length * CELL < MIN_PATCH) break;
+
+      // Where one roll width takes most of that patch. Candidate stations are walked along each
+      // segment (and a strip's width past either end of it, since the hole at a bend sits BEFORE its
+      // own segment starts), placing the piece exactly the way the diagram will draw it.
+      let best = null;
+      cornerSegments.forEach((seg, segIdx) => {
+        const dir = seg.dir, nrm = inwardNormal(dir);
+        for (let st = -w; st <= seg.length + w + 1e-9; st += w / 4) {
+          const c = pointAtStationExtrapolated(seg, st + w / 2);
+          let hits = 0, far = -Infinity;
+          biggest.forEach((g) => {
+            const ax = g.x - c.x, ay = g.y - c.y;
+            if (Math.abs(ax * dir.x + ay * dir.y) > w / 2) return;
+            hits++;
+            far = Math.max(far, ax * nrm.x + ay * nrm.y + SAMPLE / 2);
+          });
+          if (hits && (!best || hits > best.hits)) best = { segIdx, seg, dir, nrm, st, c, hits, far };
+        }
+      });
+      if (!best || best.hits * CELL < MIN_PATCH) break;
+
+      // Where that band first enters the lift — the piece starts there, so it ties into the face
+      // instead of floating behind the strips that already cover the ground in front of the hole.
+      const reach = reachAlongDirection(best.c, best.dir, w, poly);
+      let insideNear = Infinity;
+      for (let a = -w / 2 + SAMPLE / 2; a < w / 2; a += SAMPLE) {
+        for (let d = reach.nearReach + SAMPLE / 2; d < reach.farReach; d += SAMPLE) {
+          const x = best.c.x + best.dir.x * a + best.nrm.x * d;
+          const y = best.c.y + best.dir.y * a + best.nrm.y * d;
+          if (pointInPolygon(x, y, poly)) { insideNear = Math.min(insideNear, d - SAMPLE / 2); break; }
+        }
+      }
+      const near = Math.max(reach.nearReach, insideNear === Infinity ? reach.nearReach : insideNear);
+      const far = Math.min(reach.farReach, best.far);
+      if (far - near < MIN_STRIP_LENGTH) break;
+
+      // Installed with the strips it ties together rather than tacked onto the end of the schedule:
+      // straight after the last strip of its own segment (array order IS install order, and a
+      // mirrored lift walks the segments in reverse).
+      let at = cutLengths.length;
+      for (let i = cutLengths.length - 1; i >= 0; i--) {
+        if (stripSegmentIndex[i] === best.segIdx) { at = i + 1; break; }
+      }
+      cutLengths.splice(at, 0, roundToPracticalLength(far - near, ROUND_STEP));
+      stitches.splice(at, 0, []);
+      extentsReach.splice(at, 0, far);
+      frontReach.splice(at, 0, near);
+      stripWidths.splice(at, 0, w);
+      stripStarts.splice(at, 0, Math.max(0, cornerSegments.slice(0, best.segIdx).reduce((acc, c) => acc + c.length, 0) + best.st));
+      stripLocalStarts.splice(at, 0, best.st);
+      stripSegmentIndex.splice(at, 0, best.segIdx);
+      stripDirs.splice(at, 0, { x: best.dir.x, y: best.dir.y });
+      stripIsStitch.splice(at, 0, true);
+      stripLapShare.splice(at, 0, 0);
+      stripCoversNothing.splice(at, 0, false);
+      overallResultN++;
+
+      const laid = [{ c: best.c, d: best.dir, n: best.nrm, width: w, near, far }];
+      const stillOpen = new Map();
+      open.forEach((g, k) => { if (!coveredBy(laid, g.x, g.y)) stillOpen.set(k, g); });
+      // A piece that took nothing means another one like it will not either.
+      if (stillOpen.size >= open.size) break;
+      open = stillOpen;
     }
   }
 
