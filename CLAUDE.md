@@ -122,6 +122,19 @@ Geometry / cut planning — the part that is subtle:
 
   Do not replace one with the other. The first is about the polygon, the
   second about the chain.
+
+  Then `wallFaceConsensus` — **the wall face is one surface and every lift
+  shares it**, so the lifts vote (weighted by face length, clustered by axis)
+  and a lift disagreeing with the majority is re-picked onto a candidate that
+  agrees. The vote is taken in `computeAndRender` before any lift is planned,
+  so it does not depend on list order; a wrong first lift used to propagate
+  when the reference was just "the lift below". The comparison is **signed**,
+  unlike `refDir`'s: a boundary is walked one way round, so a lift's face and
+  its back run in opposite directions and an unsigned match scores both at 1.
+  On RE580 four lifts of twenty-seven were laid off the wrong edge — two off
+  the back, two off an end square to the wall, putting their strips along the
+  face instead of into the fill. An explicit Face-picker choice bypasses all of
+  this (`pickFaceByIndex`), as it must.
 - `splitFaceIntoCornerSegments(face)` — splits the chosen face into segments
   the strips fan around. Uses `groupDirsByAngleFromStart` at
   `CORNER_SPLIT_ANGLE_DEG` (3°).
@@ -180,7 +193,7 @@ export, and state persistence.
 ## Conventions
 
 - **Bump `CACHE_NAME` in `sw.js` on every deploy that touches
-  `index.html`/`app.js`/`style.css`.** Currently `geomate-v145`. Forgetting
+  `index.html`/`app.js`/`style.css`.** Currently `geomate-v146`. Forgetting
   this means users keep running stale code offline.
 - Product library commits happen on `focusout`, **not** `input` — committing
   on `input` created a library entry per keystroke ("Sta", "Star", "Start"…).

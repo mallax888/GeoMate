@@ -671,12 +671,86 @@ function pickFaceAndBack(chains, refDir = null, poly = null, w = null, oMin = nu
       }
     }
   }
+  // The wall face is ONE SURFACE and every lift shares it — the lift at RL 63.50 ties into the same
+  // face as the one at RL 49.70. So where a lift's own pick disagrees with the direction the rest of
+  // the wall settled on (see wallFaceConsensus), and that lift has a usable candidate that agrees,
+  // the agreeing one is the face.
+  //
+  // The comparison is SIGNED, unlike refDir's above, and that is the whole point. A boundary is
+  // walked one way round, so a lift's face and its back run in OPPOSITE directions: an unsigned
+  // match scores both at 1 and cannot tell them apart. Measured on RE580, four lifts out of
+  // twenty-seven were laid off the wrong edge — two off the back, and two off an end square to the
+  // wall, which put their strips running ALONG the face instead of into the fill.
+  if (neighborDir) {
+    const agrees = (c) => c.dir.x * neighborDir.x + c.dir.y * neighborDir.y >= 0.85;
+    if (!agrees(face)) {
+      let agreeing = null;
+      sorted.forEach((c) => {
+        // A scrap of boundary that happens to point the right way is not the face of the lift.
+        if (c.length < naturalFace.length * 0.4) return;
+        if (!agrees(c) || (poly && !faceIsUsable(c, poly))) return;
+        if (!agreeing || c.length > agreeing.length) agreeing = c;
+      });
+      if (agreeing) {
+        face = agreeing;
+        back = backFor(sorted, agreeing).back;
+      }
+    }
+  }
+
   // Which candidate (in the same longest-first order the Face picker dropdown lists them) this
   // actually landed on — so the dropdown can show what's REALLY driving the diagram/stitch count
   // below it, not just default to showing "longest" selected whenever nothing was explicitly
   // clicked, even on a lift where the safety check above just silently picked something else.
   const chosenIndex = sorted.indexOf(face);
   return { face, back, chosenIndex };
+}
+
+/**
+ * The direction the wall's face runs, agreed across every lift of it, or null if the lifts don't
+ * agree well enough for one to speak for the rest.
+ *
+ * Every lift is a slice of the same wall, so its face is a slice of the same surface. Taken one lift
+ * at a time that is invisible — on a lift whose back edge happens to be a few centimetres longer than
+ * its face, or that is nearly square, "the longest chain" picks the wrong edge and nothing local says
+ * otherwise. Taken across the wall it is obvious: twenty-three lifts pointing one way and four
+ * pointing elsewhere is not four walls.
+ *
+ * Votes are weighted by face length, clustered by AXIS (parallel or anti-parallel, within ~20°), and
+ * the winning cluster then votes on which of its two directions is the face. A cluster has to carry
+ * most of the wall to speak for it — below that the lifts genuinely disagree and each keeps its own
+ * pick.
+ */
+function wallFaceConsensus(votes) {
+  const ALIGN = 0.94; // ~20°, same axis
+  const MAJORITY = 0.6; // of the wall's total face length
+  const total = votes.reduce((s, v) => s + v.len, 0);
+  if (votes.length < 3 || total <= 0) return null;
+  let best = null;
+  votes.forEach((ref) => {
+    let weight = 0, forward = 0, backward = 0;
+    votes.forEach((o) => {
+      const dot = o.dir.x * ref.dir.x + o.dir.y * ref.dir.y;
+      if (Math.abs(dot) < ALIGN) return;
+      weight += o.len;
+      if (dot >= 0) forward += o.len;
+      else backward += o.len;
+    });
+    if (!best || weight > best.weight) best = { weight, forward, backward, dir: ref.dir };
+  });
+  if (!best || best.weight < total * MAJORITY) return null;
+  const side = best.forward >= best.backward ? 1 : -1;
+  // Averaged over the lifts already on the winning side, in their own orientation — the wall curves
+  // in plan, so one lift's bearing is not the wall's.
+  let mx = 0, my = 0;
+  votes.forEach((o) => {
+    const dot = o.dir.x * best.dir.x + o.dir.y * best.dir.y;
+    if (Math.abs(dot) < ALIGN || (dot >= 0 ? 1 : -1) !== side) return;
+    mx += o.dir.x * o.len;
+    my += o.dir.y * o.len;
+  });
+  const m = Math.hypot(mx, my);
+  return m > 1e-9 ? { x: mx / m, y: my / m } : null;
 }
 
 function pointAtStation(chain, station) {
@@ -4064,14 +4138,39 @@ function computeAndRender() {
   // ever nudges a lift whose OWN candidates include a genuinely well-aligned, still-coverage-safe
   // match (see the alignment/back-edge/depth checks in pickFaceAndBack) — a real corner two
   // elevations apart simply won't have one, and falls straight back to its own natural pick.
+  // What the wall as a whole says its face direction is, decided BEFORE any lift is planned so it
+  // cannot depend on the order the lifts happen to sit in. Each lift's own natural pick votes, and
+  // the majority then corrects the lifts that disagree (see pickFaceAndBack). Only the face choice is
+  // computed here, not a cut plan, so this is cheap. A floor has no wall face and takes no part.
+  const wallFaceVotes = [];
+  if (!floorMode) {
+    rows.forEach((row) => {
+      if (row.dataset.mode !== "extents" || !row._extentsPoints) return;
+      const poly = ensureCCW(row._extentsPoints.map((p) => ({ x: p.x, y: p.y })));
+      const chains = chainEdges(poly);
+      if (chains.length < 2) return;
+      const p = productFor(row);
+      const picked =
+        row._faceCycle != null
+          ? pickFaceByIndex(chains, row._faceCycle).face
+          : pickFaceAndBack(chains, null, poly, p.w, p.oMin, null).face;
+      if (picked) wallFaceVotes.push({ dir: picked.dir, len: picked.length });
+    });
+  }
+  const wallFaceDir = wallFaceConsensus(wallFaceVotes);
+
   let prevFaceDir = null;
   rows.forEach((row) => {
     if (row.dataset.mode === "extents" && row._extentsPoints) {
       const rl = row.querySelector(".rl-input").value.trim();
       const refDir = rl ? rlFaceDir.get(rl) || null : null;
+      // The wall's own agreed direction, where there is one, in place of just the lift below — it
+      // says the same thing where the lifts already agree, and where they don't it is not at the
+      // mercy of whether the first lift in the list happened to be the odd one out.
+      const neighborDir = wallFaceDir || prevFaceDir;
       let cp;
       if (row._manualStrips) {
-        cp = computeManualCutPlan(row._extentsPoints, row._manualStrips, productSpecs, row._faceCycle, refDir, prevFaceDir);
+        cp = computeManualCutPlan(row._extentsPoints, row._manualStrips, productSpecs, row._faceCycle, refDir, neighborDir);
       } else {
         const p = productFor(row);
         // A floor with road alignments loaded is laid out from those instead of from the boundary — see
@@ -4086,7 +4185,7 @@ function computeAndRender() {
         if (!cp && floorMode && p.oMin < p.w) {
           cp = computeParallelCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle);
         }
-        if (!cp) cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle, refDir, packSide, stripSide, avoidStitches, prevFaceDir, floorMode, row._endOverrides) : null;
+        if (!cp) cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle, refDir, packSide, stripSide, avoidStitches, neighborDir, floorMode, row._endOverrides) : null;
         // How many stitch patches EVERY candidate face would produce, not just the active one — lets
         // the Face picker show the consequence of each option up front (see renderCutPlan) instead of
         // the user clicking through them blind to find the one with zero patches. Also records each
