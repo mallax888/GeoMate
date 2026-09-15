@@ -104,13 +104,24 @@ Geometry / cut planning — the part that is subtle:
 - `chainEdges(poly, angleThresholdDeg = 20)` — splits the boundary into
   candidate faces. Uses `groupDirsByAngle`.
 - `pickFaceAndBack` / `candidateFaceChains` — choose which chain is the face.
-  Its safety check (`facePlaneMinDepth` vs `SEVERE_BEHIND_FACE_TOL`) measures
-  the boundary against the face **polyline**, not against one averaged plane
-  through the chain's first vertex. A curved face swings behind its own
-  averaged plane all by itself — 17° of gentle bend over 24 m put its far end
-  2.9 m "behind" — which rejected the real face on three lifts and handed them
-  to a 7 m chain off the end of the extents, 65% of the lift with no grid on
-  it. Curvature is the normal case and says nothing about coverage.
+  `faceIsUsable` gates it on two independent failures, and **both are needed**:
+  - `facePlaneMinDepth` vs `SEVERE_BEHIND_FACE_TOL` — the boundary wrapping
+    behind the face, where no strip can sample. Measured against the face
+    **polyline**, not one averaged plane through its first vertex: a curved
+    face swings behind its own averaged plane all by itself (17° of gentle bend
+    over 24 m put its far end 2.9 m "behind"), which rejected the real face on
+    three lifts and handed them to a 7 m chain off the end of the extents — 65%
+    of the lift with no grid on it.
+  - `chainBearingSpread` vs `FACE_TURN_TOL` (45°) — the chain itself turning
+    through more than a face can. `chainEdges` compares each edge to the one
+    before, so a steady curve never trips its 20°: a quarter-circle fillet comes
+    back as one chain and on a small lift wins on length. Fixing the plane test
+    alone let that through, and RE580's top two lifts came out as twenty-odd
+    half-metre corner segments with strips crossing at every angle. Measured on
+    both walls: real faces spread **0–22°**, wrap-around arcs **90°**.
+
+  Do not replace one with the other. The first is about the polygon, the
+  second about the chain.
 - `splitFaceIntoCornerSegments(face)` — splits the chosen face into segments
   the strips fan around. Uses `groupDirsByAngleFromStart` at
   `CORNER_SPLIT_ANGLE_DEG` (3°).
@@ -169,7 +180,7 @@ export, and state persistence.
 ## Conventions
 
 - **Bump `CACHE_NAME` in `sw.js` on every deploy that touches
-  `index.html`/`app.js`/`style.css`.** Currently `geomate-v144`. Forgetting
+  `index.html`/`app.js`/`style.css`.** Currently `geomate-v145`. Forgetting
   this means users keep running stale code offline.
 - Product library commits happen on `focusout`, **not** `input` — committing
   on `input` created a library entry per keystroke ("Sta", "Star", "Start"…).

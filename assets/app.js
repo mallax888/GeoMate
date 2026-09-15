@@ -505,6 +505,35 @@ function candidateFaceChains(extentsPoints) {
 // return/wrap section — several metres, not centimetres — trips this.
 const SEVERE_BEHIND_FACE_TOL = 1.5;
 
+// How far a candidate face may swing round, end to end, before it stops being a face at all.
+//
+// `chainEdges` compares each edge to the one before it, so a boundary that curves steadily never
+// trips its 20° threshold however far round it goes — a quarter-circle fillet at the top of a wall
+// comes back as ONE chain, and on a small lift it is the longest one. Picking it lays the strips off
+// a bearing that is the average of a 90° turn, a bearing the wall never actually has: measured on
+// RE580, two lifts came out as twenty-odd corner segments of half a metre each, strips crossing one
+// another at every angle, 55% more grid than lift area. The chain it should have taken was the
+// straight run beside it.
+//
+// Measured across both test walls: every real face spreads 0–22°, every wrap-around arc exactly 90°.
+// 45° sits in that gap with room either side. This is NOT a limit on how curved a face may be — a
+// gently curving face is the normal case here and is split into corner segments downstream. It is
+// the line between "one wall, bending" and "the boundary turning a corner around something else".
+const FACE_TURN_TOL = 45;
+
+/** Total swing of a chain's bearing, end to end, in degrees — the range of its running turn, so a
+ *  curve that keeps going one way accumulates while an S-bend does not cancel itself out. */
+function chainBearingSpread(chain) {
+  let acc = 0, lo = 0, hi = 0;
+  for (let i = 1; i < chain.edges.length; i++) {
+    const a = chain.edges[i - 1], b = chain.edges[i];
+    acc += Math.atan2(a.x * b.y - a.y * b.x, a.x * b.x + a.y * b.y) * (180 / Math.PI);
+    lo = Math.min(lo, acc);
+    hi = Math.max(hi, acc);
+  }
+  return hi - lo;
+}
+
 /**
  * How far the worst point of the boundary sits BEHIND the face — behind the face as drawn, not
  * behind one averaged plane through its first vertex.
@@ -565,6 +594,16 @@ function countStitchesForFace(poly, rawChain, w, oMin) {
   return stitches;
 }
 
+/**
+ * Whether a chain can carry the lift's strips at all. Two independent ways it cannot: the boundary
+ * wraps behind it, where no strip can ever sample (facePlaneMinDepth), or it swings so far round that
+ * its own averaged bearing is one the wall never has (chainBearingSpread). Either one makes it not a
+ * face, however long it is.
+ */
+function faceIsUsable(chain, poly) {
+  return facePlaneMinDepth(chain, poly) >= -SEVERE_BEHIND_FACE_TOL && chainBearingSpread(chain) <= FACE_TURN_TOL;
+}
+
 function pickFaceAndBack(chains, refDir = null, poly = null, w = null, oMin = null, neighborDir = null) {
   const sorted = chains.slice().sort((a, b) => b.length - a.length);
 
@@ -580,8 +619,8 @@ function pickFaceAndBack(chains, refDir = null, poly = null, w = null, oMin = nu
   // broken toward the longer one, sorted's own order) rather than just the first/longest safe
   // option. Falls back to the natural pick if nothing safer exists (some shapes genuinely have no
   // clean option).
-  if (poly && facePlaneMinDepth(naturalFace, poly) < -SEVERE_BEHIND_FACE_TOL) {
-    const safeCandidates = sorted.filter((c) => c.length >= naturalFace.length * 0.15 && facePlaneMinDepth(c, poly) >= -SEVERE_BEHIND_FACE_TOL);
+  if (poly && !faceIsUsable(naturalFace, poly)) {
+    const safeCandidates = sorted.filter((c) => c.length >= naturalFace.length * 0.15 && faceIsUsable(c, poly));
     if (safeCandidates.length) {
       let neighborMatch = null;
       if (neighborDir) {
@@ -626,7 +665,7 @@ function pickFaceAndBack(chains, refDir = null, poly = null, w = null, oMin = nu
       // plain wall face in that orientation, and the natural pick above is the correct one to keep.
       // Also re-checks the SAME coverage-safety condition as the natural pick above — cheap defence
       // in depth in case a sibling's alignment ever happened to match an unsafe candidate.
-      if (alt.back && alt.bestDot < -0.3 && (!poly || facePlaneMinDepth(bestChain, poly) >= -SEVERE_BEHIND_FACE_TOL)) {
+      if (alt.back && alt.bestDot < -0.3 && (!poly || faceIsUsable(bestChain, poly))) {
         face = bestChain;
         back = alt.back;
       }
