@@ -38,7 +38,8 @@ These come from the user directly. Violating them makes output wrong on site.
    Floor is laid back-to-back where ends are not critical, so it uses minimum
    pitch and lets the last strip overshoot (`minPitchLift`). Minimum overlap
    stays user-configurable in both modes because it is product-dependent.
-   Corner segments (`segCount > 1`) always use minimum pitch regardless.
+   A lift with corners in its face is no different: `calcLift` over the WHOLE
+   face, so both ends land flush on the real ends of the wall.
 5. **A floor is never laid off the boundary.** The boundary layout fans the
    strips round every bend, which is the thing this app exists to avoid. A
    floor uses one of two layouts instead, both drawn in true plan orientation
@@ -193,7 +194,7 @@ export, and state persistence.
 ## Conventions
 
 - **Bump `CACHE_NAME` in `sw.js` on every deploy that touches
-  `index.html`/`app.js`/`style.css`.** Currently `geomate-v146`. Forgetting
+  `index.html`/`app.js`/`style.css`.** Currently `geomate-v147`. Forgetting
   this means users keep running stale code offline.
 - Product library commits happen on `focusout`, **not** `input` — committing
   on `input` created a library entry per keystroke ("Sta", "Star", "Start"…).

@@ -1276,25 +1276,25 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     };
   }
 
-  // A genuine corner within the face (see splitFaceIntoCornerSegments): every segment is anchored
-  // flush against whichever of its two boundaries is a real corner shared with a neighbour — never a
-  // strip barrelling through into the next segment's territory uncut (the earlier "may overrun"
-  // design's actual waste). But overlap itself should only ever be forced ABOVE the minimum right at
-  // that corner, where two strips genuinely have to fan out at a real angle — not along an ordinary
-  // straight run away from any corner, and not at a true END of the wall either (the very first or
-  // very last segment's own outer edge, which is no corner at all). So only a segment boundary that's
-  // shared with ANOTHER segment gets calcLift's evenly-spread fit (flush, whatever overlap that
-  // takes); a segment's own true-wall-end boundary instead steps at plain minimum pitch (w - oMin,
-  // same as an ordinary straight lift's minimum-overlap case) and simply lets its outermost strip run
-  // past that true end by whatever's left over — same harmless excess any calcLift call already
-  // tolerates, just not pulled back into extra overlap to land exactly on a line that was never a
-  // corner to begin with. Segments are walked in the face's own direction by default (segment 0
-  // first, at the true face origin) — "Strip 1 starts from Right" flips which physical end the build
-  // actually starts from, so a mirrored lift walks cornerSegments in reverse and, within each one,
-  // measures/steps from that segment's own FAR end instead of its near one (reverseChain), while
-  // every real-world boundary lookup still uses the segment's true, unflipped inward normal — a
-  // mirrored direction changes which end strips are numbered/anchored from, never which side is
-  // "into the fill", nor which physical boundary is a true wall end versus a corner.
+  // ONE run of strips along the whole face — not a fresh run restarted at every corner.
+  //
+  // The face is split into corner segments so that each strip can be square to the wall where it
+  // actually sits (rule 1). That is about BEARING. It is not a reason to start the strip count again
+  // at every join, and treating it as one is what made a bendy lift look like a mess: a 14.57 m face
+  // that survey wobble split into five segments — 0.31, 1.80, 3.58, 7.96 and 0.93 m — ran five
+  // separate counts, each anchored flush at its own corner. They crossed each other, laid strips at
+  // 0.5 m pitch off a 1.3 m roll, and put 16 strips on a face that takes 12.
+  //
+  // Set out once along the face instead, exactly as it is done on the ground: measure along the wall,
+  // mark every pitch, lay each grid square to the face AT ITS OWN MARK. Each strip takes the bearing
+  // of whichever segment its centre falls in, so bearings still track the wall to within
+  // CORNER_SPLIT_ANGLE_DEG, but the pitch is uniform and nothing doubles up at a join. Both ends land
+  // flush on the real ends of the wall (calcLift), which is what rule 4 asks for and what a
+  // per-segment count could never give, since it was flush against joins that are not ends at all.
+  //
+  // Mirroring ("Strip 1 starts from Right") only changes which end the numbering counts from. With a
+  // single even run the positions are symmetrical, so it moves no strip — same as an ordinary
+  // straight lift.
   const mirror = stripSide === "right";
   let overallResultN = 0;
   const cutLengths = [];
@@ -1302,117 +1302,57 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
   const extentsReach = [];
   const frontReach = [];
   const stripWidths = [];
-  const stripStarts = [];
-  const stripLocalStarts = []; // start position within the strip's OWN segment (not flattened),
-  // always relative to that segment's ORIGINAL (unmirrored) orientation in cornerSegments — the
-  // true-geometry diagram (renderCutPlanSvgCornered) needs this to place each strip in its own
-  // segment's real world frame; stripStarts above stays a flattened approximation for every other
-  // consumer that just needs a sane, non-crashing single-axis number.
+  const stripStarts = []; // station along the whole face.
+  const stripLocalStarts = []; // and the same position measured within the strip's OWN segment, which
+  // is what the true-geometry diagram (renderCutPlanSvgCornered) places it from. Can sit slightly
+  // before or past that segment's own ends where a strip straddles a join.
   const stripSegmentIndex = []; // which corner segment (its ORIGINAL index) each strip belongs to.
-  const stripIsStitch = []; // true for a narrow gap-filling piece added at a corner (see below).
-  const stripDirs = []; // per-strip bearing OVERRIDE, normally all empty. Only the last strip can
-  // take one, and only when its own segment is too short to be orienting a strip at all — see the
-  // check after the loop. Every other strip reads its bearing off its own segment.
-  const segOverlaps = []; // each segment's own evenly-spread overlap — not necessarily equal across
-  // segments of different lengths, unlike a plain straight lift's single flat number.
-  let flatOffset = 0; // running total of true segment lengths, for a flattened stripStarts
-  // approximation — the diagram itself doesn't yet draw a real bend (see renderCutPlanSvg), so this
-  // just keeps every existing consumer of stripStarts fed a sane, non-crashing number until it does.
-  const installOrder = mirror
-    ? cornerSegments.map((_, i) => cornerSegments.length - 1 - i)
-    : cornerSegments.map((_, i) => i);
-  installOrder.forEach((segIdx, orderPos) => {
-    const seg = cornerSegments[segIdx];
-    const segDir = seg.dir;
-    const segInward = inwardNormal(segDir); // the segment's TRUE inward direction — never flipped,
-    // even when workChain below walks its edges backward for a mirrored build.
-    const segLen = seg.length;
-    const rawChain = { edges: seg.edges, length: segLen, dir: segDir };
-    const workChain = mirror ? reverseChain(rawChain) : rawChain;
+  const stripIsStitch = []; // true for a piece laid over bare ground at the end (see the sweep below).
+  const stripDirs = []; // per-strip bearing OVERRIDE, normally all empty. Only an end strip takes one,
+  // and only when its own segment is too short to be orienting a strip at all — see the check after
+  // the loop. Every other strip reads its bearing off its own segment.
 
-    // workChain-local 0 is always exactly where this segment's own strip numbering starts — either a
-    // corner shared with the PREVIOUS segment in install order (the anchor point — it has to be
-    // exact there) or a true end (the very FIRST segment install reaches, so nothing precedes it) —
-    // either way it's already exact for free, just by starting the count there. workChain-local
-    // segLen, at the OTHER end, is never anchored by anything: whether it lands on the true wall end
-    // or the NEXT corner, the next thing that needs to be exact is the far segment's own local-0, on
-    // its own independent count — this end never has to match it. So every segment uses minimum
-    // pitch and lets its last strip overshoot past that boundary, same as an ordinary straight lift's
-    // short-segment case; stripBoundaryReach still clips the strip back to the real polygon, so an
-    // overshoot at a corner just means a bit of extra overlap with the next segment's first strip
-    // there — expected at the dot — rather than every strip in this segment being squeezed tighter to
-    // land exactly on a line nothing downstream needs to match.
-    const pitch = Math.max(w - oMin, 0.01);
-    // Whether this segment's far end is a real corner shared with the next segment, or the true end
-    // of the wall. It decides what happens to the leftover when the segment doesn't divide evenly.
-    //
-    // At a TRUE END, running the last strip past the line is harmless — there is nothing beyond it
-    // to collide with, and the overshoot is simply trimmed on site, so the end stays covered.
-    //
-    // At a CORNER it is not harmless: the overshooting strip lands on top of the next segment's
-    // first strip, which is anchored flush at that same corner. That is the doubling-up visible
-    // where a face turns.
-    //
-    // So a corner segment takes the strip count that covers it (ceil, not floor) and spreads them
-    // EVENLY across its own length, flush at both ends. Minimum pitch plus floor left the segment
-    // short of its corner and slid the last strip up to close that end — which just moved the
-    // shortfall inland, opening a gap of it between the slid strip and the one before. A 0.3 m gap
-    // running the full depth of the lift is 2.6 m2 of bare ground per segment, and "all strips need
-    // to be back to back at least" rules it out. Even spreading can only ever ADD overlap beyond the
-    // product's minimum, never take it below, so it is always safe to lay.
-    const endsAtCorner = orderPos < installOrder.length - 1;
-    const segN =
-      segLen <= w
-        ? 1
-        : endsAtCorner
-        ? Math.max(1, Math.ceil((segLen - w) / pitch - 1e-9) + 1)
-        : Math.max(1, Math.ceil((segLen - w) / pitch) + 1);
-    const segPitch = endsAtCorner && segN > 1 ? (segLen - w) / (segN - 1) : pitch;
-    const segStarts = Array.from({ length: segN }, (_, i) => i * segPitch);
-    // What this segment's seams actually lap by, which is the minimum only when its length happened
-    // to divide evenly — reported per segment so the schedule quotes the lap being laid, not the one
-    // that was asked for.
-    const segOverlapForReport = segN > 1 ? Math.max(0, w - segPitch) : oMin;
-    segOverlaps.push(segOverlapForReport);
-    // Either fit's last strip can run past this segment's own far edge (a genuine calcLift n=1 short
-    // segment; the true-wall-end pitch fit, by design) — extending the chain so that overhang's
-    // boundary-reach sampling is still a real, correctly-extrapolated position rather than clamped to
-    // this segment's last vertex.
-    const overrunLen = Math.max(segLen, segStarts[segStarts.length - 1] + w);
-    const segFace = extendChainToStation(workChain, overrunLen);
+  const faceOrigin = face.edges[0].from;
+  const faceVertexStations = poly
+    .map((p) => (p.x - faceOrigin.x) * face.dir.x + (p.y - faceOrigin.y) * face.dir.y)
+    .filter((s) => s >= 0 && s <= face.length)
+    .sort((a, b) => a - b);
 
-    const segFaceOrigin = segFace.edges[0].from;
-    const segVertexStations = poly
-      .map((p) => (p.x - segFaceOrigin.x) * segFace.dir.x + (p.y - segFaceOrigin.y) * segFace.dir.y)
-      .filter((s) => s >= 0 && s <= segFace.length)
-      .sort((a, b) => a - b);
-
-    for (let i = 0; i < segN; i++) {
-      const start = segStarts[i];
-      const station = Math.max(0, Math.min(segFace.length, start + w / 2));
-      const r = stripBoundaryReach(station, w, poly, segFace, segInward, segVertexStations, avoidStitches);
-      cutLengths.push(r.cutLength);
-      stitches.push(r.stitches);
-      extentsReach.push(r.farReach);
-      frontReach.push(r.nearReach);
-      stripWidths.push(w);
-      stripStarts.push(flatOffset + start);
-      // A mirrored strip's `start` is local to workChain (measured from the segment's far end) — the
-      // renderer reads this against the segment's ORIGINAL orientation instead, so it needs
-      // converting back.
-      stripLocalStarts.push(mirror ? segLen - start - w : start);
-      stripSegmentIndex.push(segIdx);
-      stripIsStitch.push(false);
-      overallResultN++;
-    }
-
-    // Nothing is left over at the corner any more: a corner segment's strips are spread evenly
-    // across its own length (see segPitch above), so the last one finishes exactly on the corner. The
-    // shortfall this used to close — by sliding the last strip up, or by laying a full-width piece
-    // against the corner — no longer exists, and both of those left a gap of their own inland.
-
-    flatOffset += segLen;
+  // Where each segment starts, as a station along the face, so a strip can be handed the bearing of
+  // the segment its centre lands in.
+  const segStations = [];
+  let segAcc = 0;
+  cornerSegments.forEach((seg) => {
+    segStations.push(segAcc);
+    segAcc += seg.length;
   });
+  const segmentAtStation = (station) => {
+    for (let k = cornerSegments.length - 1; k > 0; k--) if (station >= segStations[k] - 1e-9) return k;
+    return 0;
+  };
+
+  const fit = floorMode ? minPitchLift(face.length, w, oMin) : calcLift(face.length, w, oMin);
+  if (!fit) return null;
+  const runPitch = fit.n > 1 ? (face.length - w) / (fit.n - 1) : 0;
+  const overallOverlap = fit.n > 1 ? Math.max(0, w - runPitch) : oMin;
+
+  for (let i = 0; i < fit.n; i++) {
+    const start = (mirror ? fit.n - 1 - i : i) * runPitch;
+    const station = Math.max(0, Math.min(face.length, start + w / 2));
+    const segIdx = segmentAtStation(station);
+    const segInward = inwardNormal(cornerSegments[segIdx].dir);
+    const r = stripBoundaryReach(station, w, poly, face, segInward, faceVertexStations, avoidStitches);
+    cutLengths.push(r.cutLength);
+    stitches.push(r.stitches);
+    extentsReach.push(r.farReach);
+    frontReach.push(r.nearReach);
+    stripWidths.push(w);
+    stripStarts.push(start);
+    stripLocalStarts.push(start - segStations[segIdx]);
+    stripSegmentIndex.push(segIdx);
+    stripIsStitch.push(false);
+    overallResultN++;
+  }
 
   // stripDirs is filled in BY INDEX, not pushed, so up to here it is a short, sparse array — its
   // length is however far the last turned strip reached, usually zero. From now on every per-strip
@@ -1518,12 +1458,6 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
   };
   for (let k = omitCount(lastMode); k > 0 && cutLengths.length > 1; k--) dropStripAt(cutLengths.length - 1);
   for (let k = omitCount(firstMode); k > 0 && cutLengths.length > 1; k--) dropStripAt(0);
-
-  // Each segment's own overlap is only reported as one flat number when every segment actually landed
-  // on the same value (short lifts of near-identical length aren't unusual) — otherwise this reads
-  // exactly like a mixed-product lift's "lapping each strip by its own product's overlap" case, which
-  // every existing consumer (summary text, roll schedule, CSV) already knows how to fall back to.
-  const overallOverlap = segOverlaps.every((o) => Math.abs(o - segOverlaps[0]) < 1e-6) ? segOverlaps[0] : null;
 
   // How much of each strip lands on ground another strip already covers. Nothing is removed on this
   // number — a strip is what ties the face in and the plan stays the plan — but a piece that is very
