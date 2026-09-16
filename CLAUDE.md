@@ -248,8 +248,25 @@ runs crossed at every join and the lift carried four narrow gap-filling pieces
 RE580: 1° → 536 strips / 661.0 m / 0.835°; 3° → 520 / 656.3 / 2.61°; 5° → 510 /
 655.0 / 4.74°; 8° → 504 / 651.8 / 7.92°. Material moves ~1% across that whole
 range, so the tolerance buys legibility and piece count and pays in squareness.
-The user priced it at 3°. Do not move it without putting the same measurements
-back in front of them.
+The user priced it at 3°, and **priced it again** after seeing what it looks
+like on their own wall. Re-measured on RE580 (27 lifts, once strips ran as one
+count along the face), counting how often two neighbouring strips are laid more
+than 5° apart and so fan into each other:
+
+| split | strips | grid over lift | bare | worst off-square | neighbours >5° apart |
+|-------|--------|----------------|------|------------------|----------------------|
+| 3°    | 519    | 11.1%          | 0.17%| 2.5°             | 21 (worst 18°)       |
+| 5°    | 512    | 9.5%           | 0.05%| 4.7°             | 16                   |
+| 8°    | 504    | 8.1%           | 0.06%| 7.9°             | 6                    |
+| 12°   | 502    | 7.7%           | 0.07%| 5.1°             | 3                    |
+
+Material moves 3.4% across the whole range. A looser threshold buys strips that
+don't fan against each other and pays in squareness to the face. Shown all four,
+**the user chose to stay at 3°** — rule 1 beats a tidier drawing. Some fanning
+where the surveyed face kinks is therefore EXPECTED OUTPUT, not a defect: on
+RE580 the face genuinely runs 44.5° → 36.9° → 49.3° over 3 m facets, and strips
+square to facets 12° apart meet somewhere in the fill. Do not "fix" it, and do
+not move the threshold without putting these measurements back in front of them.
 
 **Never ship a change that regresses a previously-working, verified case**,
 even if it fixes the case in front of you. Revert and find a narrower fix.
