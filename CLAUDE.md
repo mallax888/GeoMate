@@ -39,7 +39,10 @@ These come from the user directly. Violating them makes output wrong on site.
    pitch and lets the last strip overshoot (`minPitchLift`). Minimum overlap
    stays user-configurable in both modes because it is product-dependent.
    A lift with corners in its face is no different: `calcLift` over the WHOLE
-   face, so both ends land flush on the real ends of the wall.
+   face, so both ends land flush on the real ends of the wall. A floor that
+   falls through to the boundary layout keeps **minimum pitch** there — do not
+   let it inherit the wall's even spread, which would squeeze every seam
+   tighter to land on a line nothing needs to match.
 5. **A floor is never laid off the boundary.** The boundary layout fans the
    strips round every bend, which is the thing this app exists to avoid. A
    floor uses one of two layouts instead, both drawn in true plan orientation
@@ -86,6 +89,18 @@ These come from the user directly. Violating them makes output wrong on site.
      corners because the same hole appears at a bend, at a raking end, and
      either side of a short segment. **Floors are excluded** (rule 5).
 
+     It reaches **every** wall lift, including one whose face is a single
+     straight run. Those used to return early from `computeCutPlan` and skip
+     this rule, rule 6 and the end overrides with it. Only the opt-in "force
+     every strip the same length from one side" keeps its own path, because its
+     strips can be different WIDTHS and nothing else here is. In practice the
+     sweep finds nothing to do on a straight face — a strip square to it reaches
+     the boundary at every station by construction, and a pocket past a gap is
+     already a stitch patch — but the rule is now enforced there rather than
+     assumed. Measured: with the threshold dropped to 0.1 m² not one straight
+     lift on RE580 produced a piece, and a shape whose extents rake past the end
+     of a straight face came out fully covered.
+
    Two rectangles at different bearings, both flush to a face that bends,
    cannot also be flush to each other: the options are doubling up, a gap, or a
    piece across the join. This is the third. Expect ~20% more grid than lift
@@ -104,6 +119,11 @@ Geometry / cut planning — the part that is subtle:
 - `minPitchLift(L, w, oMin)` — minimum-overlap stripping, last strip overshoots.
 - `chainEdges(poly, angleThresholdDeg = 20)` — splits the boundary into
   candidate faces. Uses `groupDirsByAngle`.
+- `needsTrueGeometry(cutPlan)` — which diagram a plan gets. The flat one draws
+  strips edge to edge at the midpoint between ARRAY-adjacent strips, which
+  assumes they march along the face in order; a patch piece sits wherever the
+  hole was, so a straight lift carrying one has to go to the true-geometry
+  renderer or the piece is drawn as a slab across its neighbours.
 - `pickFaceAndBack` / `candidateFaceChains` — choose which chain is the face.
   `faceIsUsable` gates it on two independent failures, and **both are needed**:
   - `facePlaneMinDepth` vs `SEVERE_BEHIND_FACE_TOL` — the boundary wrapping
@@ -194,7 +214,7 @@ export, and state persistence.
 ## Conventions
 
 - **Bump `CACHE_NAME` in `sw.js` on every deploy that touches
-  `index.html`/`app.js`/`style.css`.** Currently `geomate-v147`. Forgetting
+  `index.html`/`app.js`/`style.css`.** Currently `geomate-v148`. Forgetting
   this means users keep running stale code offline.
 - Product library commits happen on `focusout`, **not** `input` — committing
   on `input` created a library entry per keystroke ("Sta", "Star", "Start"…).

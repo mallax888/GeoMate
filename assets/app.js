@@ -753,6 +753,22 @@ function wallFaceConsensus(votes) {
   return m > 1e-9 ? { x: mx / m, y: my / m } : null;
 }
 
+/**
+ * Whether a plan has to be drawn in true geometry rather than flattened.
+ *
+ * Any lift with a real corner in its face, any plan laid to the site instead of to a face, and —
+ * the one that is easy to miss — a straight lift carrying a piece laid over bare ground. The flat
+ * diagram draws strips edge to edge at the midpoint between ARRAY-adjacent strips, which assumes
+ * the strips march along the face in order. A patch piece sits wherever the hole was, so that
+ * assumption breaks and the piece is drawn as a slab across its neighbours.
+ */
+function needsTrueGeometry(cutPlan) {
+  if (!cutPlan) return false;
+  if (cutPlan.centrelineMode) return true;
+  if (cutPlan.cornerSegments && cutPlan.cornerSegments.length > 1) return true;
+  return !!(cutPlan.cornerSegments && (cutPlan.stripIsStitch || []).some(Boolean));
+}
+
 function pointAtStation(chain, station) {
   let acc = 0;
   const edges = chain.edges;
@@ -1189,19 +1205,16 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
   // today's single-direction behaviour regardless of any corner within it.
   const cornerSegments = packed ? [pickedFace] : splitFaceIntoCornerSegments(face);
 
-  if (cornerSegments.length <= 1) {
-    // Wall: calcLift's evenly-spread fit, so both ends land flush on the real tie-in lines. Floor:
-    // no face to tie into, so minPitchLift instead — same minimum-overlap, overshoot-allowed
-    // stepping every corner segment already uses further down (see installOrder.forEach below).
-    const result = packed || (floorMode ? minPitchLift(face.length, w, oMin) : calcLift(face.length, w, oMin));
-    if (!result) return null;
-    const pitch = !packed && result.n > 1 ? w - result.overlap : 0;
-    // packStripsFromSide already mirrors itself onto packSide (that's a real repositioning, since its
-    // strips sit at exact-minimum pitch, not the spread-evenly one below). The plain default layout
-    // below is uniform pitch either way — mirroring it doesn't move a single strip, it only changes
-    // which end is numbered "Strip 1" (and so which end rolls/labels count from), which is exactly
-    // what "Strip 1 starts from" is for on a lift that isn't also forcing same-length strips.
-    const mirror = !packed && stripSide === "right" && result.n > 1;
+  // "Force every strip the same length from one side" is a separate, narrower feature: its strips sit
+  // at exact minimum pitch and can be different WIDTHS, which nothing else here does. It keeps its own
+  // path. Everything else — including a lift whose face is dead straight and comes back as a single
+  // corner segment — goes through the one layout below, so the same rules reach every lift: no gaps
+  // (rule 7), nothing covering no ground (rule 6), the end-strip overrides, all of it. A straight lift
+  // used to return early from here and quietly skipped the lot.
+  if (packed) {
+    // packStripsFromSide has already positioned and mirrored every strip onto packSide itself, so
+    // there is no pitch to step and no mirroring left to do here.
+    const result = packed;
 
     // Fixed for the whole lift, not recomputed per strip from a locally-varying tangent — every strip
     // is parallel, which is what "grids can only ever be square" means in practice.
@@ -1224,12 +1237,8 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     const stripWidths = [];
     const stripStarts = [];
     for (let i = 0; i < result.n; i++) {
-      const width = packed ? packed.widths[i] : w;
-      // Uniform pitch spans exactly [0, face.length] end to end ((n-1)*pitch + w === face.length), so
-      // reflecting each position about the centre reproduces the very same set of positions — mirroring
-      // has to swap which INDEX gets which slot instead (Strip 1 takes the slot Strip n used to hold),
-      // not reflect the coordinate itself, or it's a no-op.
-      const start = packed ? packed.starts[i] : (mirror ? result.n - 1 - i : i) * pitch;
+      const width = packed.widths[i];
+      const start = packed.starts[i];
       const station = Math.max(0, Math.min(face.length, start + width / 2));
       const r = stripBoundaryReach(station, width, poly, face, inward, vertexStations, avoidStitches);
       cutLengths.push(r.cutLength);
@@ -1333,7 +1342,10 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
 
   const fit = floorMode ? minPitchLift(face.length, w, oMin) : calcLift(face.length, w, oMin);
   if (!fit) return null;
-  const runPitch = fit.n > 1 ? (face.length - w) / (fit.n - 1) : 0;
+  // A wall spreads its strips evenly so both ends land flush on the real tie-in lines. A floor has no
+  // face to tie into, so it keeps minimum pitch and lets the last strip overshoot — rule 4. Spreading
+  // a floor evenly would quietly squeeze every seam tighter to land on a line nothing needs to match.
+  const runPitch = fit.n <= 1 ? 0 : floorMode ? Math.max(w - oMin, 0.01) : (face.length - w) / (fit.n - 1);
   const overallOverlap = fit.n > 1 ? Math.max(0, w - runPitch) : oMin;
 
   for (let i = 0; i < fit.n; i++) {
@@ -4782,7 +4794,7 @@ function buildCutPlanSvgMarkup(cutPlan, w, stripRollNumbers) {
   svg.setAttribute("viewBox", "0 0 400 260");
   svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
   svg.setAttribute("class", "cutplan-print-page__plan");
-  if (cutPlan.centrelineMode || (cutPlan.cornerSegments && cutPlan.cornerSegments.length > 1)) {
+  if (needsTrueGeometry(cutPlan)) {
     renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers);
   } else {
     renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers);
@@ -5855,7 +5867,7 @@ function renderCutPlan(results) {
       // A plan-oriented layout goes to the true-geometry renderer even on a single segment: the flat
       // one straightens the lift onto one axis, which is exactly what a plan laid to the site must
       // not do — it turns a bent corridor into a rectangle nobody can match against the CAD.
-    } else if (r.cutPlan.centrelineMode || (r.cutPlan.cornerSegments && r.cutPlan.cornerSegments.length > 1)) {
+    } else if (needsTrueGeometry(r.cutPlan)) {
       renderCutPlanSvgCornered(svgEl, r.cutPlan, r.w, stripRollNumbersFor(r, rollLookup));
     } else {
       renderCutPlanSvg(svgEl, r.cutPlan, r.w, stripRollNumbersFor(r, rollLookup));
