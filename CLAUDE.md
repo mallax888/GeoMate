@@ -121,7 +121,10 @@ These come from the user directly. Violating them makes output wrong on site.
    the opening screen listed generate / paste / add-by-hand and never mentioned
    DXF. The empty state now leads with it, and a second button sits beside
    "+ Add lift" so it is reachable from any tab (hidden on Cut plan, which has
-   its own). Both call `startExtentsUpload`, which **switches to Cut plan first**
+   its own, and on the empty state, which is already offering the same thing a
+   few centimetres below — two identical green buttons on one screen is not two
+   ways in, it is a mistake). Both call `startExtentsUpload`, which **switches
+   to Cut plan first**
    and then opens the picker: the wall/floor question and the upload's status
    line live in that view, and asking "wall or floor" somewhere the user cannot
    see it is how a floor silently gets a wall layout. Note for tests: the empty
@@ -246,7 +249,7 @@ export, and state persistence.
 ## Conventions
 
 - **Bump `CACHE_NAME` in `sw.js` on every deploy that touches
-  `index.html`/`app.js`/`style.css`.** Currently `geomate-v152`. `activate()`
+  `index.html`/`app.js`/`style.css`.** Currently `geomate-v153`. `activate()`
   drops every other cache, which is what clears anything an older worker left.
 - **The service worker is NETWORK-FIRST for the app** (page, script,
   stylesheet) with a 3.5 s timeout falling back to the stored copy, and

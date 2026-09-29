@@ -4011,6 +4011,7 @@ function computeAndRender() {
 
   const rows = Array.from(tbody.querySelectorAll(".lift-row"));
   emptyState.hidden = rows.length > 0;
+  updateHeaderUpload();
   // Collected alongside validateRows() below — these catch bad values on a single row's own inputs
   // (negative face length/embedment), which validateRows can't see because a row that fails to
   // produce a result is never added to liftResults in the first place.
@@ -4998,6 +4999,20 @@ const TABS = {
  * Both switch to Cut plan BEFORE opening the file dialog. The wall/floor question and the upload's
  * own status line live in that view, so starting the upload anywhere else would ask the question
  * somewhere the user cannot see it — and answering wall when it is a floor is not a small mistake. */
+/* Exactly ONE way in is offered at a time. The header button steps aside for the Cut plan tab, which
+ * has its own upload with the product picker and centrelines beside it, and for the empty state,
+ * which is already showing the same call to action a few centimetres below it — two identical green
+ * buttons on one screen is not two ways in, it is a mistake. */
+let currentTab = "takeoff";
+
+function updateHeaderUpload() {
+  const btn = document.getElementById("headerUploadBtn");
+  if (!btn) return;
+  const empty = document.getElementById("emptyState");
+  const emptyShowing = !!empty && !empty.hidden && currentTab === "takeoff";
+  btn.hidden = currentTab === "cutplan" || emptyShowing;
+}
+
 function startExtentsUpload() {
   switchTab("cutplan");
   const input = document.getElementById("dxfExtentsInput");
@@ -5012,10 +5027,8 @@ function switchTab(which) {
     tab.setAttribute("aria-selected", String(active));
   });
   document.getElementById("addLiftBtn").hidden = which !== "takeoff";
-  // The upload is offered everywhere EXCEPT the Cut plan tab, which already has its own — with the
-  // product picker and the centrelines beside it — so the header would just repeat it there.
-  const headerUpload = document.getElementById("headerUploadBtn");
-  if (headerUpload) headerUpload.hidden = which === "cutplan";
+  currentTab = which;
+  updateHeaderUpload();
   if (which === "view3d" && window.__geogridResults) render3D(window.__geogridResults);
 }
 

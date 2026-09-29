@@ -1907,3 +1907,19 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
   cursor: pointer;
 }
 .btn--link:hover { color: var(--accent); }
+
+/* The two actions belong together and apart from the tabs: tabs are navigation, these do something.
+   Grouping them stops the upload button being flung to the far end of the tab row when it wraps. */
+.panel__headactions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-left: auto;
+}
+/* Ghost, not primary. Once there are lifts the table is the work and this is a secondary way back
+   to CAD — a second solid green button next to the active tab just fights it for attention. */
+.btn--icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
