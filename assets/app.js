@@ -4514,6 +4514,9 @@ function renderSummary(results, productSpecs, rollGroupSize, installRate, baseLe
   const overlapWasteArea = totalArea - totalTheoreticalArea;
   const overlapWastePct = totalTheoreticalArea > 0 ? (overlapWasteArea / totalTheoreticalArea) * 100 : 0;
 
+  // A schedule with nothing in it is eight zeros teaching nobody anything, so it stays out of the
+  // way until there is something to total. Everything below the heading is hidden by one class.
+  document.querySelector(".panel--summary").classList.toggle("is-empty", results.length === 0);
   document.getElementById("statLifts").textContent = fmt.int(results.length);
   document.getElementById("statStrips").textContent = fmt.int(totalStrips);
   document.getElementById("statArea").innerHTML = `${fmt.m(totalArea)}<small> m²</small>`;

@@ -105,7 +105,17 @@ These come from the user directly. Violating them makes output wrong on site.
    cannot also be flush to each other: the options are doubling up, a gap, or a
    piece across the join. This is the third. Expect ~20% more grid than lift
    area on a bendy wall — that is the lap, and it is the price of no gaps.
-8. **A control that cannot act must not be shown.** The Face picker and the
+8. **Don't open the app on every control at once.** The left column is not one
+   panel of settings, it is six separate tools (layout options, generate lifts,
+   paste data, intermediate grids, import lengths, projects) plus the
+   methodology note. Each is a `<details class="tool">`, shut by default: the
+   summaries still name everything the column offers, and every control is one
+   click away. The material schedule is a RESULTS panel — it carries
+   `.is-empty` until there is something to total, which hides the tiles and
+   shows one line instead of eight zeros. Measured: first load went from 2168 px
+   and 306 words to 1005 px and 175, with the settings column 1570 px → 411.
+   A test that drives a control in that column has to open its section first.
+9. **A control that cannot act must not be shown.** The Face picker and the
    end-strip overrides only mean something to the boundary layout, so they are
    left out of the card on a centreline plan; the wedges left on the outside
    of a bend are not patched, because a rectangle covering one lies on ground
@@ -224,7 +234,7 @@ export, and state persistence.
 ## Conventions
 
 - **Bump `CACHE_NAME` in `sw.js` on every deploy that touches
-  `index.html`/`app.js`/`style.css`.** Currently `geomate-v149`. Forgetting
+  `index.html`/`app.js`/`style.css`.** Currently `geomate-v150`. Forgetting
   this means users keep running stale code offline.
 - Product library commits happen on `focusout`, **not** `input` — committing
   on `input` created a library entry per keystroke ("Sta", "Star", "Start"…).

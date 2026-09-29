@@ -680,20 +680,9 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
 .btn--block { width: 100%; margin-top: 1.1rem; }
 
 /* ---------- Methodology ---------- */
-.methodology {
-  margin-top: 1.1rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--line);
-  font-size: 0.78rem;
-}
-.methodology summary {
-  cursor: pointer;
-  font-weight: 600;
-  color: var(--ink-muted);
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
+/* Reads as one of the sections above it, because that is what it is — the last item in the column's
+   list, not a footnote in a different voice. Layout comes from .tool; only the body type differs. */
+.methodology { font-size: 0.78rem; }
 .methodology dl { margin: 0.8rem 0 0; }
 .methodology dt { font-family: var(--font-mono); color: var(--accent); font-size: 0.75rem; margin-top: 0.6rem; }
 .methodology dd { margin: 0.2rem 0 0; color: var(--ink-muted); }
@@ -1835,3 +1824,58 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
   .roll-card__pieces { grid-template-columns: 1fr; }
   .liner-inputs, .liner-stat-grid { grid-template-columns: 1fr 1fr; }
 }
+
+/* --- Side columns: labelled sections instead of one long wall -------------------------------
+   The left column is not really "settings", it is six separate tools stacked in one panel, and
+   opening the app on all of them at once reads as a list of decisions you have to make before you
+   are allowed to start. Each one is its own disclosure now, shut by default: the headings still say
+   everything the column offers, and every control is one click away rather than in your face. */
+.tool {
+  border-top: 1px solid var(--line);
+  padding: 0.15rem 0;
+}
+.tool:first-of-type { border-top: none; }
+.tool__summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 0.62rem 0.1rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.tool__summary::-webkit-details-marker { display: none; }
+/* A caret that turns, drawn in CSS so it needs no icon and stays right in both themes. */
+.tool__summary::before {
+  content: "";
+  width: 0.42rem;
+  height: 0.42rem;
+  flex: none;
+  border-right: 1.6px solid var(--ink-muted);
+  border-bottom: 1.6px solid var(--ink-muted);
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+.tool[open] > .tool__summary::before { transform: rotate(45deg); }
+.tool__summary:hover { color: var(--accent-strong); }
+.tool__summary:hover::before { border-color: var(--accent-strong); }
+.tool > *:not(.tool__summary) { margin-left: 0.95rem; }
+.tool__note {
+  margin: 0 0 0.5rem 0.95rem;
+  font-size: 0.74rem;
+  color: var(--ink-muted);
+}
+.panel--settings > .panel__heading { margin-bottom: 0.2rem; }
+
+/* The material schedule is a results panel. Before there are any results it showed eight zeros and
+   two empty progress bars; now it says so in one line and keeps quiet. */
+.summary-empty {
+  margin: 0.2rem 0 0;
+  font-size: 0.8rem;
+  color: var(--ink-muted);
+}
+.panel--summary:not(.is-empty) > .summary-empty { display: none; }
+.panel--summary.is-empty > *:not(.panel__heading):not(.summary-empty) { display: none; }

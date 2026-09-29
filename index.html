@@ -104,6 +104,9 @@
 
   <section class="panel panel--settings" aria-labelledby="settingsHeading">
     <h2 id="settingsHeading" class="panel__heading">Settings</h2>
+    <details class="tool">
+      <summary class="tool__summary">Layout options</summary>
+      <p class="tool__note">Every one of these has a sensible default. Leave them alone unless you need to.</p>
     <div class="settings-grid settings-grid--shared">
       <label class="field">
         <span>Group rolls across</span>
@@ -167,9 +170,10 @@
       The RL fill starts from, below the lowest lift — only needed for that lift's fill volume.
       Leave blank if you don't need volumes.
     </p>
+    </details>
 
-    <div class="generator">
-      <h3 class="panel__subheading">Generate lifts</h3>
+    <details class="tool">
+      <summary class="tool__summary">Generate lifts</summary>
       <div class="generator__row">
         <label class="field field--compact">
           <span>Start RL</span>
@@ -186,18 +190,20 @@
       </div>
       <button id="genBtn" class="btn btn--primary" type="button">Generate lift rows</button>
       <p id="genStatus" class="cutplan-status"></p>
-    </div>
+    
+    </details>
 
-    <div class="generator">
-      <h3 class="panel__subheading">Paste lift data</h3>
+    <details class="tool">
+      <summary class="tool__summary">Paste lift data</summary>
       <p class="generator__hint">Paste rows straight from a spreadsheet — one lift per line, comma/tab/space separated: RL, face length, and an optional third column for embedment. Replaces every existing lift row.</p>
       <textarea id="bulkPasteInput" class="bulk-paste-textarea" rows="4" placeholder="49.70, 18.4&#10;50.30, 17.9&#10;50.90, 20.5"></textarea>
       <button id="bulkPasteBtn" class="btn btn--primary" type="button">Import pasted rows</button>
       <p id="bulkPasteStatus" class="cutplan-status"></p>
-    </div>
+    
+    </details>
 
-    <div class="generator">
-      <h3 class="panel__subheading">Add intermediate grids</h3>
+    <details class="tool">
+      <summary class="tool__summary">Add intermediate grids</summary>
       <p class="generator__hint">Inserts one grid midway between every consecutive pair of lifts whose RLs fall inside this range.</p>
       <div class="generator__row generator__row--pair">
         <label class="field field--compact">
@@ -214,20 +220,22 @@
         <button id="interRemoveBtn" class="btn btn--ghost btn--danger" type="button">Remove intermediate grids</button>
       </div>
       <p id="interStatus" class="cutplan-status"></p>
-    </div>
+    
+    </details>
 
-    <div class="generator">
-      <h3 class="panel__subheading">Import face lengths from DXF</h3>
+    <details class="tool">
+      <summary class="tool__summary">Import face lengths from DXF</summary>
       <p class="generator__hint">If you already have a polyline per lift drawn in CAD, upload them here instead of measuring and typing each length by hand — matched to lifts by elevation (or file order if the polylines carry no Z).</p>
       <label class="btn btn--primary btn--upload">
         Upload lengths DXF
         <input type="file" id="dxfLengthsInput" accept=".dxf" hidden />
       </label>
       <p id="dxfLengthsStatus" class="cutplan-status"></p>
-    </div>
+    
+    </details>
 
-    <div class="generator">
-      <h3 class="panel__subheading">Projects</h3>
+    <details class="tool">
+      <summary class="tool__summary">Projects</summary>
       <p class="generator__hint">Autosave always keeps whatever's currently open, but only one job at a time. Save this one under the Project name above to keep it, and switch between saved jobs here without losing either.</p>
       <label class="field field--compact">
         <span>Saved projects</span>
@@ -248,10 +256,11 @@
         </label>
       </div>
       <p id="importProjectStatus" class="cutplan-status"></p>
-    </div>
+    
+    </details>
 
-    <details class="methodology">
-      <summary>How the numbers are calculated</summary>
+    <details class="tool methodology">
+      <summary class="tool__summary">How the numbers are calculated</summary>
       <dl>
         <dt>Strip count</dt>
         <dd>Fewest full-width strips that still meet the minimum overlap: n = ceil((L − o<sub>min</sub>) / (w − o<sub>min</sub>)), for face length L and roll width w.</dd>
@@ -663,6 +672,7 @@
 
   <aside class="panel panel--summary" aria-labelledby="summaryHeading">
     <h2 id="summaryHeading" class="panel__heading">Material schedule</h2>
+    <p class="summary-empty">Nothing to total yet. Quantities, roll count and waste appear here once a lift has a face length or a DXF boundary.</p>
 
     <div class="progress-block">
       <div class="progress-row">
