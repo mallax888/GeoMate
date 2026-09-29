@@ -283,6 +283,17 @@ function ensureCCW(poly) {
   return signedArea(poly) < 0 ? poly.slice().reverse() : poly.slice();
 }
 
+/** A run of consecutive edges as one chain: its own edges, its total length, and the single
+ *  length-weighted average direction everything downstream lays strips against. Both grouping
+ *  functions below end this way — they differ in WHERE they cut the runs, never in this. */
+function chainFromEdges(edges) {
+  const totalLen = edges.reduce((s, e) => s + e.len, 0);
+  const avgX = edges.reduce((s, e) => s + e.x * e.len, 0) / totalLen;
+  const avgY = edges.reduce((s, e) => s + e.y * e.len, 0) / totalLen;
+  const avgLen = Math.hypot(avgX, avgY) || 1;
+  return { edges, length: totalLen, dir: { x: avgX / avgLen, y: avgY / avgLen } };
+}
+
 /** Merge consecutive polygon edges whose direction changes by less than the threshold into logical chains. */
 /** Shared by chainEdges (grouping a whole polygon's raw edges into wall-length chains at a loose
  *  ~20° tolerance) and splitFaceIntoCornerSegments (re-grouping one already-picked face's own edges
@@ -301,13 +312,7 @@ function groupDirsByAngle(dirs, angleThresholdDeg) {
     else { chains.push(cur); cur = [d]; }
   }
   chains.push(cur);
-  return chains.map((edges) => {
-    const totalLen = edges.reduce((s, e) => s + e.len, 0);
-    const avgX = edges.reduce((s, e) => s + e.x * e.len, 0) / totalLen;
-    const avgY = edges.reduce((s, e) => s + e.y * e.len, 0) / totalLen;
-    const avgLen = Math.hypot(avgX, avgY) || 1;
-    return { edges, length: totalLen, dir: { x: avgX / avgLen, y: avgY / avgLen } };
-  });
+  return chains.map(chainFromEdges);
 }
 
 /**
@@ -337,13 +342,7 @@ function groupDirsByAngleFromStart(dirs, angleThresholdDeg) {
     else { chains.push(cur); cur = [d]; groupStart = d; }
   }
   chains.push(cur);
-  return chains.map((edges) => {
-    const totalLen = edges.reduce((s, e) => s + e.len, 0);
-    const avgX = edges.reduce((s, e) => s + e.x * e.len, 0) / totalLen;
-    const avgY = edges.reduce((s, e) => s + e.y * e.len, 0) / totalLen;
-    const avgLen = Math.hypot(avgX, avgY) || 1;
-    return { edges, length: totalLen, dir: { x: avgX / avgLen, y: avgY / avgLen } };
-  });
+  return chains.map(chainFromEdges);
 }
 
 function chainEdges(poly, angleThresholdDeg = 20) {
@@ -1153,31 +1152,21 @@ function extendFaceToFullExtent(face, poly) {
   return { edges, length: maxStation - minStation, dir: face.dir };
 }
 
-// Pads a chain's edges further along its own direction, purely so pointAtStation/stripBoundaryReach
-// can sample past its natural end — used for a non-final corner segment's strips, which are allowed
-// to overrun into the next segment's territory uncut (see computeCutPlan). Same technique as
-// extendFaceToFullExtent, just reusable for any chain/target length rather than tied to the whole
-// face and the polygon's own vertex extent.
-function extendChainToStation(chain, targetLen) {
-  if (targetLen <= chain.length + 1e-6) return chain;
-  const lastTo = chain.edges[chain.edges.length - 1].to;
-  const extra = targetLen - chain.length;
-  const to = { x: lastTo.x + chain.dir.x * extra, y: lastTo.y + chain.dir.y * extra };
-  const edges = chain.edges.concat([{ x: chain.dir.x, y: chain.dir.y, len: extra, from: lastTo, to }]);
-  return { edges, length: targetLen, dir: chain.dir };
-}
-
-// Walks the exact same physical edges backward — station 0 on the result is the chain's own far end,
-// increasing back toward its near end. Used so a mirrored corner segment ("Strip 1 starts from Right")
-// can reuse every station-based helper (calcLift's even spread, extendChainToStation's overrun,
-// stripBoundaryReach's sampling) completely unchanged, just measuring from the opposite end — none of
-// those care which physical direction "increasing station" points, only that it's consistent.
-function reverseChain(chain) {
-  const edges = chain.edges
-    .slice()
-    .reverse()
-    .map((e) => ({ x: -e.x, y: -e.y, len: e.len, from: e.to, to: e.from }));
-  return { edges, length: chain.length, dir: { x: -chain.dir.x, y: -chain.dir.y } };
+/**
+ * Is (x, y) under this strip? A strip is a rectangle `width` wide about `c`, running along `d` and
+ * spanning `near`..`far` off `c` along `n`.
+ *
+ * One definition on purpose. Four copies of this test used to sit in two planners, and they have to
+ * agree to the last tolerance: one of them measures how much of a strip laps its neighbours, another
+ * decides where a patch piece goes. If they ever disagreed, the sweep would lay a piece over ground
+ * the lap measurement had already called covered. The 1e-9 counts a point exactly on an edge as
+ * covered, so a strip laid edge to edge with its neighbour leaves no hairline of bare ground.
+ */
+function stripCovers(b, x, y) {
+  const ax = x - b.c.x, ay = y - b.c.y;
+  const along = ax * b.d.x + ay * b.d.y;
+  const across = ax * b.n.x + ay * b.n.y;
+  return Math.abs(along) <= b.width / 2 + 1e-9 && across >= b.near - 1e-9 && across <= b.far + 1e-9;
 }
 
 function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide = null, stripSide = null, avoidStitches = false, neighborDir = null, floorMode = false, endOverrides = null) {
@@ -1476,22 +1465,26 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
   // nearly all lap is worth SAYING SO on the drawing, the same way material past the extents is
   // drawn faint: here is a piece you may not need. Only ever computed for a cornered lift, where
   // runs from neighbouring segments can genuinely land on top of each other.
+  // Where strip i sits and what ground it covers, in the form stripCovers reads. Built from the
+  // per-strip arrays, so it always describes the plan as it stands rather than as it was laid out.
+  const frameOf = (i) => {
+    const seg = cornerSegments[stripSegmentIndex[i]];
+    const dir = stripDirs[i] || seg.dir;
+    return {
+      c: pointAtStationExtrapolated(seg, stripLocalStarts[i] + stripWidths[i] / 2),
+      d: dir,
+      n: inwardNormal(dir),
+      width: stripWidths[i],
+      near: frontReach[i],
+      far: extentsReach[i],
+    };
+  };
+
   const stripLapShare = cutLengths.map(() => 0);
   const stripCoversNothing = cutLengths.map(() => false);
   if (cornerSegments.length > 1 && cutLengths.length > 1) {
     const SAMPLE = 0.35;
-    const frames = cutLengths.map((_, i) => {
-      const seg = cornerSegments[stripSegmentIndex[i]];
-      const dir = stripDirs[i] || seg.dir;
-      return {
-        c: pointAtStationExtrapolated(seg, stripLocalStarts[i] + stripWidths[i] / 2),
-        d: dir,
-        n: inwardNormal(dir),
-        width: stripWidths[i],
-        near: frontReach[i],
-        far: extentsReach[i],
-      };
-    });
+    const frames = cutLengths.map((_, i) => frameOf(i));
     frames.forEach((b, i) => {
       let own = 0, dup = 0;
       for (let a = -b.width / 2; a <= b.width / 2; a += SAMPLE) {
@@ -1499,13 +1492,7 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
           const q = { x: b.c.x + b.d.x * a + b.n.x * c, y: b.c.y + b.d.y * a + b.n.y * c };
           if (!pointInPolygon(q.x, q.y, poly)) continue;
           own += 1;
-          const covered = frames.some((o, k) => {
-            if (k === i) return false;
-            const ax = q.x - o.c.x, ay = q.y - o.c.y;
-            const along = ax * o.d.x + ay * o.d.y;
-            const across = ax * o.n.x + ay * o.n.y;
-            return Math.abs(along) <= o.width / 2 + 1e-9 && across >= o.near - 1e-9 && across <= o.far + 1e-9;
-          });
+          const covered = frames.some((o, k) => k !== i && stripCovers(o, q.x, q.y));
           if (covered) dup += 1;
         }
       }
@@ -1556,20 +1543,7 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     const SAMPLE = 0.25, CELL = SAMPLE * SAMPLE;
     const MIN_PATCH = 0.75; // m² — under this it is a sliver along the boundary, not a hole
     const MAX_PATCHES = 12;
-    const frameOf = (i) => {
-      const seg = cornerSegments[stripSegmentIndex[i]];
-      const dir = stripDirs[i] || seg.dir;
-      return { c: pointAtStationExtrapolated(seg, stripLocalStarts[i] + stripWidths[i] / 2),
-               d: dir, n: inwardNormal(dir), width: stripWidths[i],
-               near: frontReach[i], far: extentsReach[i] };
-    };
-    const coveredBy = (frames, x, y) =>
-      frames.some((b) => {
-        const ax = x - b.c.x, ay = y - b.c.y;
-        const along = ax * b.d.x + ay * b.d.y;
-        const across = ax * b.n.x + ay * b.n.y;
-        return Math.abs(along) <= b.width / 2 + 1e-9 && across >= b.near - 1e-9 && across <= b.far + 1e-9;
-      });
+    const coveredBy = (frames, x, y) => frames.some((b) => stripCovers(b, x, y));
 
     // The lift's own ground, gridded once — every pass re-tests coverage, never this.
     const xs = poly.map((p) => p.x), ys = poly.map((p) => p.y);
@@ -1809,15 +1783,24 @@ function computeManualCutPlan(rawPoints, manualStrips, productSpecs, faceCycle, 
   };
 }
 
+/**
+ * A DXF file as the (group code, value) pairs it is made of — the format is strictly one line of
+ * code followed by one line of value, all the way down, and every parser below starts by reading it
+ * that way. Four of them carried their own copy of this loop.
+ */
+function dxfCodeValuePairs(text) {
+  const lines = text.split(/\r?\n/);
+  const pairs = [];
+  for (let i = 0; i + 1 < lines.length; i += 2) {
+    const code = parseInt(lines[i].trim(), 10);
+    if (Number.isFinite(code)) pairs.push({ code, value: lines[i + 1] === undefined ? "" : lines[i + 1].trim() });
+  }
+  return pairs;
+}
+
 /** 3DFACE entities (triangles, or quads split into two triangles) — a raw triangulated cut surface. */
 function parseDXF3DFaces(text) {
-  const linesRaw = text.split(/\r?\n/);
-  const pairs = [];
-  for (let i = 0; i + 1 < linesRaw.length; i += 2) {
-    const code = parseInt(linesRaw[i].trim(), 10);
-    const value = linesRaw[i + 1] !== undefined ? linesRaw[i + 1].trim() : "";
-    if (Number.isFinite(code)) pairs.push({ code, value });
-  }
+  const pairs = dxfCodeValuePairs(text);
   const triangles = [];
   let inEntities = false;
   let buf = null;
@@ -2030,13 +2013,7 @@ function parseLandXMLSurface(text) {
 
 /** Any LINE/LWPOLYLINE/legacy-POLYLINE, open or closed — just its length, layer and mean elevation. */
 function parseDXFEntityLengths(text) {
-  const linesRaw = text.split(/\r?\n/);
-  const pairs = [];
-  for (let i = 0; i + 1 < linesRaw.length; i += 2) {
-    const code = parseInt(linesRaw[i].trim(), 10);
-    const value = linesRaw[i + 1] !== undefined ? linesRaw[i + 1].trim() : "";
-    if (Number.isFinite(code)) pairs.push({ code, value });
-  }
+  const pairs = dxfCodeValuePairs(text);
 
   const entities = [];
   let inEntities = false;
@@ -2148,13 +2125,7 @@ function tessellateBulge(p0, p1, bulge) {
 
 /** Closed polylines only (LWPOLYLINE + legacy POLYLINE/VERTEX) — a lift's plan-view extents boundary. */
 function parseDXFPolygons(text) {
-  const linesRaw = text.split(/\r?\n/);
-  const pairs = [];
-  for (let i = 0; i + 1 < linesRaw.length; i += 2) {
-    const code = parseInt(linesRaw[i].trim(), 10);
-    const value = linesRaw[i + 1] !== undefined ? linesRaw[i + 1].trim() : "";
-    if (Number.isFinite(code)) pairs.push({ code, value });
-  }
+  const pairs = dxfCodeValuePairs(text);
 
   const polygons = [];
   let inEntities = false;
@@ -2269,7 +2240,6 @@ function parseDXFPolygons(text) {
  * sheets all read it without changes. A strip spans both sides of its centreline, which the model
  * already allows: frontReach is negative on one side, extentsReach positive on the other.
  */
-const CENTRELINE_KEY = "geogrid-centrelines";
 // Road alignments, project-wide: one entry per open path in the uploaded DXF. Kept out of the
 // per-lift rows because an alignment spans the site, not a single lift.
 let projectCentrelines = [];
@@ -2367,13 +2337,7 @@ function computeCentrelineCutPlan(rawPoints, centrelines, w, oMin) {
   const stripStarts = [], stripLocalStarts = [], stripSegmentIndex = [], stripDirs = [], stripIsStitch = [];
   // Strips already laid, so a later road can tell whether ground is spoken for.
   const laid = [];
-  const alreadyCovered = (q) =>
-    laid.some((b) => {
-      const ax = q.x - b.c.x, ay = q.y - b.c.y;
-      const along = ax * b.d.x + ay * b.d.y;
-      const across = ax * b.n.x + ay * b.n.y;
-      return Math.abs(along) <= w / 2 + 1e-9 && across >= b.near - 1e-9 && across <= b.far + 1e-9;
-    });
+  const alreadyCovered = (q) => laid.some((b) => stripCovers(b, q.x, q.y));
   let flat = 0;
   chains.forEach((chain, ci) => {
     // Where this road's own run begins. A road meeting one already laid should not start at its own
@@ -2405,7 +2369,7 @@ function computeCentrelineCutPlan(rawPoints, centrelines, w, oMin) {
       stripSegmentIndex.push(ci);
       stripDirs.push({ x: tangent.x, y: tangent.y });
       stripIsStitch.push(false);
-      laid.push({ c: { x: pt.x, y: pt.y }, d: tangent, n: normal, near, far });
+      laid.push({ c: { x: pt.x, y: pt.y }, d: tangent, n: normal, width: w, near, far });
     }
     flat += chain.length;
   });
@@ -2419,14 +2383,7 @@ function computeCentrelineCutPlan(rawPoints, centrelines, w, oMin) {
   {
     const EXT_STEP = 0.25;
     const OFFSETS = [-0.45, -0.2, 0, 0.2, 0.45];
-    const coveredByOther = (q, self) =>
-      laid.some((b, k) => {
-        if (k === self) return false;
-        const ax = q.x - b.c.x, ay = q.y - b.c.y;
-        const along = ax * b.d.x + ay * b.d.y;
-        const across = ax * b.n.x + ay * b.n.y;
-        return Math.abs(along) <= w / 2 + 1e-9 && across >= b.near - 1e-9 && across <= b.far + 1e-9;
-      });
+    const coveredByOther = (q, self) => laid.some((b, k) => k !== self && stripCovers(b, q.x, q.y));
 
     const extendAll = () => {
       laid.forEach((b, i) => {
@@ -2610,7 +2567,7 @@ function computeCentrelineCutPlan(rawPoints, centrelines, w, oMin) {
         stripSegmentIndex.push(ci);
         stripDirs.push({ x: pick.tangent.x, y: pick.tangent.y });
         stripIsStitch.push(true);
-        laid.push({ c: { x: pick.pt.x, y: pick.pt.y }, d: pick.tangent, n: pick.normal, near: pick.near, far: pick.far });
+        laid.push({ c: { x: pick.pt.x, y: pick.pt.y }, d: pick.tangent, n: pick.normal, width: w, near: pick.near, far: pick.far });
         const done = new Set(pick.served);
         remaining = remaining.filter((q) => !done.has(q));
       }
@@ -2803,13 +2760,7 @@ function distanceToChain(pt, chain) {
 }
 
 function parseDXFPaths(text) {
-  const linesRaw = text.split(/\r?\n/);
-  const pairs = [];
-  for (let i = 0; i + 1 < linesRaw.length; i += 2) {
-    const code = parseInt(linesRaw[i].trim(), 10);
-    const value = linesRaw[i + 1] !== undefined ? linesRaw[i + 1].trim() : "";
-    if (Number.isFinite(code)) pairs.push({ code, value });
-  }
+  const pairs = dxfCodeValuePairs(text);
 
   const paths = [];
   let inEntities = false;
@@ -3866,15 +3817,20 @@ function renderDiagram(svg, L, result, w, W = 240, H = 34) {
   line.setAttribute("stroke-width", "1");
   svg.appendChild(line);
   [lineX1, lineX2].forEach((x) => {
-    const tick = document.createElementNS(ns, "line");
-    tick.setAttribute("x1", x.toFixed(2));
-    tick.setAttribute("x2", x.toFixed(2));
-    tick.setAttribute("y1", dimY - 2);
-    tick.setAttribute("y2", dimY + 2);
-    tick.setAttribute("stroke", "var(--graphite)");
-    tick.setAttribute("stroke-width", "1");
-    svg.appendChild(tick);
+    svg.appendChild(dimensionTick(ns, x, dimY));
   });
+}
+
+/** One end tick on a dimension line in the compact row diagrams. */
+function dimensionTick(ns, x, dimY) {
+  const tick = document.createElementNS(ns, "line");
+  tick.setAttribute("x1", x.toFixed(2));
+  tick.setAttribute("x2", x.toFixed(2));
+  tick.setAttribute("y1", dimY - 2);
+  tick.setAttribute("y2", dimY + 2);
+  tick.setAttribute("stroke", "var(--graphite)");
+  tick.setAttribute("stroke-width", "1");
+  return tick;
 }
 
 /** The compact per-row diagram's counterpart for a manually built (mixed-product) row — each strip
@@ -3922,14 +3878,7 @@ function renderDiagramManual(svg, L, cutPlan, productSpecs, W = 240, H = 34) {
   line.setAttribute("stroke-width", "1");
   svg.appendChild(line);
   [pad, pad + L * scale].forEach((x) => {
-    const tick = document.createElementNS(ns, "line");
-    tick.setAttribute("x1", x.toFixed(2));
-    tick.setAttribute("x2", x.toFixed(2));
-    tick.setAttribute("y1", dimY - 2);
-    tick.setAttribute("y2", dimY + 2);
-    tick.setAttribute("stroke", "var(--graphite)");
-    tick.setAttribute("stroke-width", "1");
-    svg.appendChild(tick);
+    svg.appendChild(dimensionTick(ns, x, dimY));
   });
 }
 
@@ -6038,6 +5987,24 @@ function annotateFaceLine(svg, facePts, W, H, projectedPts = []) {
   svg.appendChild(label);
 }
 
+/**
+ * The extents boundary, as every diagram draws it. Bold and dashed, not the strip colours' thin
+ * solid outline — this is the one line on the whole drawing that means "this is the true design
+ * boundary, everything else must stay inside it", so it has to read as a distinct, deliberate line
+ * at a glance rather than as just another shape edge. --ink flips with the theme (near-black on
+ * light, near-white on dark) so it stays readable either way instead of being tuned for one.
+ */
+function extentsBoundaryPolygon(ns, points) {
+  const el = document.createElementNS(ns, "polygon");
+  el.setAttribute("points", points);
+  el.setAttribute("fill", "var(--accent-tint)");
+  el.setAttribute("stroke", "var(--ink)");
+  el.setAttribute("stroke-width", "2.5");
+  el.setAttribute("stroke-dasharray", "7,4");
+  el.setAttribute("stroke-linejoin", "round");
+  return el;
+}
+
 function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
   const ns = "http://www.w3.org/2000/svg";
   const { face, cutLengths } = cutPlan;
@@ -6074,18 +6041,7 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
   const ty = (y) => H - pad - (y - minY) * scale; // flip Y so deeper into the fill reads as "up"
 
   const poly2d = localPoly.map((p) => `${tx(p.x).toFixed(1)},${ty(p.y).toFixed(1)}`).join(" ");
-  const polyEl = document.createElementNS(ns, "polygon");
-  polyEl.setAttribute("points", poly2d);
-  polyEl.setAttribute("fill", "var(--accent-tint)");
-  // Bold and dashed, not the strip colours' thin solid outline — this is the one line on the whole
-  // diagram that means "this is the true design boundary, everything else must stay inside it", so
-  // it needs to read as a distinct, deliberate line even at a glance, not blend in as just another
-  // shape edge. --ink flips light/dark with the theme (near-black on light, near-white on dark) so
-  // it stays clearly readable either way instead of being tuned for just one.
-  polyEl.setAttribute("stroke", "var(--ink)");
-  polyEl.setAttribute("stroke-width", "2.5");
-  polyEl.setAttribute("stroke-dasharray", "7,4");
-  polyEl.setAttribute("stroke-linejoin", "round");
+  const polyEl = extentsBoundaryPolygon(ns, poly2d);
   svg.innerHTML = "";
   svg.appendChild(polyEl);
 
@@ -6438,13 +6394,7 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
   const screenOf = (p) => { const q = proj(p); return { x: tx(q.u), y: ty(q.v) }; };
 
   const poly2d = cutPlan.poly.map((p) => { const s = screenOf(p); return `${s.x.toFixed(1)},${s.y.toFixed(1)}`; }).join(" ");
-  const polyEl = document.createElementNS(ns, "polygon");
-  polyEl.setAttribute("points", poly2d);
-  polyEl.setAttribute("fill", "var(--accent-tint)");
-  polyEl.setAttribute("stroke", "var(--ink)");
-  polyEl.setAttribute("stroke-width", "2.5");
-  polyEl.setAttribute("stroke-dasharray", "7,4");
-  polyEl.setAttribute("stroke-linejoin", "round");
+  const polyEl = extentsBoundaryPolygon(ns, poly2d);
   svg.innerHTML = "";
   svg.appendChild(polyEl);
 
@@ -6763,18 +6713,7 @@ function renderCutPlanSvgManual(svg, cutPlan, productSpecs, activeProductId, row
 
   svg.innerHTML = "";
   const poly2d = localPoly.map((p) => `${tx(p.x).toFixed(1)},${ty(p.y).toFixed(1)}`).join(" ");
-  const polyEl = document.createElementNS(ns, "polygon");
-  polyEl.setAttribute("points", poly2d);
-  polyEl.setAttribute("fill", "var(--accent-tint)");
-  // Bold and dashed, not the strip colours' thin solid outline — this is the one line on the whole
-  // diagram that means "this is the true design boundary, everything else must stay inside it", so
-  // it needs to read as a distinct, deliberate line even at a glance, not blend in as just another
-  // shape edge. --ink flips light/dark with the theme (near-black on light, near-white on dark) so
-  // it stays clearly readable either way instead of being tuned for just one.
-  polyEl.setAttribute("stroke", "var(--ink)");
-  polyEl.setAttribute("stroke-width", "2.5");
-  polyEl.setAttribute("stroke-dasharray", "7,4");
-  polyEl.setAttribute("stroke-linejoin", "round");
+  const polyEl = extentsBoundaryPolygon(ns, poly2d);
   svg.appendChild(polyEl);
 
   const labelFontSize = Math.max(4.5, Math.min(7, 165 / Math.max(stripStarts.length, 1)));

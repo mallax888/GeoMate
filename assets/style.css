@@ -407,10 +407,6 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
   box-shadow: -4px 0 6px -4px rgba(0, 0, 0, 0.25);
 }
 .swatch { width: 0.62rem; height: 0.62rem; border-radius: 50%; flex: none; display: inline-block; }
-.swatch--id-1 { background: var(--id-1); }
-.swatch--id-2 { background: var(--id-2); }
-.swatch--id-3 { background: var(--id-3); }
-.swatch--id-4 { background: var(--id-4); }
 .product-delete-btn {
   width: 1.7rem;
   height: 1.7rem;
@@ -682,8 +678,6 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
 }
 .btn--ghost:hover { background: var(--surface-2); }
 .btn--block { width: 100%; margin-top: 1.1rem; }
-.btn--dashed { background: none; border-style: dashed; border-color: var(--line-strong); color: var(--ink-muted); }
-.btn--dashed:hover { border-color: var(--accent); color: var(--accent-strong); background: var(--accent-tint); }
 
 /* ---------- Methodology ---------- */
 .methodology {
@@ -1156,15 +1150,6 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
 }
 .cutplan-typeprompt__q { font-size: 0.8rem; }
 .cutplan-typeprompt .btn.is-current { border-color: var(--accent); color: var(--accent); font-weight: 700; }
-.cutplan-typeprompt__dismiss {
-  background: transparent;
-  border: none;
-  color: var(--ink-muted);
-  cursor: pointer;
-  font-size: 0.85rem;
-  padding: 0.2rem 0.3rem;
-}
-.cutplan-typeprompt__dismiss:hover { color: var(--ink); }
 
 .cutplan-list { display: flex; flex-direction: column; gap: 0.8rem; }
 .cutplan-card {
@@ -1624,10 +1609,6 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
   pointer-events: none;
 }
 .roll-piece__num { color: var(--ink-muted); font-weight: 700; }
-.roll-bar__offcut {
-  height: 100%;
-  background: repeating-linear-gradient(45deg, var(--line), var(--line) 4px, transparent 4px, transparent 8px);
-}
 .roll-card__pieces {
   list-style: none;
   margin: 0;

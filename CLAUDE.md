@@ -115,6 +115,16 @@ These come from the user directly. Violating them makes output wrong on site.
 
 Geometry / cut planning — the part that is subtle:
 
+- `stripCovers(frame, x, y)` — is this point under this strip. **One definition on
+  purpose.** Four copies of it used to sit across two planners, and they have to
+  agree to the last tolerance: one measures how much of a strip laps, another
+  decides where a patch piece goes. If they drift apart, the sweep lays a piece
+  over ground the lap measurement already called covered.
+- `dxfCodeValuePairs(text)` — a DXF as the (group code, value) pairs it is made
+  of. Every parser starts here; four of them carried their own copy.
+- `chainFromEdges(edges)` — a run of edges as one chain with a length-weighted
+  average direction. Both grouping functions end this way; they differ in where
+  they CUT the runs, never in this.
 - `calcLift(L, w, oMin)` — flush-both-ends stripping, overlap spread evenly.
 - `minPitchLift(L, w, oMin)` — minimum-overlap stripping, last strip overshoots.
 - `chainEdges(poly, angleThresholdDeg = 20)` — splits the boundary into
@@ -214,7 +224,7 @@ export, and state persistence.
 ## Conventions
 
 - **Bump `CACHE_NAME` in `sw.js` on every deploy that touches
-  `index.html`/`app.js`/`style.css`.** Currently `geomate-v148`. Forgetting
+  `index.html`/`app.js`/`style.css`.** Currently `geomate-v149`. Forgetting
   this means users keep running stale code offline.
 - Product library commits happen on `focusout`, **not** `input` — committing
   on `input` created a library entry per keystroke ("Sta", "Star", "Start"…).
