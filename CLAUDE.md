@@ -115,7 +115,19 @@ These come from the user directly. Violating them makes output wrong on site.
    shows one line instead of eight zeros. Measured: first load went from 2168 px
    and 306 words to 1005 px and 175, with the settings column 1570 px → 411.
    A test that drives a control in that column has to open its section first.
-9. **A control that cannot act must not be shown.** The Face picker and the
+9. **Offer the way in where people are.** Loading extents from CAD is how this
+   app is used, but the only door was a button inside the **Cut plan** tab —
+   named after an OUTPUT, so nobody looks for a file upload behind it — while
+   the opening screen listed generate / paste / add-by-hand and never mentioned
+   DXF. The empty state now leads with it, and a second button sits beside
+   "+ Add lift" so it is reachable from any tab (hidden on Cut plan, which has
+   its own). Both call `startExtentsUpload`, which **switches to Cut plan first**
+   and then opens the picker: the wall/floor question and the upload's status
+   line live in that view, and asking "wall or floor" somewhere the user cannot
+   see it is how a floor silently gets a wall layout. Note for tests: the empty
+   state and the Cut plan block share the label "Upload extents DXF", so scope
+   the selector (`#cutPlanView >> text=...`).
+10. **A control that cannot act must not be shown.** The Face picker and the
    end-strip overrides only mean something to the boundary layout, so they are
    left out of the card on a centreline plan; the wedges left on the outside
    of a bend are not patched, because a rectangle covering one lies on ground
@@ -234,7 +246,7 @@ export, and state persistence.
 ## Conventions
 
 - **Bump `CACHE_NAME` in `sw.js` on every deploy that touches
-  `index.html`/`app.js`/`style.css`.** Currently `geomate-v151`. `activate()`
+  `index.html`/`app.js`/`style.css`.** Currently `geomate-v152`. `activate()`
   drops every other cache, which is what clears anything an older worker left.
 - **The service worker is NETWORK-FIRST for the app** (page, script,
   stylesheet) with a 3.5 s timeout falling back to the stored copy, and

@@ -305,6 +305,7 @@
         </button>
       </div>
       </div>
+      <button id="headerUploadBtn" class="btn btn--primary" type="button" title="Load a lift extents DXF from CAD">Upload DXF</button>
       <button id="addLiftBtn" class="btn btn--ghost" type="button">+ Add lift</button>
     </div>
 
@@ -328,9 +329,14 @@
         </table>
       </div>
       <div id="emptyState" class="empty-state">
-        <svg class="empty-state__icon" viewBox="0 0 16 16" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M1.5 6.7h13M6.2 2.5v11"/></svg>
-        <p>No lifts yet — generate a run above, paste your own data, or add one manually.</p>
-        <button id="loadSampleBtn" class="btn btn--ghost" type="button">Load sample project</button>
+        <svg class="empty-state__icon" viewBox="0 0 16 16" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.8 14.5 5 8 8.2 1.5 5z"/><path d="M1.5 8.2 8 11.4l6.5-3.2M1.5 11.2 8 14.4l6.5-3.2"/></svg>
+        <p class="empty-state__lead">Start with your lift extents from CAD.</p>
+        <button id="emptyUploadBtn" class="btn btn--primary" type="button">Upload extents DXF</button>
+        <p class="empty-state__alt">
+          or <button id="loadSampleBtn" class="btn btn--link" type="button">load the sample project</button>
+          · <button id="emptyAddLiftBtn" class="btn btn--link" type="button">add a lift by hand</button>
+          · generate or paste a run from the left
+        </p>
       </div>
     </div>
 

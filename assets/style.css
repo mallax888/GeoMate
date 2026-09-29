@@ -1879,3 +1879,31 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
 }
 .panel--summary:not(.is-empty) > .summary-empty { display: none; }
 .panel--summary.is-empty > *:not(.panel__heading):not(.summary-empty) { display: none; }
+
+/* --- Getting in: the empty state and the header upload -------------------------------------
+   Loading extents from CAD is how the app is used, so it leads the opening screen instead of the
+   three alternatives that used to be listed without it. */
+.empty-state__lead {
+  margin: 0.1rem 0 0.15rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+.empty-state__alt {
+  margin: 0.55rem 0 0;
+  font-size: 0.78rem;
+  color: var(--ink-muted);
+}
+/* A button that reads as a sentence, for the alternatives that should not compete with the
+   primary one above them. */
+.btn--link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent-strong);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.btn--link:hover { color: var(--accent); }

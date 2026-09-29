@@ -3658,6 +3658,9 @@ const SAMPLE_PROJECT = {
   ],
 };
 
+document.getElementById("emptyUploadBtn").addEventListener("click", startExtentsUpload);
+document.getElementById("headerUploadBtn").addEventListener("click", startExtentsUpload);
+document.getElementById("emptyAddLiftBtn").addEventListener("click", () => document.getElementById("addLiftBtn").click());
 document.getElementById("loadSampleBtn").addEventListener("click", () => {
   document.getElementById("projectName").value = SAMPLE_PROJECT.projectName;
   renderProductTable(defaultProductRows());
@@ -4987,6 +4990,20 @@ const TABS = {
   liner: { tab: tabLiner, view: linerView },
 };
 
+/* Loading extents from CAD is how this app is actually used, but the only way in was a button inside
+ * the Cut plan tab — named after an OUTPUT, so nobody looks for a file upload behind it. These are
+ * the same upload, offered where people are: on the opening screen, and beside "+ Add lift" where it
+ * is reachable from any tab.
+ *
+ * Both switch to Cut plan BEFORE opening the file dialog. The wall/floor question and the upload's
+ * own status line live in that view, so starting the upload anywhere else would ask the question
+ * somewhere the user cannot see it — and answering wall when it is a floor is not a small mistake. */
+function startExtentsUpload() {
+  switchTab("cutplan");
+  const input = document.getElementById("dxfExtentsInput");
+  if (input) input.click();
+}
+
 function switchTab(which) {
   Object.entries(TABS).forEach(([key, { tab, view }]) => {
     const active = key === which;
@@ -4995,6 +5012,10 @@ function switchTab(which) {
     tab.setAttribute("aria-selected", String(active));
   });
   document.getElementById("addLiftBtn").hidden = which !== "takeoff";
+  // The upload is offered everywhere EXCEPT the Cut plan tab, which already has its own — with the
+  // product picker and the centrelines beside it — so the header would just repeat it there.
+  const headerUpload = document.getElementById("headerUploadBtn");
+  if (headerUpload) headerUpload.hidden = which === "cutplan";
   if (which === "view3d" && window.__geogridResults) render3D(window.__geogridResults);
 }
 
