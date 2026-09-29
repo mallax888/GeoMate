@@ -234,8 +234,17 @@ export, and state persistence.
 ## Conventions
 
 - **Bump `CACHE_NAME` in `sw.js` on every deploy that touches
-  `index.html`/`app.js`/`style.css`.** Currently `geomate-v150`. Forgetting
-  this means users keep running stale code offline.
+  `index.html`/`app.js`/`style.css`.** Currently `geomate-v151`. `activate()`
+  drops every other cache, which is what clears anything an older worker left.
+- **The service worker is NETWORK-FIRST for the app** (page, script,
+  stylesheet) with a 3.5 s timeout falling back to the stored copy, and
+  cache-first for fonts, icons and the manifest. It was stale-while-revalidate
+  for everything, which answers from the cache and refreshes afterwards — so
+  every update took **two** visits to appear and the first always showed the
+  old app. Reproduced and fixed with a persistent browser profile: deploy a
+  change, open the app in a fresh tab, old worker shows the previous build and
+  the new one shows the current build; both still open with no signal. Do not
+  go back to cache-first for the app itself.
 - Product library commits happen on `focusout`, **not** `input` — committing
   on `input` created a library entry per keystroke ("Sta", "Star", "Start"…).
   Keep `input` for live UI refresh only.
