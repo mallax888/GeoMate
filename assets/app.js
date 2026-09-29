@@ -3659,6 +3659,71 @@ const SAMPLE_PROJECT = {
 };
 
 document.getElementById("emptyUploadBtn").addEventListener("click", startExtentsUpload);
+
+/* Dropping the drawing on the page is how anyone expects a file tool to work, and it is the same
+ * upload underneath: the file is handed to the extents input and its own change handler runs, so a
+ * dropped file goes through exactly the same parsing, the same wall/floor question and the same
+ * status line as a picked one. Nothing here knows how to read a DXF. */
+{
+  const zone = document.getElementById("dxfDropZone");
+  const panel = document.getElementById("takeoffView");
+  const input = document.getElementById("dxfExtentsInput");
+  if (zone && panel && input) {
+    const dxfFrom = (dt) => [...((dt && dt.files) || [])].find((f) => /\.dxf$/i.test(f.name));
+    // Mid-drag the browser will not say what the file is called, only that one is being carried —
+    // so the highlight is on "a file", and the .dxf test waits until the drop, when there is a name.
+    const carriesFile = (dt) => !!(dt && ([...(dt.items || [])].some((i) => i.kind === "file") || (dt.files || []).length));
+    let depth = 0;
+    // The zone lights up when it is on screen. With lifts loaded it is hidden, so the panel itself
+    // carries the signal instead — otherwise dropping onto the table looks like nothing is
+    // listening. Only ever one of the two, or the drawing gets a dashed box inside a dashed box.
+    const empty = document.getElementById("emptyState");
+    const lit = (on) => {
+      const showing = !!empty && !empty.hidden;
+      zone.classList.toggle("is-dragover", on && showing);
+      panel.classList.toggle("is-dragover", on && !showing);
+    };
+    panel.addEventListener("dragenter", (e) => {
+      if (!carriesFile(e.dataTransfer)) return;
+      e.preventDefault();
+      depth++;
+      lit(true);
+    });
+    panel.addEventListener("dragover", (e) => {
+      if (!carriesFile(e.dataTransfer)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    });
+    panel.addEventListener("dragleave", () => {
+      // dragleave fires for every child crossed, so it is counted rather than trusted.
+      if (--depth <= 0) { depth = 0; lit(false); }
+    });
+    panel.addEventListener("drop", (e) => {
+      depth = 0;
+      lit(false);
+      // Swallowed whether or not it is a DXF: letting a dropped file through means the browser
+      // NAVIGATES to it, and the half-filled project on screen is gone.
+      if (!carriesFile(e.dataTransfer)) return;
+      e.preventDefault();
+      const file = dxfFrom(e.dataTransfer);
+      if (!file) {
+        // Said where the upload's own messages are said, and on the view that shows them.
+        switchTab("cutplan");
+        const statusEl = document.getElementById("dxfExtentsStatus");
+        if (statusEl) {
+          statusEl.textContent = "That was not a DXF — drop the lift extents exported from CAD.";
+          statusEl.className = "cutplan-status is-error";
+        }
+        return;
+      }
+      const carrier = new DataTransfer();
+      carrier.items.add(file);
+      input.files = carrier.files;
+      switchTab("cutplan");
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  }
+}
 document.getElementById("headerUploadBtn").addEventListener("click", startExtentsUpload);
 document.getElementById("emptyAddLiftBtn").addEventListener("click", () => document.getElementById("addLiftBtn").click());
 document.getElementById("loadSampleBtn").addEventListener("click", () => {
@@ -4011,6 +4076,15 @@ function computeAndRender() {
 
   const rows = Array.from(tbody.querySelectorAll(".lift-row"));
   emptyState.hidden = rows.length > 0;
+  // Headings over an empty table are clutter dressed as content — RL, Product, Face length and the
+  // rest, standing over nothing. The table appears when there is something to put in it.
+  const tableWrap = document.getElementById("liftTableWrap");
+  if (tableWrap) {
+    tableWrap.hidden = rows.length === 0;
+    // It has just gone from nothing to scroll to a full table (or back) — the edge fade has to be
+    // told, since neither a scroll nor a resize happened.
+    if (tableWrap.updateScrollFade) tableWrap.updateScrollFade();
+  }
   updateHeaderUpload();
   // Collected alongside validateRows() below — these catch bad values on a single row's own inputs
   // (negative face length/embedment), which validateRows can't see because a row that fails to
@@ -4706,6 +4780,10 @@ function setupScrollFade(scrollEl, fadeEl) {
   }
   scrollEl.addEventListener("scroll", update, { passive: true });
   window.addEventListener("resize", update);
+  // Hung on the element so whatever changes its contents can ask for a recount. Neither scroll nor
+  // resize fires when the takeoff table goes from hidden-and-empty to full of rows, so without this
+  // the fade stays on whatever it worked out back when there was nothing to scroll.
+  scrollEl.updateScrollFade = update;
   update();
 }
 setupScrollFade(document.querySelector(".tabs"), document.querySelector(".tabs-wrap"));

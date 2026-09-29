@@ -127,9 +127,22 @@ These come from the user directly. Violating them makes output wrong on site.
    to Cut plan first**
    and then opens the picker: the wall/floor question and the upload's status
    line live in that view, and asking "wall or floor" somewhere the user cannot
-   see it is how a floor silently gets a wall layout. Note for tests: the empty
-   state and the Cut plan block share the label "Upload extents DXF", so scope
-   the selector (`#cutPlanView >> text=...`).
+   see it is how a floor silently gets a wall layout. The empty state itself is
+   a **drop target**: a DXF dropped anywhere on `#takeoffView` is handed to
+   `#dxfExtentsInput` via a `DataTransfer` and its own `change` event is
+   dispatched, so a dropped file takes the identical path — same parser, same
+   wall/floor question, same status line — and nothing in the drop handler
+   knows how to read a DXF. Two details worth keeping: `dragleave` fires for
+   every child crossed, so the enter/leave depth is counted rather than
+   trusted; and only ONE of the zone and the panel is lit at a time, because a
+   loaded project hides the zone and an empty one would otherwise get a dashed
+   box inside a dashed box. A drop is `preventDefault`ed whether or not the
+   file is a DXF, because letting one through makes the browser NAVIGATE to it
+   and the project on screen is gone; the wrong file type gets the message
+   instead. Notes for tests: the empty state's button now reads
+   "Choose a DXF file" (`#emptyUploadBtn`) while the Cut plan block keeps
+   "Upload extents DXF" — scope that one anyway (`#cutPlanView >> text=...`);
+   `#headerUploadBtn` is hidden on the Cut plan tab, so probe it from Takeoff.
 10. **A control that cannot act must not be shown.** The Face picker and the
    end-strip overrides only mean something to the boundary layout, so they are
    left out of the card on a centreline plan; the wedges left on the outside
