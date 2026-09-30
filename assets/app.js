@@ -2192,94 +2192,503 @@ function tessellateBulge(p0, p1, bulge) {
   return pts;
 }
 
-/** Closed polylines only (LWPOLYLINE + legacy POLYLINE/VERTEX) — a lift's plan-view extents boundary. */
-function parseDXFPolygons(text) {
+/* --- Reading a boundary out of a drawing ------------------------------------------------------
+ *
+ * "One closed polyline per lift" is what we ASK for. It is not what drawings contain. The same
+ * outline, which anyone looking at the screen would call closed, reaches us as any of:
+ *
+ *   - a closed LWPOLYLINE (the flag is set)                      — what we always handled
+ *   - a legacy POLYLINE with VERTEX entities                     — ditto
+ *   - a polyline drawn back to its start instead of Closed, so the flag is off and the last
+ *     vertex lands a few millimetres away from the first
+ *   - the outline sitting inside a BLOCK, placed with INSERT — offset, rotated, scaled. Anything
+ *     that came through an XREF that was bound, or off a titleblock, looks like this.
+ *   - four separate LINE (and ARC) entities that meet end to end
+ *   - a SPLINE fitted through the corners
+ *
+ * Every one of those used to come back as "No closed polylines found in that file", which is both
+ * wrong — the drawing is closed — and useless, because it does not say what to do about it. They
+ * are all read now, and readDxfBoundaries reports HOW each one was read so the app can say so.
+ *
+ * What is deliberately still rejected: a genuinely open run. A road centreline is not a boundary,
+ * and quietly closing one would lay a lift over ground that was never in the extents.
+ */
+
+/** Two points the same, to a tolerance given in metres. */
+function samePoint(a, b, tol) {
+  return Math.hypot(a.x - b.x, a.y - b.y) <= tol;
+}
+
+/* A gap this small, in metres, is someone's drafting rather than a real opening — and it must also
+ * be a small fraction of the shape itself, so a 20 mm scrap of a line never counts as a boundary. */
+const BOUNDARY_CLOSE_TOL = 0.02;
+const BOUNDARY_CLOSE_FRACTION = 0.002;
+/** How close two ends must be to be treated as joined when chaining loose lines and arcs. */
+const SEGMENT_JOIN_TOL = 0.005;
+/* Roughly how far apart to place points along a traced curve, in metres. A chord this long sits
+ * well under a millimetre off the curve at any radius a wall boundary is drawn with, and the point
+ * count stays sane on a long one. */
+const SPLINE_CHORD_M = 0.25;
+
+/**
+ * Every entity in the file as a flat record, in file order, each knowing which section it came from
+ * and which BLOCK definition it belongs to (null for model space). Blocks matter: geometry defined
+ * inside one never appears in ENTITIES at all, which is why an outline in a block used to be
+ * invisible to us.
+ */
+function dxfEntityRecords(text) {
   const pairs = dxfCodeValuePairs(text);
+  const records = [];
+  let section = null;
+  let awaitingSectionName = false;
+  let block = null;
+  let cur = null;
+  const push = () => {
+    if (cur) records.push(cur);
+    cur = null;
+  };
 
-  const polygons = [];
-  let inEntities = false;
-  let buf = null;
-  let polylineOpen = null;
-
-  function flushLwVertex() {
-    if (buf && buf.type === "LWPOLYLINE" && buf._x !== undefined) {
-      buf.pts.push({ x: buf._x, y: buf._y ?? 0, z: buf.elevation || 0, bulge: buf._bulge || 0 });
-      buf._x = undefined;
-      buf._bulge = undefined;
-    }
-  }
-  function finishClosedPoly(entity) {
-    if (!entity || !entity.pts || entity.pts.length < 3) return;
-    const pts = entity.pts.slice();
-    const first = pts[0], last = pts[pts.length - 1];
-    // A polyline someone closed by snapping its last vertex back onto the first — instead of the
-    // dedicated Close command — never gets its "closed" flag (group code 70, bit 1) set, even
-    // though it's visually and functionally a closed boundary. Treating only the flag as authority
-    // silently drops that shape (one polygon just disappears out of a whole DXF, with no error) —
-    // so an endpoint pair that coincides counts as closed too, whichever way it got that way. A
-    // genuinely open shape's endpoints essentially never land this close by accident.
-    const endpointsCoincide = Math.hypot(last.x - first.x, last.y - first.y) < 1e-6;
-    if (!(entity.flags & 1) && !endpointsCoincide) return;
-    if (endpointsCoincide) pts.pop();
-    // Expand any bulge (curved) segment now that the final, deduplicated vertex loop is known —
-    // including the closing edge from the last vertex back to the first, which is just as real a
-    // segment as any other and can carry its own bulge on a genuinely curved corner.
-    const expanded = [];
-    for (let i = 0; i < pts.length; i++) {
-      const p0 = pts[i], p1 = pts[(i + 1) % pts.length];
-      expanded.push(p0);
-      if (p0.bulge) expanded.push(...tessellateBulge(p0, p1, p0.bulge));
-    }
-    const meanZ = expanded.reduce((s, p) => s + (p.z || 0), 0) / expanded.length;
-    polygons.push({ layer: entity.layer || "0", points: expanded, meanZ });
-  }
-
-  for (let i = 0; i < pairs.length; i++) {
-    const { code, value } = pairs[i];
+  for (const { code, value } of pairs) {
     if (code === 0) {
-      if (buf && buf._vertexOf) {
-        buf._vertexOf.pts.push({ x: buf._x || 0, y: buf._y || 0, z: buf._z || 0, bulge: buf._bulge || 0 });
-      } else if (buf && buf.type === "LWPOLYLINE") {
-        flushLwVertex();
-        finishClosedPoly(buf);
+      // A BLOCK record is a header, not geometry: its name scopes every entity up to ENDBLK.
+      if (cur && cur.type === "BLOCK") {
+        block = cur.name || null;
+        cur = null;
+      } else {
+        push();
       }
-      if (value === "ENDSEC") {
-        inEntities = false;
-        if (polylineOpen) finishClosedPoly(polylineOpen);
-        polylineOpen = null;
-        buf = null;
+      if (value === "SECTION") { awaitingSectionName = true; continue; }
+      if (value === "ENDSEC") { section = null; block = null; continue; }
+      if (value === "ENDBLK") { block = null; continue; }
+      if (value === "EOF") break;
+      cur = { type: value, section, block, layer: "0", name: null, codes: [] };
+      continue;
+    }
+    if (awaitingSectionName && code === 2) { section = value; awaitingSectionName = false; continue; }
+    if (!cur) continue;
+    if (code === 8) cur.layer = value;
+    if (code === 2 && cur.name === null) cur.name = value;
+    cur.codes.push({ code, value });
+  }
+  push();
+  return records;
+}
+
+/** First value of a group code on a record, as a number. */
+function dxfNum(rec, code, fallback = 0) {
+  const hit = rec.codes.find((c) => c.code === code);
+  const n = hit === undefined ? NaN : parseFloat(hit.value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/** Points built from an interleaved run of group codes, e.g. 10/20/30 or 11/21/31. */
+function dxfPointRun(rec, xCode, extra = {}) {
+  const pts = [];
+  let cur = null;
+  for (const { code, value } of rec.codes) {
+    const n = parseFloat(value);
+    if (code === xCode) {
+      if (cur) pts.push(cur);
+      cur = { x: n, y: 0, z: 0 };
+    } else if (cur) {
+      if (code === xCode + 10) cur.y = n;
+      else if (code === xCode + 20) cur.z = n;
+      else if (extra.bulgeCode !== undefined && code === extra.bulgeCode) cur.bulge = n;
+    }
+  }
+  if (cur) pts.push(cur);
+  return pts;
+}
+
+/**
+ * A B-spline sampled into points, by de Boor's algorithm over its own knot vector — so a SPLINE
+ * boundary arrives as the curve that was drawn, not as the polygon through its control points,
+ * which can sit well outside the shape.
+ *
+ * Falls back to the FIT points when the file carries them and the control points are unusable: fit
+ * points are points the curve is known to pass through, which for a surveyed boundary is exactly
+ * what somebody clicked.
+ */
+function sampleSpline(control, knots, degree, weights, samples) {
+  const n = control.length - 1;
+  const p = degree;
+  if (n < p || knots.length !== n + p + 2) return null;
+  const w = weights && weights.length === control.length ? weights : control.map(() => 1);
+
+  const span = (u) => {
+    if (u >= knots[n + 1]) return n;
+    let lo = p, hi = n + 1, mid = Math.floor((lo + hi) / 2);
+    while (u < knots[mid] || u >= knots[mid + 1]) {
+      if (u < knots[mid]) hi = mid; else lo = mid;
+      mid = Math.floor((lo + hi) / 2);
+      if (mid === lo && hi - lo <= 1) break;
+    }
+    return mid;
+  };
+
+  const at = (u) => {
+    const k = span(u);
+    // Work in homogeneous coordinates so a rational spline (non-unit weights) comes out right.
+    const d = [];
+    for (let j = 0; j <= p; j++) {
+      const c = control[k - p + j];
+      const ww = w[k - p + j];
+      d.push({ x: c.x * ww, y: c.y * ww, z: (c.z || 0) * ww, w: ww });
+    }
+    for (let r = 1; r <= p; r++) {
+      for (let j = p; j >= r; j--) {
+        const i = k - p + j;
+        const den = knots[i + p - r + 1] - knots[i];
+        const a = den === 0 ? 0 : (u - knots[i]) / den;
+        d[j] = {
+          x: (1 - a) * d[j - 1].x + a * d[j].x,
+          y: (1 - a) * d[j - 1].y + a * d[j].y,
+          z: (1 - a) * d[j - 1].z + a * d[j].z,
+          w: (1 - a) * d[j - 1].w + a * d[j].w,
+        };
+      }
+    }
+    const f = d[p].w === 0 ? 1 : d[p].w;
+    return { x: d[p].x / f, y: d[p].y / f, z: d[p].z / f };
+  };
+
+  const u0 = knots[p], u1 = knots[n + 1];
+  if (!(u1 > u0)) return null;
+  const pts = [];
+  for (let i = 0; i <= samples; i++) pts.push(at(u0 + ((u1 - u0) * i) / samples));
+  return pts;
+}
+
+/** The point list a single entity contributes, already tessellated, or null if it carries none. */
+function dxfEntityPath(rec) {
+  if (rec.type === "LWPOLYLINE") {
+    const elevation = dxfNum(rec, 38, 0);
+    const pts = dxfPointRun(rec, 10, { bulgeCode: 42 }).map((p) => ({ x: p.x, y: p.y, z: elevation, bulge: p.bulge || 0 }));
+    return { pts, closedFlag: !!(dxfNum(rec, 70, 0) & 1) };
+  }
+  if (rec.type === "LINE") {
+    const a = { x: dxfNum(rec, 10), y: dxfNum(rec, 20), z: dxfNum(rec, 30) };
+    const b = { x: dxfNum(rec, 11), y: dxfNum(rec, 21), z: dxfNum(rec, 31) };
+    return { pts: [a, b], closedFlag: false, loose: true };
+  }
+  if (rec.type === "ARC") {
+    const cx = dxfNum(rec, 10), cy = dxfNum(rec, 20), z = dxfNum(rec, 30);
+    const r = dxfNum(rec, 40);
+    const a0 = (dxfNum(rec, 50) * Math.PI) / 180;
+    let a1 = (dxfNum(rec, 51) * Math.PI) / 180;
+    // DXF arcs always run anticlockwise from start to end angle, wrapping through zero if need be.
+    while (a1 <= a0) a1 += Math.PI * 2;
+    const steps = Math.min(64, Math.max(2, Math.ceil(((a1 - a0) / (Math.PI / 18)))));
+    const pts = [];
+    for (let i = 0; i <= steps; i++) {
+      const a = a0 + ((a1 - a0) * i) / steps;
+      pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a), z });
+    }
+    return { pts, closedFlag: false, loose: true };
+  }
+  if (rec.type === "CIRCLE") {
+    const cx = dxfNum(rec, 10), cy = dxfNum(rec, 20), z = dxfNum(rec, 30);
+    const r = dxfNum(rec, 40);
+    const pts = [];
+    for (let i = 0; i < 72; i++) {
+      const a = (Math.PI * 2 * i) / 72;
+      pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a), z });
+    }
+    return { pts, closedFlag: true };
+  }
+  if (rec.type === "SPLINE") {
+    const control = dxfPointRun(rec, 10);
+    const fit = dxfPointRun(rec, 11);
+    const knots = rec.codes.filter((c) => c.code === 40).map((c) => parseFloat(c.value));
+    const weights = rec.codes.filter((c) => c.code === 41).map((c) => parseFloat(c.value));
+    const degree = dxfNum(rec, 71, 3);
+    const flags = dxfNum(rec, 70, 0);
+    // Sampled by LENGTH, not by control-point count: a 130 m boundary and a 3 m one need very
+    // different numbers of points to hold the same tolerance on the ground. A coarse first pass
+    // only measures how long the curve is; the second pass is the one that gets used.
+    let sampled = null;
+    if (control.length) {
+      const coarse = sampleSpline(control, knots, degree, weights, 64);
+      if (coarse) {
+        let len = 0;
+        for (let i = 1; i < coarse.length; i++) len += Math.hypot(coarse[i].x - coarse[i - 1].x, coarse[i].y - coarse[i - 1].y);
+        const want = Math.max(64, Math.min(2000, Math.ceil(len / SPLINE_CHORD_M)));
+        sampled = want > 64 ? sampleSpline(control, knots, degree, weights, want) || coarse : coarse;
+      }
+    }
+    const pts = sampled || (fit.length >= 3 ? fit : null);
+    if (!pts) return null;
+    return { pts, closedFlag: !!(flags & 1) };
+  }
+  return null;
+}
+
+/**
+ * Loose LINE/ARC segments joined end to end into loops. A boundary drawn as four separate lines is
+ * a boundary; it is only our own parser that ever needed it to be one entity.
+ */
+function loopsFromLooseSegments(paths) {
+  // Matching every free end against every other is quadratic. That is fine for the handful of lines
+  // someone drew a boundary with, and not fine for a survey with thousands of them — and a drawing
+  // with thousands of loose lines and no closed shape anywhere is not a lift extents export.
+  if (paths.length > 2000) return [];
+  const segs = paths.map((p) => ({ pts: p.pts.slice(), used: false })).filter((s) => s.pts.length >= 2);
+  const loops = [];
+  for (const seed of segs) {
+    if (seed.used) continue;
+    seed.used = true;
+    const chain = seed.pts.slice();
+    let grew = true;
+    while (grew) {
+      grew = false;
+      const head = chain[0], tail = chain[chain.length - 1];
+      if (samePoint(head, tail, SEGMENT_JOIN_TOL) && chain.length > 3) break;
+      for (const s of segs) {
+        if (s.used) continue;
+        const a = s.pts[0], b = s.pts[s.pts.length - 1];
+        if (samePoint(tail, a, SEGMENT_JOIN_TOL)) { chain.push(...s.pts.slice(1)); s.used = true; grew = true; break; }
+        if (samePoint(tail, b, SEGMENT_JOIN_TOL)) { chain.push(...s.pts.slice(0, -1).reverse()); s.used = true; grew = true; break; }
+        if (samePoint(head, b, SEGMENT_JOIN_TOL)) { chain.unshift(...s.pts.slice(0, -1)); s.used = true; grew = true; break; }
+        if (samePoint(head, a, SEGMENT_JOIN_TOL)) { chain.unshift(...s.pts.slice(1).reverse()); s.used = true; grew = true; break; }
+      }
+    }
+    if (chain.length >= 4 && samePoint(chain[0], chain[chain.length - 1], SEGMENT_JOIN_TOL)) {
+      chain.pop();
+      loops.push(chain);
+    }
+  }
+  return loops;
+}
+
+/** Perimeter of a point loop, used to judge whether an endpoint gap is drafting or a real opening. */
+function loopPerimeter(pts) {
+  let s = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    s += Math.hypot(b.x - a.x, b.y - a.y);
+  }
+  return s;
+}
+
+/**
+ * Reads every closed boundary out of a DXF, following blocks, and says how it managed it.
+ *
+ * Returns { polygons, stats } where stats carries the counts the UI needs to explain itself — how
+ * many shapes were closed by flag, how many by a coincident endpoint, how many were nudged shut
+ * across a small gap, how many came out of blocks or were chained from loose lines, and what was in
+ * the file that could not be used.
+ */
+function readDxfBoundaries(text) {
+  const records = dxfEntityRecords(text);
+  const stats = {
+    byFlag: 0, byCoincidentEnd: 0, byNudge: 0, worstNudge: 0,
+    fromBlocks: 0, fromLooseSegments: 0, fromSplines: 0,
+    openPaths: 0, smallestOpenGap: Infinity,
+    seen: {},
+  };
+
+  // Group heavy POLYLINE/VERTEX runs into one record each, so everything downstream sees a path.
+  const grouped = [];
+  let openPolyline = null;
+  for (const rec of records) {
+    if (rec.type === "POLYLINE") {
+      openPolyline = { ...rec, type: "_POLYLINE", pts: [], closedFlag: !!(dxfNum(rec, 70, 0) & 1) };
+      grouped.push(openPolyline);
+      continue;
+    }
+    if (rec.type === "VERTEX" && openPolyline) {
+      openPolyline.pts.push({ x: dxfNum(rec, 10), y: dxfNum(rec, 20), z: dxfNum(rec, 30), bulge: dxfNum(rec, 42, 0) });
+      continue;
+    }
+    if (rec.type === "SEQEND") { openPolyline = null; continue; }
+    grouped.push(rec);
+  }
+
+  for (const rec of grouped) stats.seen[rec.type] = (stats.seen[rec.type] || 0) + 1;
+
+  const blockNames = new Set(grouped.filter((r) => r.block).map((r) => r.block));
+
+  /**
+   * Closed loops defined directly inside one container: a block name, or null for model space.
+   * Model space is limited to the ENTITIES section on purpose — TABLES and OBJECTS carry records
+   * of their own, and nothing in them is a boundary.
+   */
+  const loopsIn = (container) => {
+    const mine =
+      container === null
+        ? grouped.filter((r) => r.section === "ENTITIES" && !r.block)
+        : grouped.filter((r) => r.block === container);
+    const loops = [];
+    const loose = [];
+    for (const rec of mine) {
+      const path = rec.type === "_POLYLINE" ? { pts: rec.pts, closedFlag: rec.closedFlag } : dxfEntityPath(rec);
+      if (!path || path.pts.length < 2) continue;
+      if (path.loose) { loose.push(path); continue; }
+      if (path.pts.length < 3) continue;
+
+      const pts = path.pts.slice();
+      const first = pts[0], last = pts[pts.length - 1];
+      const gap = Math.hypot(last.x - first.x, last.y - first.y);
+      const perimeter = loopPerimeter(pts);
+      let how = null;
+      if (path.closedFlag) {
+        how = "flag";
+        // A closed-flagged shape whose last vertex ALSO repeats the first would otherwise carry a
+        // zero-length edge into every downstream length and area calculation.
+        if (gap <= 1e-6 && pts.length > 3) pts.pop();
+      } else if (gap <= 1e-6) {
+        how = "coincident";
+        pts.pop();
+      } else if (gap <= BOUNDARY_CLOSE_TOL && gap <= perimeter * BOUNDARY_CLOSE_FRACTION && pts.length >= 3) {
+        // Drawn back to the start by eye. Snap it shut rather than throwing the lift away, and
+        // record how far it had to move so the app can own up to it.
+        how = "nudge";
+        stats.worstNudge = Math.max(stats.worstNudge, gap);
+        pts.pop();
+      } else {
+        stats.openPaths++;
+        stats.smallestOpenGap = Math.min(stats.smallestOpenGap, gap);
         continue;
       }
-      if (value === "LWPOLYLINE") buf = { type: "LWPOLYLINE", layer: "0", pts: [], elevation: 0, flags: 0 };
-      else if (value === "POLYLINE") { buf = { type: "POLYLINE", layer: "0", pts: [], flags: 0 }; polylineOpen = buf; }
-      else if (value === "VERTEX" && polylineOpen) buf = { _vertexOf: polylineOpen, _x: 0, _y: 0, _z: 0 };
-      else if (value === "SEQEND") { if (polylineOpen) finishClosedPoly(polylineOpen); polylineOpen = null; buf = null; }
-      else buf = null;
-      continue;
+      if (pts.length < 3) continue;
+      if (how === "flag") stats.byFlag++;
+      else if (how === "coincident") stats.byCoincidentEnd++;
+      else stats.byNudge++;
+      if (rec.type === "SPLINE") stats.fromSplines++;
+      loops.push({ layer: rec.layer || "0", pts });
     }
-    if (code === 2 && value === "ENTITIES") { inEntities = true; continue; }
-    if (!inEntities || !buf) continue;
+    return { loops, loose };
+  };
 
-    if (buf._vertexOf) {
-      if (code === 10) buf._x = parseFloat(value);
-      if (code === 20) buf._y = parseFloat(value);
-      if (code === 30) buf._z = parseFloat(value);
-      if (code === 42) buf._bulge = parseFloat(value);
-      continue;
+  // Bulges are expanded last, once the final vertex loop is known — including the closing edge back
+  // to the first vertex, which is as real a segment as any other and can carry its own curve.
+  const expandBulges = (pts) => {
+    const out = [];
+    for (let i = 0; i < pts.length; i++) {
+      const p0 = pts[i], p1 = pts[(i + 1) % pts.length];
+      out.push(p0);
+      if (p0.bulge) out.push(...tessellateBulge(p0, p1, p0.bulge));
     }
-    if (buf.type === "LWPOLYLINE") {
-      if (code === 8) buf.layer = value;
-      if (code === 38) buf.elevation = parseFloat(value);
-      if (code === 70) buf.flags = parseInt(value, 10);
-      if (code === 10) { flushLwVertex(); buf._x = parseFloat(value); }
-      if (code === 20) buf._y = parseFloat(value);
-      if (code === 42) buf._bulge = parseFloat(value);
-    } else if (buf.type === "POLYLINE") {
-      if (code === 8) buf.layer = value;
-      if (code === 70) buf.flags = parseInt(value, 10);
-    }
+    return out;
+  };
+
+  const polygons = [];
+  const emit = (loop) => {
+    const expanded = expandBulges(loop.pts);
+    if (expanded.length < 3) return;
+    const meanZ = expanded.reduce((s, p) => s + (p.z || 0), 0) / expanded.length;
+    polygons.push({ layer: loop.layer || "0", points: expanded, meanZ });
+  };
+
+  /* THE ORDER HERE IS THE WHOLE DESIGN. Each pass is a looser reading of what counts as a boundary,
+   * and each runs only if everything before it found nothing.
+   *
+   * A real drawing is full of closed shapes that are not lift extents — manhole symbols, arrowheads,
+   * hatch outlines, a north point. Read blocks alongside model space and a survey file quietly gains
+   * three extra "lifts" shaped like a stormwater symbol. Chain loose lines everywhere and it gains
+   * more. But when model space holds NOTHING closed, the drawing is not empty — the outline is in a
+   * block, or drawn as separate lines — and that is the moment to go looking, because there is
+   * nothing to confuse it with.
+   *
+   * stats.usedPass says which reading was needed, so the app can tell the user when it had to do
+   * something out of the ordinary to find their boundary. */
+  const modelSpace = loopsIn(null);
+  modelSpace.loops.forEach(emit);
+  stats.usedPass = polygons.length ? "model space" : null;
+
+  /* An INSERT places a block's geometry somewhere else entirely — moved, turned and scaled. Without
+   * following it, an outline that lives in a block is simply not in the drawing as far as we are
+   * concerned, which is how a perfectly good file gets reported as having nothing closed in it.
+   * Nesting is followed a few levels deep and then stopped, so a block that references itself
+   * cannot spin forever. */
+  if (!polygons.length) {
+    const expandInserts = (container, transform, depth) => {
+      if (depth > 4) return;
+      for (const rec of grouped) {
+        if (rec.type !== "INSERT" || (rec.block || null) !== container) continue;
+        const name = rec.name;
+        if (!name || !blockNames.has(name)) continue;
+        const ox = dxfNum(rec, 10), oy = dxfNum(rec, 20), oz = dxfNum(rec, 30);
+        const sx = dxfNum(rec, 41, 1) || 1, sy = dxfNum(rec, 42, 1) || 1, sz = dxfNum(rec, 43, 1) || 1;
+        const rot = (dxfNum(rec, 50, 0) * Math.PI) / 180;
+        const cos = Math.cos(rot), sin = Math.sin(rot);
+        // A bulge survives a rotation and a uniform scale unchanged — it is a ratio, not a length.
+        // Under a non-uniform scale it no longer describes the drawn arc, so it is dropped and the
+        // segment stays the straight chord rather than becoming a confidently wrong curve.
+        const uniform = Math.abs(sx - sy) < 1e-9;
+        const here = (p) => {
+          const x = p.x * sx, y = p.y * sy;
+          return transform({
+            x: ox + x * cos - y * sin,
+            y: oy + x * sin + y * cos,
+            z: oz + (p.z || 0) * sz,
+            bulge: uniform ? p.bulge : 0,
+          });
+        };
+        loopsIn(name).loops.forEach((loop) => {
+          stats.fromBlocks++;
+          emit({ layer: loop.layer, pts: loop.pts.map(here) });
+        });
+        expandInserts(name, here, depth + 1);
+      }
+    };
+    expandInserts(null, (p) => p, 0);
+    if (polygons.length) stats.usedPass = "blocks";
   }
-  return polygons;
+
+  /* Last resort: an outline drawn as separate LINEs and ARCs that meet end to end. Only reached when
+   * the drawing has no closed shape anywhere, model space or block — otherwise chaining loose
+   * segments across a whole survey would invent boundaries out of kerb lines and contours. */
+  if (!polygons.length && modelSpace.loose.length) {
+    const chained = loopsFromLooseSegments(modelSpace.loose);
+    stats.fromLooseSegments = chained.length;
+    chained.forEach((pts) => emit({ layer: "0", pts }));
+    if (polygons.length) stats.usedPass = "chained lines";
+  }
+
+  if (!Number.isFinite(stats.smallestOpenGap)) stats.smallestOpenGap = null;
+  return { polygons, stats };
+}
+
+/**
+ * Why a file yielded no boundary, in terms of what is actually IN it.
+ *
+ * "No closed polylines found in that file" was the old answer to every one of these, and it reads
+ * as a flat contradiction to someone looking at a drawing they can see is closed. It also gives
+ * them nothing to act on. Each case below names the thing in their file and what to do about it.
+ */
+function explainNoBoundaries(stats) {
+  const seen = stats.seen || {};
+  const n = (t) => seen[t] || 0;
+  const polylines = n("LWPOLYLINE") + n("_POLYLINE");
+
+  if (stats.openPaths) {
+    const many = stats.openPaths !== 1;
+    const gap = stats.smallestOpenGap;
+    const near =
+      gap !== null && gap < 1
+        ? ` ${many ? "The closest is" : "It is"} ${(gap * 1000).toFixed(0)} mm from closing — join those two ends and re-export.`
+        : " Use Close on the polyline (or snap the last vertex onto the first) and re-export.";
+    return `Found ${stats.openPaths} polyline${many ? "s" : ""} in that file, but ${many ? "none of them close" : "it does not close"}.${near}`;
+  }
+  if (n("LINE") + n("ARC") > 2) {
+    return `That file has ${n("LINE") + n("ARC")} separate lines and arcs but no closed shape — they do not quite meet end to end. Join them into one polyline (PEDIT → Join) and re-export.`;
+  }
+  if (n("INSERT")) {
+    return "Everything in that file sits inside blocks, and none of them contain a closed outline. Explode the block holding the extents, or draw the boundary in model space, and re-export.";
+  }
+  if (n("HATCH")) {
+    return "That file has hatching but no closed polyline. A hatch is a fill, not a boundary — export the outline it was drawn against.";
+  }
+  if (!polylines && !n("SPLINE")) {
+    return "No polylines at all in that file — nothing in it describes an outline. Check it is the lift extents export and not a surface, a sheet or a levels file.";
+  }
+  return "No closed boundary found in that file. Each lift wants one closed polyline; check they are closed and re-export.";
+}
+
+/** Closed boundaries only — the shape of a lift's plan-view extents. See readDxfBoundaries. */
+function parseDXFPolygons(text) {
+  return readDxfBoundaries(text).polygons;
 }
 
 /**
@@ -5268,9 +5677,9 @@ document.getElementById("dxfExtentsInput").addEventListener("change", async (e) 
 
   try {
     const text = await file.text();
-    const polygons = parseDXFPolygons(text);
+    const { polygons, stats: dxfStats } = readDxfBoundaries(text);
     if (!polygons.length) {
-      statusEl.textContent = "No closed polylines found in that file.";
+      statusEl.textContent = explainNoBoundaries(dxfStats);
       statusEl.className = "cutplan-status is-error";
       // This status line lives on Cut plan, so go there — saying why the file was no good on a view
       // the user is not looking at is the same as not saying it.
@@ -5348,8 +5757,26 @@ document.getElementById("dxfExtentsInput").addEventListener("change", async (e) 
       const count = Math.min(productRows.length, polygons.length);
       for (let i = 0; i < count; i++) applyExtents(productRows[i], polygons[i].points);
       matched = count;
-      statusEl.textContent = `Matched ${count} of ${polygons.length} extents to ${productRows.length} ${uploadProductName} lift${productRows.length === 1 ? "" : "s"} (file order — verify against RL order).`;
+      statusEl.textContent = productRows.length
+        ? `Matched ${count} of ${polygons.length} extents to ${productRows.length} ${uploadProductName} lift${productRows.length === 1 ? "" : "s"} (file order — verify against RL order).`
+        : // Nothing to match against and no elevations to invent rows from. Saying "matched 0 of 1"
+          // is true and useless; what the user needs is which of the two halves is missing.
+          `Read ${polygons.length} outline${polygons.length === 1 ? "" : "s"}, but every one sits at Z = 0, so there is no RL to file them under and no ${uploadProductName} lift rows to match them to. Either re-export the extents at their design levels, or add the lift rows first and they will be matched in file order.`;
     }
+    // If the file did not say "closed" in the ordinary way, say what was done to read it anyway.
+    // Closing a 4 mm gap or pulling the outline out of a block is the right call, but it is the
+    // app's call, not the drawing's — and it changes where the edge of a lift is.
+    const howParts = [];
+    if (dxfStats.byNudge) {
+      howParts.push(
+        `${dxfStats.byNudge} ${dxfStats.byNudge === 1 ? "boundary was" : "boundaries were"} left open in the drawing and closed here (largest gap ${(dxfStats.worstNudge * 1000).toFixed(0)} mm)`
+      );
+    }
+    if (dxfStats.usedPass === "blocks") howParts.push("read out of a block, placed by its insertion point");
+    if (dxfStats.usedPass === "chained lines") howParts.push("built by joining separate lines and arcs end to end");
+    if (dxfStats.fromSplines) howParts.push(`${dxfStats.fromSplines} traced from a spline`);
+    if (howParts.length) statusEl.textContent += ` Note: ${howParts.join("; ")}.`;
+
     statusEl.className = matched ? "cutplan-status is-ok" : "cutplan-status is-error";
     switchTab("cutplan");
     computeAndRender();

@@ -157,7 +157,32 @@ These come from the user directly. Violating them makes output wrong on site.
    left out of the card on a centreline plan; the wedges left on the outside
    of a bend are not patched, because a rectangle covering one lies on ground
    the strips either side already reach.
-11. **What leaves the app is set out from.** The PDF is a picture of the plan;
+11. **Read the drawing the user has, not the one we asked for.** "One closed
+   polyline per lift" is what the empty state ASKS for; it is not what CAD
+   files contain. The same outline — one a person looking at the screen would
+   call closed — arrives as a polyline drawn back to its start with the Closed
+   flag never set and a 3 mm gap, or inside a BLOCK placed by INSERT (anything
+   off a bound XREF or a titleblock), or as four separate LINEs meeting end to
+   end, or as a SPLINE. All of those used to come back as *"No closed polylines
+   found in that file"*, which is both wrong and unactionable. `readDxfBoundaries`
+   reads them all, and the ORDER is the design: model space first, then blocks,
+   then chained loose lines — **each pass only if everything before it found
+   nothing**. That gate is not optional. A survey drawing is full of closed
+   shapes that are not extents; reading blocks alongside model space added three
+   stormwater manhole symbols to the RE580 file as "lifts". When model space has
+   nothing, there is nothing to confuse it with, and that is the moment to look
+   harder. `stats.usedPass` records which reading was needed and the status line
+   says so, because closing a 4 mm gap or pulling an outline out of a block
+   moves the edge of a lift and is the app's decision, not the drawing's.
+   A genuinely open run is still rejected — a centreline is not a boundary.
+   Splines are evaluated with de Boor over their own knot vector and sampled by
+   LENGTH (`SPLINE_CHORD_M`), verified to 0.9 mm against ezdxf's evaluation of
+   the same curve; sampling by control-point count instead was 220 mm out.
+   Historical note: the old parser created `buf` for a POLYLINE in ANY section
+   but only read coordinates inside ENTITIES, so every heavy POLYLINE in a block
+   became a polygon of all-zero vertices. That is where the two phantom
+   `RL 0.00` rows with no face length in the RE580 takeoff came from.
+12. **What leaves the app is set out from.** The PDF is a picture of the plan;
    the **cut plan DXF** (`buildCutPlanDxf`, the button under the roll schedule)
    is the plan itself — every strip a closed polyline in the survey coordinates
    the extents arrived on, each lift at its own RL, layered by RL so a level can
@@ -188,9 +213,14 @@ Geometry / cut planning — the part that is subtle:
 - `stripWorldQuads(cutPlan)` — every strip's four true world corners (and any
   patch pieces), each built against its own corner segment's own direction.
   **One definition on purpose**, shared by the true-plan drawing and the DXF
-  export — see rule 11.
+  export — see rule 12.
 - `dxfCodeValuePairs(text)` — a DXF as the (group code, value) pairs it is made
   of. Every parser starts here; four of them carried their own copy.
+- `dxfEntityRecords(text)` — the file as flat entity records in file order, each
+  knowing its section and its BLOCK. `readDxfBoundaries` builds on it and returns
+  `{polygons, stats}`; `parseDXFPolygons` is the thin wrapper for callers that
+  only want the shapes. `explainNoBoundaries(stats)` turns the stats into the
+  sentence the user reads when nothing usable was found. See rule 11.
 - `downloadFile(name, text, mime)` / `fileStem(fallback)` — saving a file. The
   blob/anchor/revoke dance and the filename sanitiser had been copied next to
   the CSV, the project JSON and the 3D-view DXF.
