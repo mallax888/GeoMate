@@ -27,6 +27,25 @@ if ("serviceWorker" in navigator) {
     reloadedForUpdate = true;
     window.location.reload();
   });
+
+  /* The app is served from the cache so it opens instantly; the check for a newer build happens
+   * afterwards, in the background. When one lands, this is how the user finds out — a small bar
+   * rather than a reload out from under them, because they may be halfway through typing a lift.
+   * One click, or ignore it and get the new version next time the app is opened. */
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    if (!event.data || event.data.type !== "geomate-update-ready") return;
+    if (document.getElementById("updateBar")) return;
+    const bar = document.createElement("div");
+    bar.id = "updateBar";
+    bar.className = "update-bar";
+    bar.innerHTML =
+      '<span>A newer version of GeoMate is ready.</span>' +
+      '<button type="button" class="btn btn--primary" id="updateReloadBtn">Reload</button>' +
+      '<button type="button" class="btn btn--ghost" id="updateDismissBtn">Not now</button>';
+    document.body.appendChild(bar);
+    document.getElementById("updateReloadBtn").addEventListener("click", () => window.location.reload());
+    document.getElementById("updateDismissBtn").addEventListener("click", () => bar.remove());
+  });
 }
 
 /* ============================================================

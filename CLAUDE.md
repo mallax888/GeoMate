@@ -384,17 +384,27 @@ export, and state persistence.
 ## Conventions
 
 - **Bump `CACHE_NAME` in `sw.js` on every deploy that touches
-  `index.html`/`app.js`/`style.css`.** Currently `geomate-v153`. `activate()`
-  drops every other cache, which is what clears anything an older worker left.
-- **The service worker is NETWORK-FIRST for the app** (page, script,
-  stylesheet) with a 3.5 s timeout falling back to the stored copy, and
-  cache-first for fonts, icons and the manifest. It was stale-while-revalidate
-  for everything, which answers from the cache and refreshes afterwards — so
-  every update took **two** visits to appear and the first always showed the
-  old app. Reproduced and fixed with a persistent browser profile: deploy a
-  change, open the app in a fresh tab, old worker shows the previous build and
-  the new one shows the current build; both still open with no signal. Do not
-  go back to cache-first for the app itself.
+  `index.html`/`app.js`/`style.css`.** `activate()` drops every other cache,
+  which is what clears anything an older worker left.
+- **The service worker is CACHE-FIRST for everything, and announces updates.**
+  This has now been wrong in both directions, so the history matters.
+  Stale-while-revalidate with no signal meant every update took **two** visits
+  to appear and the first always showed the old app. The fix for that was
+  network-first for the app shell — which kept it current and made every single
+  open wait for the server. Measured against a deliberately slow server with
+  the worker installed and everything already cached: **a repeat visit took
+  4.1–4.6 s**. The user's report was "it's so slow, it's never been this slow",
+  and they were right.
+  It now serves the stored copy immediately, refreshes behind the scenes, and
+  when the refresh finds a genuinely different file (ETag, else Last-Modified,
+  else the body) it posts `geomate-update-ready` to every open tab, which puts
+  up a small bar with a Reload button. Same slow server: **repeat visit 83 ms**,
+  offline 105 ms, the bar appears after a deploy, and clicking Reload really
+  does land on the new build (all four verified in `swupdate.js` /
+  `swreload.js`).
+  The lesson is the general one: **never make the common path pay for the rare
+  one.** Opening the app happens constantly; a deploy landing happens rarely.
+  Do not put the update check back in front of the render.
 - Product library commits happen on `focusout`, **not** `input` — committing
   on `input` created a library entry per keystroke ("Sta", "Star", "Start"…).
   Keep `input` for live UI refresh only.

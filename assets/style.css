@@ -2039,3 +2039,27 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
 .basegrid-zone--4 { color: #12796b; }
 .basegrid-zone--5 { color: #9c4221; }
 .basegrid-zonerow td { background: var(--surface-2); font-size: 0.78rem; padding-top: 0.55rem; }
+
+/* The app opens from the cache, so a new build is announced rather than waited for. Sits out of the
+   way at the bottom and never steals focus — somebody may be mid-entry. */
+.update-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 1.1rem;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  max-width: calc(100vw - 2rem);
+  padding: 0.6rem 0.8rem 0.6rem 1rem;
+  font-size: 0.82rem;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.18);
+}
+@media (max-width: 520px) {
+  .update-bar { flex-wrap: wrap; justify-content: center; text-align: center; }
+}
