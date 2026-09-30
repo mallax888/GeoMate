@@ -1719,11 +1719,14 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
-  margin-bottom: 1.1rem;
+  margin-bottom: 2rem;
 }
 .liner-intro { font-size: 0.82rem; color: var(--ink-muted); max-width: 72ch; margin: 0 0 1rem; }
 .liner-head .liner-intro { margin: 0; }
-.liner-head .btn { flex: none; }
+/* Held to the right whether or not the intro is beside it. With help off this row holds nothing but
+   Reset, and space-between then parks it hard left — directly above the primary upload button, a
+   small destructive control stacked on top of the main action. It belongs out of that column. */
+.liner-head .btn { flex: none; margin-left: auto; }
 .liner-inputs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.7rem; margin-bottom: 1rem; }
 .liner-inputs--specs { grid-template-columns: repeat(3, 1fr); }
 .liner-stat-grid { grid-template-columns: repeat(3, 1fr); margin-bottom: 0.8rem; }
