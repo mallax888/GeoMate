@@ -1711,9 +1711,18 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
 .roll-labels-print-view { display: none; }
 
 /* ---------- Landfill liner ---------- */
-.liner-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+/* The gap below this row lives HERE, not on the intro paragraph inside it. The intro is help text
+   and is hidden unless help is on, so hanging the spacing off it left the Reset button sitting
+   flush against the controls below whenever help was off — which is the default. */
+.liner-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.1rem;
+}
 .liner-intro { font-size: 0.82rem; color: var(--ink-muted); max-width: 72ch; margin: 0 0 1rem; }
-.liner-head .liner-intro { margin: 0 0 1rem; }
+.liner-head .liner-intro { margin: 0; }
 .liner-head .btn { flex: none; }
 .liner-inputs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.7rem; margin-bottom: 1rem; }
 .liner-inputs--specs { grid-template-columns: repeat(3, 1fr); }
