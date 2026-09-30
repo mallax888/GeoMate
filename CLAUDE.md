@@ -139,15 +139,42 @@ These come from the user directly. Violating them makes output wrong on site.
    box inside a dashed box. A drop is `preventDefault`ed whether or not the
    file is a DXF, because letting one through makes the browser NAVIGATE to it
    and the project on screen is gone; the wrong file type gets the message
-   instead. Notes for tests: the empty state's button now reads
-   "Choose a DXF file" (`#emptyUploadBtn`) while the Cut plan block keeps
-   "Upload extents DXF" — scope that one anyway (`#cutPlanView >> text=...`);
-   `#headerUploadBtn` is hidden on the Cut plan tab, so probe it from Takeoff.
+   instead. **`startExtentsUpload` opens the picker and does nothing else.** It
+   used to switch to Cut plan first, so the wall/floor question and the status
+   line were already on screen when the file came back — but that put a whole
+   different screen, full of other upload buttons, behind a dialog the user
+   opened by asking for a file, and cancelling left them somewhere they never
+   chose to go. The move to Cut plan belongs in the input's own `change`
+   handler, where it now happens on EVERY path that has something to say —
+   success, "no closed polylines", and the read error — because a message
+   written to a view the user is not looking at is the same as no message.
+   Notes for tests: the empty state's button now reads "Choose a DXF file"
+   (`#emptyUploadBtn`) while the Cut plan block keeps "Upload extents DXF" —
+   scope that one anyway (`#cutPlanView >> text=...`); `#headerUploadBtn` is
+   hidden on the Cut plan tab, so probe it from Takeoff.
 10. **A control that cannot act must not be shown.** The Face picker and the
    end-strip overrides only mean something to the boundary layout, so they are
    left out of the card on a centreline plan; the wedges left on the outside
    of a bend are not patched, because a rectangle covering one lies on ground
    the strips either side already reach.
+11. **What leaves the app is set out from.** The PDF is a picture of the plan;
+   the **cut plan DXF** (`buildCutPlanDxf`, the button under the roll schedule)
+   is the plan itself — every strip a closed polyline in the survey coordinates
+   the extents arrived on, each lift at its own RL, layered by RL so a level can
+   be frozen or plotted on its own. It shares `stripWorldQuads` with the
+   on-screen true-plan drawing, and that is not an optimisation: a print and a
+   CAD file of the same job that disagree about where a strip lies is worse than
+   having only one of them, because the site sets out from the file and checks
+   against the print. Only lifts planned from real extents can go — a hand-typed
+   lift is a face length and an embedment with nowhere on earth to put it — and
+   the button says how many were left out rather than quietly writing a short
+   file. **DWG is not on the table**: it is a closed binary format, and the only
+   writers are large reverse-engineered libraries, which is not something to put
+   inside an offline app that has no build step and no dependencies. DXF is the
+   interchange format Civil 3D opens natively; Save As there produces the DWG.
+   Verified with `ezdxf` (`recover.readfile` + `audit()`), not just by reading it
+   back with our own parser, which is too lenient to prove anything about
+   AutoCAD: 0 errors, 0 fixes, every polyline closed and flat.
 
 ## Architecture map (`assets/app.js`, ~6400 lines, no modules)
 
@@ -158,8 +185,15 @@ Geometry / cut planning — the part that is subtle:
   agree to the last tolerance: one measures how much of a strip laps, another
   decides where a patch piece goes. If they drift apart, the sweep lays a piece
   over ground the lap measurement already called covered.
+- `stripWorldQuads(cutPlan)` — every strip's four true world corners (and any
+  patch pieces), each built against its own corner segment's own direction.
+  **One definition on purpose**, shared by the true-plan drawing and the DXF
+  export — see rule 11.
 - `dxfCodeValuePairs(text)` — a DXF as the (group code, value) pairs it is made
   of. Every parser starts here; four of them carried their own copy.
+- `downloadFile(name, text, mime)` / `fileStem(fallback)` — saving a file. The
+  blob/anchor/revoke dance and the filename sanitiser had been copied next to
+  the CSV, the project JSON and the 3D-view DXF.
 - `chainFromEdges(edges)` — a run of edges as one chain with a length-weighted
   average direction. Both grouping functions end this way; they differ in where
   they CUT the runs, never in this.

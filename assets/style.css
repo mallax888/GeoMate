@@ -1001,6 +1001,11 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
 }
 .roll-table th:first-child, .roll-table td:first-child { text-align: left; }
 .roll-table-note { font-size: 0.68rem; color: var(--ink-muted); margin: 0.5rem 0 0; }
+/* Sits under an export button and says what the file is for — DXF vs DWG is the kind of thing
+   worth answering on the button rather than in a support email. */
+.export-note { font-size: 0.68rem; line-height: 1.45; color: var(--ink-muted); margin: 0.4rem 0 0; }
+.export-note strong { color: var(--ink); font-weight: 600; }
+.export-note.is-error { color: var(--critical); }
 .roll-table td {
   text-align: right;
   font-family: var(--font-mono);

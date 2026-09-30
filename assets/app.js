@@ -1169,6 +1169,75 @@ function stripCovers(b, x, y) {
   return Math.abs(along) <= b.width / 2 + 1e-9 && across >= b.near - 1e-9 && across <= b.far + 1e-9;
 }
 
+/**
+ * Every strip of a plan as its four TRUE WORLD corner points (plus any patch pieces laid past a gap,
+ * as quads of their own). Each strip is built against its own corner segment's own direction, so a
+ * strip in a bend is independently correct rather than being sheared to fit a single overall bearing.
+ *
+ * This is the one definition. The true-plan drawing and the DXF export both read it, because a
+ * drawing and a CAD file of the same plan that disagree about where a strip lies is worse than
+ * having neither — the site would set out off the file and check against the print.
+ *
+ * Conventions worth knowing before using the output:
+ *  - Each strip keeps its OWN natural [start, start + width] extent, not one trimmed to a shared
+ *    seam with its neighbour. Where strips genuinely lap, the quads genuinely overlap; that is the
+ *    point, at an ordinary seam as much as at a corner.
+ *  - The NEAR edge hugs the true wall position (left and right tracked separately). The FAR edge is
+ *    one level line through the centre point, which is the convention the flat diagram uses too.
+ *  - A strip whose own segment was too short a piece of face to set a bearing may have been turned
+ *    to lie against the one before it (see computeCutPlan). It still sits on the same point of the
+ *    face, so its near edge is measured off that centre point rather than off the segment's
+ *    stations, which describe the orientation it no longer has.
+ */
+function stripWorldQuads(cutPlan) {
+  const { cutLengths, cornerSegments, stripSegmentIndex, stripLocalStarts, stripWidths } = cutPlan;
+  return cutLengths.map((len, i) => {
+    const segIdx = (stripSegmentIndex && stripSegmentIndex[i]) || 0;
+    const seg = cornerSegments[segIdx];
+    const segInward = inwardNormal(seg.dir);
+    const left = stripLocalStarts[i];
+    const width = stripWidths[i];
+    const right = left + width;
+    const center = left + width / 2;
+    // Same MIN_STRIP_LENGTH floor as the flat diagram (see renderCutPlanSvg) — a true reach that
+    // rounds to (near) zero still draws a real, visible box matching the practical minimum strip.
+    const farReach = Math.max((cutPlan.extentsReach || [])[i] ?? len, MIN_STRIP_LENGTH);
+    const nearReach = (cutPlan.frontReach || [])[i] ?? 0;
+
+    const dirOverride = (cutPlan.stripDirs || [])[i] || null;
+    const dir = dirOverride || seg.dir;
+    const inward = dirOverride ? inwardNormal(dirOverride) : segInward;
+    const centerPt = pointAtStationExtrapolated(seg, center);
+    const nearLeftPt = dirOverride
+      ? { x: centerPt.x - dir.x * (width / 2), y: centerPt.y - dir.y * (width / 2) }
+      : pointAtStationExtrapolated(seg, left);
+    const nearRightPt = dirOverride
+      ? { x: centerPt.x + dir.x * (width / 2), y: centerPt.y + dir.y * (width / 2) }
+      : pointAtStationExtrapolated(seg, right);
+    const nearLeft = { x: nearLeftPt.x + inward.x * nearReach, y: nearLeftPt.y + inward.y * nearReach };
+    const nearRight = { x: nearRightPt.x + inward.x * nearReach, y: nearRightPt.y + inward.y * nearReach };
+    const centerNear = { x: centerPt.x + inward.x * nearReach, y: centerPt.y + inward.y * nearReach };
+    const farCenter = { x: centerPt.x + inward.x * farReach, y: centerPt.y + inward.y * farReach };
+    const farLeft = { x: farCenter.x - dir.x * (width / 2), y: farCenter.y - dir.y * (width / 2) };
+    const farRight = { x: farCenter.x + dir.x * (width / 2), y: farCenter.y + dir.y * (width / 2) };
+
+    // Full quad, not just a centreline — same [left, right] lane as the main strip, so the patch
+    // reads as real covered area rather than a mark on a line.
+    const stitchQuads = (cutPlan.stitches[i] || []).map((s) => {
+      const far = { x: centerPt.x + inward.x * (s.offset + s.length), y: centerPt.y + inward.y * (s.offset + s.length) };
+      return {
+        nearLeft: { x: nearLeftPt.x + inward.x * s.offset, y: nearLeftPt.y + inward.y * s.offset },
+        nearRight: { x: nearRightPt.x + inward.x * s.offset, y: nearRightPt.y + inward.y * s.offset },
+        farLeft: { x: far.x - dir.x * (width / 2), y: far.y - dir.y * (width / 2) },
+        farRight: { x: far.x + dir.x * (width / 2), y: far.y + dir.y * (width / 2) },
+        length: s.length,
+      };
+    });
+
+    return { nearLeft, nearRight, farLeft, farRight, farCenter, centerNear, stitchQuads, dir, inward, width, length: len };
+  });
+}
+
 function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide = null, stripSide = null, avoidStitches = false, neighborDir = null, floorMode = false, endOverrides = null) {
   const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
   const chains = chainEdges(poly);
@@ -3719,7 +3788,8 @@ document.getElementById("emptyUploadBtn").addEventListener("click", startExtents
       const carrier = new DataTransfer();
       carrier.items.add(file);
       input.files = carrier.files;
-      switchTab("cutplan");
+      // No switchTab here either — the change handler moves to Cut plan once it has a result to
+      // show there, same as for a picked file.
       input.dispatchEvent(new Event("change", { bubbles: true }));
     });
   }
@@ -5091,8 +5161,13 @@ function updateHeaderUpload() {
   btn.hidden = currentTab === "cutplan" || emptyShowing;
 }
 
+/* Opens the file picker and NOTHING else. This used to switch to Cut plan first, so that the
+ * wall/floor question and the status line were already on screen when the file came back — but that
+ * put a whole different screen, full of other upload buttons, behind a dialog the user opened by
+ * asking for a file. Ask for a file, get a file dialog. Cancel it and you are still where you were.
+ * The move to Cut plan happens in the input's own change handler, once there is actually something
+ * to show there — including when what there is to show is an error. */
 function startExtentsUpload() {
-  switchTab("cutplan");
   const input = document.getElementById("dxfExtentsInput");
   if (input) input.click();
 }
@@ -5197,6 +5272,9 @@ document.getElementById("dxfExtentsInput").addEventListener("change", async (e) 
     if (!polygons.length) {
       statusEl.textContent = "No closed polylines found in that file.";
       statusEl.className = "cutplan-status is-error";
+      // This status line lives on Cut plan, so go there — saying why the file was no good on a view
+      // the user is not looking at is the same as not saying it.
+      switchTab("cutplan");
       return;
     }
 
@@ -5283,6 +5361,7 @@ document.getElementById("dxfExtentsInput").addEventListener("change", async (e) 
   } catch (err) {
     statusEl.textContent = `Couldn't read that file: ${err.message}`;
     statusEl.className = "cutplan-status is-error";
+    switchTab("cutplan");
   } finally {
     e.target.value = "";
   }
@@ -6412,7 +6491,7 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
  */
 function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
   const ns = "http://www.w3.org/2000/svg";
-  const { face, cutLengths, cornerSegments, stripSegmentIndex, stripLocalStarts, stripWidths } = cutPlan;
+  const { face, cutLengths, cornerSegments } = cutPlan;
   const overallOrigin = face.edges[0].from;
   const overallInward = inwardNormal(face.dir);
   // u = distance along the OVERALL face direction, v = distance along its inward normal — a genuine
@@ -6428,62 +6507,9 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
         v: (p.x - overallOrigin.x) * overallInward.x + (p.y - overallOrigin.y) * overallInward.y,
       });
 
-  // Every strip's true world corner points, computed against its OWN segment's own direction — each
-  // one independently correct regardless of which segment it's in, before any screen-space layout
-  // happens. Deliberately each strip's own natural [start, start+width] extent (not trimmed to a
-  // shared seam with its neighbour the way the flat diagram does) — the whole point here is to show a
-  // real overlap where one genuinely exists, at an ordinary seam as much as at a corner.
-  const stripGeoms = cutLengths.map((len, i) => {
-    const segIdx = (stripSegmentIndex && stripSegmentIndex[i]) || 0;
-    const seg = cornerSegments[segIdx];
-    const segInward = inwardNormal(seg.dir);
-    const left = stripLocalStarts[i];
-    const width = stripWidths[i];
-    const right = left + width;
-    const center = left + width / 2;
-    // Same MIN_STRIP_LENGTH floor as the flat diagram (see renderCutPlanSvg) — a true reach that
-    // rounds to (near) zero still draws a real, visible box matching the practical minimum strip.
-    const farReach = Math.max((cutPlan.extentsReach || [])[i] ?? len, MIN_STRIP_LENGTH);
-    const nearReach = (cutPlan.frontReach || [])[i] ?? 0;
-
-    // The last strip may have been turned to lie against the one before it, because its own segment
-    // was too short a piece of face to be setting a strip's bearing (see computeCutPlan). It still
-    // sits on the same point of the face — only its bearing changed — so its near edge is measured
-    // off that centre point rather than off the segment's own stations, which describe the untuned
-    // orientation.
-    const dirOverride = (cutPlan.stripDirs || [])[i] || null;
-    const dir = dirOverride || seg.dir;
-    const inward = dirOverride ? inwardNormal(dirOverride) : segInward;
-    const centerPt = pointAtStationExtrapolated(seg, center);
-    const nearLeftPt = dirOverride
-      ? { x: centerPt.x - dir.x * (width / 2), y: centerPt.y - dir.y * (width / 2) }
-      : pointAtStationExtrapolated(seg, left);
-    const nearRightPt = dirOverride
-      ? { x: centerPt.x + dir.x * (width / 2), y: centerPt.y + dir.y * (width / 2) }
-      : pointAtStationExtrapolated(seg, right);
-    const nearLeft = { x: nearLeftPt.x + inward.x * nearReach, y: nearLeftPt.y + inward.y * nearReach };
-    const nearRight = { x: nearRightPt.x + inward.x * nearReach, y: nearRightPt.y + inward.y * nearReach };
-    const centerNear = { x: centerPt.x + inward.x * nearReach, y: centerPt.y + inward.y * nearReach };
-    // Far edge is one level line through the centre point (not separately tracked left/right) — same
-    // convention the flat diagram uses: only the NEAR edge needs to hug the true wall position.
-    const farCenter = { x: centerPt.x + inward.x * farReach, y: centerPt.y + inward.y * farReach };
-    const farLeft = { x: farCenter.x - dir.x * (width / 2), y: farCenter.y - dir.y * (width / 2) };
-    const farRight = { x: farCenter.x + dir.x * (width / 2), y: farCenter.y + dir.y * (width / 2) };
-
-    // Full quad, not just a centreline — same [left, right] lane as the main strip, so the patch
-    // reads as real covered area rather than a mark on a line.
-    const stitchQuads = (cutPlan.stitches[i] || []).map((s) => {
-      const far = { x: centerPt.x + inward.x * (s.offset + s.length), y: centerPt.y + inward.y * (s.offset + s.length) };
-      return {
-        nearLeft: { x: nearLeftPt.x + inward.x * s.offset, y: nearLeftPt.y + inward.y * s.offset },
-        nearRight: { x: nearRightPt.x + inward.x * s.offset, y: nearRightPt.y + inward.y * s.offset },
-        farLeft: { x: far.x - dir.x * (width / 2), y: far.y - dir.y * (width / 2) },
-        farRight: { x: far.x + dir.x * (width / 2), y: far.y + dir.y * (width / 2) },
-      };
-    });
-
-    return { nearLeft, nearRight, farLeft, farRight, farCenter, centerNear, stitchQuads };
-  });
+  // True world corner points for every strip — the same ones the DXF export writes, so the drawing
+  // and the CAD file can never disagree about where a strip lies. See stripWorldQuads.
+  const stripGeoms = stripWorldQuads(cutPlan);
 
   const allPts = cutPlan.poly.map(proj);
   stripGeoms.forEach((g) => {
@@ -7108,6 +7134,176 @@ function buildLiftsDxf(results) {
   return lines.join("\r\n") + "\r\n";
 }
 
+/* One way of saving a file. The blob/anchor/click/revoke dance had been copied next to the CSV
+ * export, the project JSON and the 3D-view DXF, each with its own copy of the filename sanitiser. */
+function downloadFile(filename, contents, mimeType) {
+  const url = URL.createObjectURL(new Blob([contents], { type: mimeType }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** The project name, reduced to something safe to put in a filename. */
+function fileStem(fallback) {
+  const name = (document.getElementById("projectName")?.value || "").trim() || fallback;
+  return name.replace(/[^a-z0-9-_]+/gi, "_");
+}
+
+/**
+ * DXF R12 (AC1009) export of the CUT PLAN — every strip as it actually lies on the ground, in the
+ * survey coordinates the extents came in on, each lift at its own RL. This is the file to set out
+ * from: open it in Civil 3D (or any CAD), overlay it on the design, and every strip is a real closed
+ * polyline you can snap to, measure and dimension.
+ *
+ * Layers are named by RL, so on a wall — where every lift is at its own level — each lift gets its
+ * own set and can be frozen or plotted alone. On a floor, several separate sheets often share one
+ * level, and those deliberately share a layer: "the grid at 313.25" is the useful thing to switch on
+ * and off there, and the separate areas are still separate closed polylines within it.
+ *
+ * Per lift, on its own layers so a lift can be frozen or plotted on its own:
+ *   EXT_RL_x    the lift boundary the strips were laid inside
+ *   GRID_RL_x   one closed polyline per strip
+ *   PATCH_RL_x  the pieces laid over a pocket the run could not reach (see the bare-ground sweep)
+ *   TEXT_RL_x   strip number, cut length, and roll number where the schedule has assigned one,
+ *               rotated to read along the strip
+ *
+ * Geometry comes from stripWorldQuads, the same function the on-screen true-plan drawing uses, so
+ * the file and the print cannot disagree.
+ *
+ * Only lifts planned from real extents can be exported: a lift typed in by hand is a face length and
+ * an embedment, with no survey coordinates anywhere to put it on. The caller reports how many were
+ * left out rather than silently writing a short file.
+ */
+function buildCutPlanDxf(results, rollLookup) {
+  const lifts = results
+    .filter((r) => r.cutPlan && r.cutPlan.cornerSegments && r.cutPlan.poly && Number.isFinite(parseFloat(r.rl)))
+    .map((r) => ({ r, rl: parseFloat(r.rl), rlLabel: String(r.rl) }))
+    .sort((a, b) => a.rl - b.rl);
+  if (!lifts.length) return null;
+
+  const lines = [];
+  const put = (code, value) => lines.push(String(code), String(value));
+  const layers = [];
+  const layerFor = (kind, rlLabel, color) => {
+    const name = `${kind}_RL_${rlLabel.replace(/[^A-Za-z0-9_.-]+/g, "_")}`;
+    if (!layers.some((l) => l.name === name)) layers.push({ name, color });
+    return name;
+  };
+
+  // Written as the entities are built, so "zoom extents" frames the job on open.
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  const seen = (p, z) => {
+    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+    minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+    minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+  };
+
+  const entities = [];
+  const ent = (code, value) => entities.push(String(code), String(value));
+  const closedPolyline = (layer, pts, z) => {
+    // Flag 70 = 9 (bit 0 "closed" + bit 3 "3D polyline"), and each VERTEX carries the matching 3D
+    // flag 32 — plain 2D-polyline flags would let a stricter reader flatten every lift onto one
+    // plane instead of keeping each at its own RL.
+    ent(0, "POLYLINE"); ent(8, layer); ent(66, 1); ent(70, 9);
+    pts.forEach((p) => {
+      ent(0, "VERTEX"); ent(8, layer);
+      ent(10, p.x.toFixed(4)); ent(20, p.y.toFixed(4)); ent(30, z.toFixed(4));
+      ent(70, 32);
+      seen(p, z);
+    });
+    ent(0, "SEQEND"); ent(8, layer);
+  };
+
+  lifts.forEach(({ r, rl, rlLabel }, liftIdx) => {
+    const color = DXF_LAYER_COLORS[liftIdx % DXF_LAYER_COLORS.length];
+    const quads = stripWorldQuads(r.cutPlan);
+    const rollNums = rollLookup ? stripRollNumbersFor(r, rollLookup) : null;
+
+    closedPolyline(layerFor("EXT", rlLabel, 8), r.cutPlan.poly, rl);
+
+    const gridLayer = layerFor("GRID", rlLabel, color);
+    const patchLayer = layerFor("PATCH", rlLabel, color);
+    const textLayer = layerFor("TEXT", rlLabel, 7);
+
+    quads.forEach((q, i) => {
+      // Corner order walks the strip: near edge left→right, far edge right→left, so the polyline
+      // closes as the rectangle it is rather than crossing itself into a bow tie.
+      closedPolyline(gridLayer, [q.nearLeft, q.nearRight, q.farRight, q.farLeft], rl);
+      q.stitchQuads.forEach((s) => closedPolyline(patchLayer, [s.nearLeft, s.nearRight, s.farRight, s.farLeft], rl));
+
+      const mid = { x: (q.centerNear.x + q.farCenter.x) / 2, y: (q.centerNear.y + q.farCenter.y) / 2 };
+      // stripRollNumbersFor hands back an already-joined string ("3" or "3,4"), not a list.
+      const roll = rollNums && rollNums[i] ? ` R${rollNums[i]}` : "";
+      const label = `${i + 1}  ${q.length.toFixed(2)}m${roll}`;
+      // Rotated to read along the strip rather than across it, and kept the right way up: past
+      // vertical a label reads upside down, so it is flipped back through 180°.
+      let rot = (Math.atan2(q.dir.y, q.dir.x) * 180) / Math.PI;
+      if (rot > 90 || rot <= -90) rot += 180;
+      const height = Math.max(0.12, Math.min(0.45, q.width * 0.22));
+      // Group codes in the order AutoCAD itself writes TEXT. Readers are mostly order-tolerant, but
+      // this is the file's whole reason for existing — it is not the place to find out which ones
+      // are not. 72 = centred, 73 = middle, and those two only take effect when the second
+      // alignment point (11/21/31) is present; without it the insertion point is the baseline-left
+      // corner and every label sits off to one side of its strip.
+      ent(0, "TEXT"); ent(8, textLayer);
+      ent(10, mid.x.toFixed(4)); ent(20, mid.y.toFixed(4)); ent(30, rl.toFixed(4));
+      ent(40, height.toFixed(3));
+      ent(1, label);
+      ent(50, rot.toFixed(2));
+      ent(7, "STANDARD");
+      ent(72, 1);
+      ent(11, mid.x.toFixed(4)); ent(21, mid.y.toFixed(4)); ent(31, rl.toFixed(4));
+      ent(73, 2);
+    });
+  });
+
+  put(0, "SECTION"); put(2, "HEADER");
+  put(9, "$ACADVER"); put(1, "AC1009");
+  put(9, "$EXTMIN"); put(10, minX.toFixed(4)); put(20, minY.toFixed(4)); put(30, minZ.toFixed(4));
+  put(9, "$EXTMAX"); put(10, maxX.toFixed(4)); put(20, maxY.toFixed(4)); put(30, maxZ.toFixed(4));
+  put(0, "ENDSEC");
+
+  // LTYPE before LAYER, and STYLE after — the order AutoCAD writes them, and layers reference a
+  // linetype so it has to be defined by the time they are read. Both tables exist only because the
+  // entities name CONTINUOUS and STANDARD: a file that references a table entry it never defines is
+  // the kind of thing one reader shrugs at and the next one refuses.
+  put(0, "SECTION"); put(2, "TABLES");
+
+  put(0, "TABLE"); put(2, "LTYPE"); put(70, 1);
+  put(0, "LTYPE"); put(2, "CONTINUOUS"); put(70, 0); put(3, "Solid line"); put(72, 65); put(73, 0); put(40, "0.0");
+  put(0, "ENDTAB");
+
+  put(0, "TABLE"); put(2, "LAYER"); put(70, layers.length);
+  layers.forEach(({ name, color }) => {
+    put(0, "LAYER"); put(2, name); put(70, 0); put(62, color); put(6, "CONTINUOUS");
+  });
+  put(0, "ENDTAB");
+
+  put(0, "TABLE"); put(2, "STYLE"); put(70, 1);
+  put(0, "STYLE"); put(2, "STANDARD"); put(70, 0);
+  put(40, "0.0"); put(41, "1.0"); put(50, "0.0"); put(71, 0); put(42, "0.2");
+  put(3, "txt"); put(4, "");
+  put(0, "ENDTAB");
+
+  put(0, "ENDSEC");
+
+  put(0, "SECTION"); put(2, "ENTITIES");
+  lines.push(...entities);
+  put(0, "ENDSEC");
+  put(0, "EOF");
+
+  return {
+    text: lines.join("\r\n") + "\r\n",
+    lifts: lifts.length,
+    strips: lifts.reduce((n, { r }) => n + r.cutPlan.cutLengths.length, 0),
+    skipped: results.length - lifts.length,
+  };
+}
+
 function render3D(results) {
   if (!view3DCanvas) return;
   const ctx = view3DCanvas.getContext("2d");
@@ -7401,16 +7597,7 @@ function syncCompass() {
   document.getElementById("view3DExportDxf").addEventListener("click", () => {
     const dxf = buildLiftsDxf(window.__geogridResults || []);
     if (!dxf) return;
-    const project = document.getElementById("projectName").value || "geomate";
-    const blob = new Blob([dxf], { type: "application/dxf" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${project.replace(/[^a-z0-9-_]+/gi, "_")}_lifts.dxf`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    downloadFile(`${fileStem("geomate")}_lifts.dxf`, dxf, "application/dxf");
   });
 })();
 
@@ -7700,16 +7887,35 @@ document.getElementById("exportBtn").addEventListener("click", () => {
     });
   }
 
-  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${project.replace(/[^a-z0-9-_]+/gi, "_")}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  downloadFile(`${project.replace(/[^a-z0-9-_]+/gi, "_")}.csv`, lines.join("\n"), "text/csv;charset=utf-8;");
 });
+
+/* The cut plan as CAD geometry rather than a picture of it. The note under the button covers DWG:
+ * see buildCutPlanDxf for what actually goes in the file. */
+{
+  const btn = document.getElementById("exportCutPlanDxfBtn");
+  const note = document.getElementById("exportCutPlanDxfNote");
+  if (btn) {
+    btn.addEventListener("click", () => {
+      const built = buildCutPlanDxf(window.__geogridResults || [], buildRollLookup(window.__geogridRolls || []));
+      if (!built) {
+        // Nothing with survey coordinates to write. Say which of the two reasons it is, because
+        // "nothing happened" on a button is the least useful answer available.
+        note.textContent = (window.__geogridResults || []).length
+          ? "Nothing to export yet — these lifts were typed in by hand, so there are no survey coordinates to place them on. Upload the lift extents DXF and the cut plan can go back out as one."
+          : "Nothing to export yet — load your lift extents first.";
+        note.classList.add("is-error");
+        return;
+      }
+      downloadFile(`${fileStem("geomate")}_cut_plan.dxf`, built.text, "application/dxf");
+      note.classList.remove("is-error");
+      note.innerHTML =
+        `Exported ${built.strips} strips across ${built.lifts} lift${built.lifts === 1 ? "" : "s"}` +
+        (built.skipped ? `, leaving out ${built.skipped} hand-typed lift${built.skipped === 1 ? "" : "s"} with no survey coordinates` : "") +
+        ". Opens straight in Civil 3D — <strong>Save As</strong> there to get a DWG.";
+    });
+  }
+}
 
 function csvEscape(str) {
   const s = String(str);
@@ -8155,16 +8361,8 @@ document.getElementById("deleteProjectBtn").addEventListener("click", () => {
 });
 
 document.getElementById("exportProjectBtn").addEventListener("click", () => {
-  const name = document.getElementById("projectName").value.trim() || "untitled-project";
-  const blob = new Blob([JSON.stringify(buildStateSnapshot(), null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${name.replace(/[^a-z0-9-_]+/gi, "_")}.geogrid.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  const name = `${fileStem("untitled-project")}.geogrid.json`;
+  downloadFile(name, JSON.stringify(buildStateSnapshot(), null, 2), "application/json");
 });
 
 document.getElementById("importProjectInput").addEventListener("change", async (e) => {
