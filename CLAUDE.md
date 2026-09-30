@@ -189,9 +189,23 @@ These come from the user directly. Violating them makes output wrong on site.
    bench at the top and tied in at the toe; the base is a separate job in its
    own direction. Laying a cell one uniform way produces a drawing no installer
    would work to — that was this tool's first version and it was wrong.
-   `classifyCellZones` splits the surface by grade (batter vs base) and by
-   aspect (which way each batter faces), and every zone is laid on its own
-   bearing; only the BASE direction is free to be optimised. **(b) A roll
+   Stated exactly, by the user: *"grids will be positioned on one plane - they
+   will stop when there is a change in direction or hinge point"*, and *"when
+   there is a change in grade they stop the grid there then weld it to the next
+   strip on a different grade."* So `classifyCellZones` splits the surface into
+   PLANAR FACETS — flood fill across shared edges while the unit normals stay
+   within `normalTol` — and a panel is clipped to its facet, which makes the
+   hinges fall out as the facet boundaries. 10° is the working tolerance and is
+   not a loose choice: at 15° a batter and the base merge into one 13.9% plane
+   that exists nowhere on the ground, and at 5° a single batter splits in two.
+   Each facet is labelled batter or base by its own grade, and that only picks
+   the direction: a batter runs down its fall line, the base runs as asked.
+   Only the BASE direction is free to be optimised.
+   **Weld is a costed quantity, so it is measured** (`cellHingeLines`): hinge
+   weld where a panel on one plane joins the panel on the next — the "tie weld
+   at base of slope" — kept separate from the longitudinal panel seam, because
+   different crews do them at different times. On the test cell, 597 m of hinge
+   weld and 2,250 m of seam. **(b) A roll
    follows the ground**, so every panel length is DRAPED — sampled along the
    run with the height interpolated from the triangle under each sample. On the
    test cell the surface is 4.0% bigger than its own plan area and panels run
@@ -211,9 +225,19 @@ These come from the user directly. Violating them makes output wrong on site.
      join two offcuts and call it a run. Dividing total length by roll length
      said 26 rolls where the answer is 30 — verified against an independent
      first-fit-decreasing, and tight, since 29 of the panels exceed half a roll.
-   - A panel corner can overhang the surface at the cell edge. Falling back to
-     RL 0 there puts that corner 280 m under the job in CAD; it walks back
-     toward the centreline until it finds ground instead.
+   - **The panel OUTLINE has to be draped, not just its centreline.** It was
+     four corners joined by straight lines, and a straight line between two
+     points on a hillside does not lie on the hillside. The panels visibly
+     floated off the ground. Each long edge is now sampled like the centreline:
+     280 vertices became 10,226, and every one over the surface sits exactly on
+     it.
+   - Where a roll overhangs the edge of the cell there is no triangle to ask.
+     Holding the last level seen floats it; RL 0 puts it 280 m under the job.
+     It takes the FACET'S OWN PLANE instead, which is the whole point of
+     faceting — inside the facet the plane and the ground agree, and outside it
+     the plane carries on at the right grade.
+   - `lines.push(...arr)` overflows the call stack once a layout runs to
+     hundreds of thousands of group codes. Both DXF exporters loop instead.
    The zoning is INFERRED from the surface. A toe line or zone divisions from
    the designer beat it and should be preferred whenever they are supplied.
 13. **What leaves the app is set out from.** The PDF is a picture of the plan;

@@ -730,6 +730,10 @@
           <div class="field__unit"><input type="number" id="baseGridRollLength" value="100" min="0" step="1" /><em>m</em></div>
         </label>
         <label class="field field--compact">
+          <span>Weld rate</span>
+          <div class="field__unit"><input type="number" id="baseGridWeldRate" min="0" step="0.5" placeholder="e.g. 12" /><em>/m</em></div>
+        </label>
+        <label class="field field--compact">
           <span>Roll direction</span>
           <div class="field__unit"><input type="number" id="baseGridBearing" value="0" min="0" max="359" step="1" /><em>°</em></div>
         </label>
@@ -753,6 +757,10 @@
           <div class="stat"><span class="stat__label">Total run</span><span class="stat__value" id="baseGridStatRun">0<small> m</small></span></div>
           <div class="stat"><span class="stat__label">Grid to order</span><span class="stat__value" id="baseGridStatMaterial">0<small> m²</small></span></div>
           <div class="stat"><span class="stat__label">Rolls</span><span class="stat__value" id="baseGridStatRolls">0</span></div>
+          <div class="stat"><span class="stat__label">Weld at grade changes</span><span class="stat__value" id="baseGridStatHinge">0<small> m</small></span></div>
+          <div class="stat"><span class="stat__label">Panel seams</span><span class="stat__value" id="baseGridStatSeam">0<small> m</small></span></div>
+          <div class="stat"><span class="stat__label">Total weld</span><span class="stat__value" id="baseGridStatWeld">0<small> m</small></span></div>
+          <div class="stat"><span class="stat__label">Weld cost</span><span class="stat__value" id="baseGridStatWeldCost">—</span></div>
         </div>
         <p id="baseGridDrapeNote" class="liner-corner-note"></p>
 

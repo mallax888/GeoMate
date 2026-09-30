@@ -7723,7 +7723,9 @@ function buildCutPlanDxf(results, rollLookup) {
   put(0, "ENDSEC");
 
   put(0, "SECTION"); put(2, "ENTITIES");
-  lines.push(...entities);
+  // NOT lines.push(...arr): every element becomes an argument, and a draped layout runs to hundreds
+  // of thousands of them — which overflows the call stack rather than failing politely.
+  for (const v of entities) lines.push(v);
   put(0, "ENDSEC");
   put(0, "EOF");
 
@@ -9230,6 +9232,7 @@ const baseGridInputs = {
   overlap: document.getElementById("baseGridOverlap"),
   rollLength: document.getElementById("baseGridRollLength"),
   bearing: document.getElementById("baseGridBearing"),
+  weldRate: document.getElementById("baseGridWeldRate"),
 };
 
 /* The surface stays in memory for the session rather than in localStorage: a cell TIN is megabytes
@@ -9250,6 +9253,7 @@ function resetBaseGridInputs() {
   baseGridInputs.overlap.value = "300";
   baseGridInputs.rollLength.value = "100";
   baseGridInputs.bearing.value = "0";
+  baseGridInputs.weldRate.value = "";
 }
 
 function loadBaseGridSurface(triangles, label) {
@@ -9335,6 +9339,11 @@ function renderBaseGrid() {
   // Packed, not divided — see packPanelsIntoRolls for why those are very different numbers.
   const packing = rollLength > 0 ? packPanelsIntoRolls(plan.panels.map((p) => p.draped), rollLength) : null;
   set("baseGridStatRolls", packing ? String(packing.rolls) : "—");
+  set("baseGridStatHinge", fmt.int(plan.hingeWeld), "m");
+  set("baseGridStatSeam", fmt.int(plan.panelSeam), "m");
+  set("baseGridStatWeld", fmt.int(plan.totalWeld), "m");
+  const weldRate = parseFloat(baseGridInputs.weldRate.value);
+  set("baseGridStatWeldCost", weldRate > 0 ? fmt.cost(plan.totalWeld * weldRate) : "—");
 
   const note = document.getElementById("baseGridDrapeNote");
   if (note) {
@@ -9345,6 +9354,8 @@ function renderBaseGrid() {
       `between ${fmt.int(plan.totalPlan)} m and ${fmt.int(plan.totalDraped)} m of run, and it is material you would not have ordered off a drawing. ` +
       `At ${(plan.minOverlap * 1000).toFixed(0)} mm laps the runs cover ${fmt.int(plan.covered)} m² against ${fmt.int(plan.surface)} m² of surface, ` +
       `so about ${short}% of the lap is being spent on cross-fall.` +
+      ` Panels stop at every change of grade and are welded to the strip on the next plane: ` +
+      `<strong>${fmt.int(plan.hingeWeld)} m of weld at grade changes</strong> plus ${fmt.int(plan.panelSeam)} m of panel seam.` +
       (packing
         ? ` Each panel has to come off one roll, so ${plan.panels.length} panels pack into <strong>${packing.rolls} rolls</strong> of ${rollLength} m` +
           ` — ${fmt.int(packing.rolls * rollLength * plan.rollWidth)} m² bought against ${fmt.int(plan.material)} m² laid` +
@@ -9516,41 +9527,59 @@ function buildBaseGridDxf(surface, plan) {
   };
 
   const tin = makeTinIndex(surface.triangles);
-  /* A roll is wider than the ground it sits on at the edge of the cell, so a panel corner can land
-   * just off the surface. Dropping it to RL 0 would put that corner 280 m below the job — so it
-   * walks back toward a point known to be on the surface until it finds ground. */
-  const onGround = (p, towards) => {
-    const z = tin.zAt(p.x, p.y);
-    if (z !== null) return { x: p.x, y: p.y, z };
-    if (towards) {
-      for (let f = 0.1; f <= 1.0001; f += 0.1) {
-        const zz = tin.zAt(p.x + (towards.x - p.x) * f, p.y + (towards.y - p.y) * f);
-        if (zz !== null) return { x: p.x, y: p.y, z: zz };
-      }
-      if (towards.z !== undefined) return { x: p.x, y: p.y, z: towards.z };
+
+  /* THE PANEL OUTLINE HAS TO BE DRAPED TOO, not just its centreline.
+   *
+   * This was drawn as a four-corner quad: the two ends of each long edge, joined by a straight line.
+   * A straight line between two points on a hillside does not lie on the hillside — it cuts through
+   * every rise and flies over every hollow in between — so the panels floated off the ground exactly
+   * as reported. A roll lies ON the surface along its whole length, and so must its edge.
+   *
+   * Each long edge is sampled the same way the centreline is. Where an edge runs off the surface —
+   * a 7 m roll overhangs the cell at the boundary, which is normal — it holds the last level it had
+   * rather than inventing one, so the line stays continuous and stays near the ground instead of
+   * diving to RL 0 or jumping to some level from elsewhere on the panel. */
+  const drapeEdge = (from, to, plane) => {
+    const len = Math.hypot(to.x - from.x, to.y - from.y);
+    const n = Math.max(1, Math.ceil(len / BASE_GRID_SAMPLE_M));
+    const pts = [];
+    for (let i = 0; i <= n; i++) {
+      const f = i / n;
+      const x = from.x + (to.x - from.x) * f, y = from.y + (to.y - from.y) * f;
+      // The ground where there is ground; the facet's own plane where the roll overhangs the edge
+      // of the cell. Inside the facet the two agree — that is what makes it a facet — and outside
+      // it the plane carries on at the right grade instead of running level at a stale height.
+      const z = tin.zAt(x, y);
+      pts.push({ x, y, z: z !== null ? z : plane ? plane.zAt(x, y) : 0 });
     }
-    return { x: p.x, y: p.y, z: 0 };
+    return pts;
   };
+
   // Outline vertices are triangle corners, so they already carry their own true level — no lookup.
   poly3d("OUTLINE", surface.outline.map((p) => ({ x: p.x, y: p.y, z: p.z || 0 })), true);
+
+  // Every change of grade, on its own layer: this is where the grid is cut and welded to the strip
+  // on the next plane, and it is a costed length, so it goes in the drawing as geometry to measure.
+  (plan.hinges ? plan.hinges.segments : []).forEach((seg) => {
+    poly3d("WELD_HINGE", [
+      { x: seg.a.x, y: seg.a.y, z: seg.a.z || 0 },
+      { x: seg.b.x, y: seg.b.y, z: seg.b.z || 0 },
+    ], false);
+  });
 
   const half = plan.rollWidth / 2;
   plan.zones.forEach((z) => {
   const ax = z.plan.across.x * half, ay = z.plan.across.y * half;
   z.plan.panels.forEach((p) => {
-    // Each corner falls back toward its own end of the centreline, which is on the surface by
-    // construction — that is the nearest ground it could sensibly take its level from.
-    const startOn = p.path.length ? p.path[0] : p.start;
-    const endOn = p.path.length ? p.path[p.path.length - 1] : p.end;
-    poly3d("PANEL_EDGES", [
-      onGround({ x: p.start.x - ax, y: p.start.y - ay }, startOn),
-      onGround({ x: p.end.x - ax, y: p.end.y - ay }, endOn),
-      onGround({ x: p.end.x + ax, y: p.end.y + ay }, endOn),
-      onGround({ x: p.start.x + ax, y: p.start.y + ay }, startOn),
-    ], true);
+    const left = drapeEdge({ x: p.start.x - ax, y: p.start.y - ay }, { x: p.end.x - ax, y: p.end.y - ay }, z.plane);
+    const right = drapeEdge({ x: p.start.x + ax, y: p.start.y + ay }, { x: p.end.x + ax, y: p.end.y + ay }, z.plane);
+    // Down one edge and back up the other, so it closes as the panel it is.
+    poly3d("PANEL_EDGES", left.concat(right.slice().reverse()), true);
     if (p.path.length >= 2) poly3d("PANEL_CL", p.path, false);
 
-    const mid = p.path.length ? p.path[Math.floor(p.path.length / 2)] : onGround(p.start, null);
+    const mid = p.path.length
+      ? p.path[Math.floor(p.path.length / 2)]
+      : { x: p.start.x, y: p.start.y, z: z.plane ? z.plane.zAt(p.start.x, p.start.y) : 0 };
     let rot = (Math.atan2(z.plan.dir.y, z.plan.dir.x) * 180) / Math.PI;
     if (rot > 90 || rot <= -90) rot += 180;
     const label = `${p.n}  ${p.draped.toFixed(1)}m`;
@@ -9576,7 +9605,7 @@ function buildBaseGridDxf(surface, plan) {
   put(0, "TABLE"); put(2, "LTYPE"); put(70, 1);
   put(0, "LTYPE"); put(2, "CONTINUOUS"); put(70, 0); put(3, "Solid line"); put(72, 65); put(73, 0); put(40, "0.0");
   put(0, "ENDTAB");
-  const layers = [["OUTLINE", 7], ["PANEL_EDGES", 3], ["PANEL_CL", 1], ["PANEL_TEXT", 2]];
+  const layers = [["OUTLINE", 7], ["PANEL_EDGES", 3], ["PANEL_CL", 1], ["PANEL_TEXT", 2], ["WELD_HINGE", 6]];
   put(0, "TABLE"); put(2, "LAYER"); put(70, layers.length);
   layers.forEach(([name, colour]) => {
     put(0, "LAYER"); put(2, name); put(70, 0); put(62, colour); put(6, "CONTINUOUS");
@@ -9589,7 +9618,9 @@ function buildBaseGridDxf(surface, plan) {
   put(0, "ENDSEC");
 
   put(0, "SECTION"); put(2, "ENTITIES");
-  lines.push(...ents);
+  // NOT lines.push(...arr): every element becomes an argument, and a draped layout runs to hundreds
+  // of thousands of them — which overflows the call stack rather than failing politely.
+  for (const v of ents) lines.push(v);
   put(0, "ENDSEC");
   put(0, "EOF");
   return lines.join("\r\n") + "\r\n";
@@ -9610,37 +9641,34 @@ document.getElementById("baseGridExportBtn").addEventListener("click", () => {
 });
 
 /**
- * Splits a cell surface into the areas that get laid in one direction each.
+ * Splits a cell surface into PLANES.
  *
- * A cell is not one thing. The batters are rolled DOWN THE FALL LINE, deployed off the bench at the
- * top and tied in at the toe; the base is a separate job in its own direction, and the grid changes
- * direction where the two meet. Laying the whole cell one way — which is what this tool did first —
- * produces a drawing no installer would work to.
+ * A roll lies on one plane. It stops where the ground changes direction — at a hinge: the toe, a
+ * bench, a crest, a change of crossfall. It is never bent over a break and carried on. So the zones
+ * are not "steep bits and flat bits", they are the planar facets of the surface, and a panel is
+ * clipped to the facet it belongs to. The hinges are then simply the facet boundaries, and panels
+ * stop at them because there is nothing on the other side to clip against.
  *
- * Zones come out of the surface itself:
- *   grade  — the batters stand well clear of the base. On the cell this was built against there is
- *            NOTHING between 10% and 20% grade, so the toe is not a judgement call.
- *   aspect — which way the steepest descent points. Two batters at the same grade facing different
- *            ways are different deployments, each wanting its own direction.
+ * Facets are grown by flooding across shared edges while the unit normals stay within `normalTol`.
+ * On the cell this was built against, 10° is the working value and it is not a loose choice: at 15°
+ * a batter and the base merge into one 13.9% "plane" that exists nowhere on the ground, and at 5°
+ * a single batter splits in two. At 10° the surface resolves into batters at ~33% and base at
+ * 2-5%, with nothing in between — which is what the survey actually shows.
  *
- * The awkward part is that a survey TIN is not tidy. This one is 280 triangles whose MEDIAN area is
- * 1.4 m²: a handful of huge faces carrying the batters and the base, and ~170 slivers strung along
- * the breaklines carrying 1.3% of the area between them. Their computed aspect is noise. Left alone
- * they shatter the base into five pieces, one of them 188 slivers totalling 230 m². So:
+ * A facet is labelled batter or base by its own grade, and that only decides which way the rolls
+ * run on it: a batter runs down its fall line, the base runs whichever way was asked for.
  *
- *   1. degenerate triangles are dropped — no area, and a normal that means nothing
- *   2. the slope/base call is smoothed against each triangle's neighbours, by area, so a sliver
- *      cannot outvote the face it lies on
- *   3. adjacent zones that belong together are merged — any two base zones, and two batter zones
- *      that face the same way
- *   4. whatever is still too small to deploy a roll on is absorbed into the neighbour it shares the
- *      most edge with, because a 40 m² offcut of batter is part of the face beside it, not a zone
+ * The one piece of housekeeping: a survey TIN is not tidy. This one's MEDIAN triangle is 1.4 m² —
+ * a few huge faces plus ~170 slivers along the breaklines holding 1.3% of the area between them,
+ * whose normals are noise. They form facets of their own, so any facet too small to deploy a roll
+ * on is absorbed into the neighbour it shares the most edge with.
  */
 function classifyCellZones(triangles, options) {
   const opts = options || {};
+  const normalTol = opts.normalTol ?? 10;
   const gradeSplit = opts.gradeSplit ?? 0.12;
-  const aspectTol = opts.aspectTol ?? 45;
   const minZoneArea = opts.minZoneArea ?? 400;
+  const cosTol = Math.cos((normalTol * Math.PI) / 180);
 
   const kept = [];
   const info = [];
@@ -9649,24 +9677,11 @@ function classifyCellZones(triangles, options) {
     const ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z;
     const vx = c.x - a.x, vy = c.y - a.y, vz = c.z - a.z;
     let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    const len = Math.hypot(nx, ny, nz);
+    if (!(len > 1e-9)) return; // no area, and no usable normal
     if (nz < 0) { nx = -nx; ny = -ny; nz = -nz; }
-    const area = Math.hypot(nx, ny, nz) / 2;
-    if (!(area > 1e-9)) return; // nothing there to lay grid on, and no usable normal
     kept.push(tri);
-    if (Math.abs(nz) < 1e-12) {
-      // Vertical: no plan extent, so it cannot take a roll. Treated as batter and left to be
-      // absorbed by whichever face it hangs off.
-      info.push({ area, grade: Infinity, aspect: 0, vertical: true });
-      return;
-    }
-    const gx = -nx / nz, gy = -ny / nz;
-    info.push({
-      area,
-      grade: Math.hypot(gx, gy),
-      // The bearing the ground falls TOWARD, which is the way a roll runs when it goes down.
-      aspect: ((Math.atan2(gx, gy) * 180) / Math.PI + 360) % 360,
-      vertical: false,
-    });
+    info.push({ nx: nx / len, ny: ny / len, nz: nz / len, area: len / 2 });
   });
   if (!kept.length) return [];
 
@@ -9684,53 +9699,25 @@ function classifyCellZones(triangles, options) {
   const neighbours = kept.map(() => new Set());
   byEdge.forEach((ids) => ids.forEach((i) => ids.forEach((j) => { if (i !== j) neighbours[i].add(j); })));
 
-  let isSlope = info.map((t) => t.grade >= gradeSplit);
-  for (let pass = 0; pass < 2; pass++) {
-    const next = isSlope.slice();
-    isSlope.forEach((mine, i) => {
-      let same = 0, other = 0;
-      neighbours[i].forEach((j) => { if (isSlope[j] === mine) same += info[j].area; else other += info[j].area; });
-      if (other > same * 1.5) next[i] = !mine;
-    });
-    isSlope = next;
-  }
-
-  const angleGap = (a, b) => {
-    const d = Math.abs(a - b) % 360;
-    return Math.min(d, 360 - d);
-  };
-  const meanAspect = (members) => {
-    let sx = 0, sy = 0;
-    members.forEach((i) => {
-      if (info[i].vertical) return;
-      const rad = (info[i].aspect * Math.PI) / 180;
-      sx += Math.sin(rad) * info[i].area;
-      sy += Math.cos(rad) * info[i].area;
-    });
-    return ((Math.atan2(sx, sy) * 180) / Math.PI + 360) % 360;
-  };
+  const sameplane = (i, j) => info[i].nx * info[j].nx + info[i].ny * info[j].ny + info[i].nz * info[j].nz >= cosTol;
 
   const zoneOf = new Array(kept.length).fill(-1);
-  let zones = [];
+  const zones = [];
   kept.forEach((_, seed) => {
     if (zoneOf[seed] !== -1) return;
-    const slope = isSlope[seed];
     const members = [seed];
     zoneOf[seed] = zones.length;
     const stack = [seed];
     while (stack.length) {
       const cur = stack.pop();
       neighbours[cur].forEach((n) => {
-        if (zoneOf[n] !== -1 || isSlope[n] !== slope) return;
-        // On a batter, keep walking while the ground keeps facing the same way — that is what parts
-        // two faces meeting at a corner. On the base, aspect is drainage noise, so it is ignored.
-        if (slope && !info[cur].vertical && !info[n].vertical && angleGap(info[cur].aspect, info[n].aspect) > aspectTol) return;
+        if (zoneOf[n] !== -1 || !sameplane(cur, n)) return;
         zoneOf[n] = zones.length;
         members.push(n);
         stack.push(n);
       });
     }
-    zones.push({ slope, members });
+    zones.push({ members });
   });
 
   const areaOf = (z) => z.members.reduce((s, i) => s + info[i].area, 0);
@@ -9745,54 +9732,52 @@ function classifyCellZones(triangles, options) {
     });
     return touching;
   };
-  const absorb = (from, into) => {
-    zones[from].members.forEach((i) => { zoneOf[i] = into; zones[into].members.push(i); });
-    zones[from].members = [];
-  };
 
-  // Merge the zones that were only ever split by a sliver: any two touching base zones, and two
-  // touching batters that face the same way.
-  for (let guard = 0; guard < 200; guard++) {
-    let merged = false;
-    for (let zi = 0; zi < zones.length && !merged; zi++) {
-      if (!zones[zi].members.length) continue;
-      for (const [zj] of touchingZones(zi)) {
-        if (zones[zi].slope !== zones[zj].slope) continue;
-        if (zones[zi].slope && angleGap(meanAspect(zones[zi].members), meanAspect(zones[zj].members)) > aspectTol) continue;
-        const [keep, drop] = areaOf(zones[zi]) >= areaOf(zones[zj]) ? [zi, zj] : [zj, zi];
-        absorb(drop, keep);
-        merged = true;
-        break;
-      }
-    }
-    if (!merged) break;
-  }
-
-  // Anything still too small to deploy on joins the neighbour it shares the most edge with.
-  for (let guard = 0; guard < 200; guard++) {
+  for (let guard = 0; guard < 500; guard++) {
     const small = zones.findIndex((z) => z.members.length && areaOf(z) < minZoneArea);
     if (small === -1) break;
     const touching = touchingZones(small);
     if (!touching.size) break;
-    absorb(small, [...touching.entries()].sort((a, b) => b[1] - a[1])[0][0]);
+    const into = [...touching.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    zones[small].members.forEach((i) => { zoneOf[i] = into; zones[into].members.push(i); });
+    zones[small].members = [];
   }
 
   return zones
     .filter((z) => z.members.length)
     .map((z) => {
       const area = areaOf(z);
-      let grade = 0, graded = 0;
+      // Area-weighted mean normal — the plane the facet actually sits on.
+      let nx = 0, ny = 0, nz = 0;
+      z.members.forEach((i) => { nx += info[i].nx * info[i].area; ny += info[i].ny * info[i].area; nz += info[i].nz * info[i].area; });
+      const len = Math.hypot(nx, ny, nz) || 1;
+      nx /= len; ny /= len; nz /= len;
+      const grade = nz > 1e-9 ? Math.hypot(nx, ny) / nz : Infinity;
+      // The bearing the plane falls TOWARD — the way a roll runs when it goes down the slope.
+      const aspect = nz > 1e-9 ? ((Math.atan2(-nx / nz, -ny / nz) * 180) / Math.PI + 360) % 360 : 0;
+      // The facet's own plane, through its area-weighted centroid. A roll is laid ON one plane, so
+      // this is what levels a panel — including the part that overhangs the edge of the cell, where
+      // there is no triangle to ask and holding the last level seen would float it.
+      let cx = 0, cy = 0, cz = 0;
       z.members.forEach((i) => {
-        if (!Number.isFinite(info[i].grade)) return;
-        grade += info[i].grade * info[i].area;
-        graded += info[i].area;
+        const [a, b, c] = kept[i];
+        cx += ((a.x + b.x + c.x) / 3) * info[i].area;
+        cy += ((a.y + b.y + c.y) / 3) * info[i].area;
+        cz += ((a.z + b.z + c.z) / 3) * info[i].area;
       });
+      const origin = { x: cx / area, y: cy / area, z: cz / area };
       return {
-        slope: z.slope,
+        slope: !(grade < gradeSplit),
         triangles: z.members.map((i) => kept[i]),
         area,
-        grade: graded > 0 ? grade / graded : 0,
-        aspect: meanAspect(z.members),
+        grade: Number.isFinite(grade) ? grade : 0,
+        aspect,
+        plane: {
+          origin,
+          normal: { x: nx, y: ny, z: nz },
+          // Height of this plane anywhere, including well outside the facet.
+          zAt: (x, y) => (nz > 1e-9 ? origin.z - (nx * (x - origin.x) + ny * (y - origin.y)) / nz : origin.z),
+        },
       };
     })
     .sort((a, b) => b.area - a.area);
@@ -9820,6 +9805,7 @@ function computeCellGridPlan(triangles, rollWidth, minOverlap, baseBearing, opti
       index: laid.length + 1,
       kind: zone.slope ? "Batter" : "Base",
       slope: zone.slope,
+      plane: zone.plane,
       grade: zone.grade,
       bearing,
       area: zone.area,
@@ -9833,9 +9819,30 @@ function computeCellGridPlan(triangles, rollWidth, minOverlap, baseBearing, opti
   laid.forEach((z) => z.plan.panels.forEach((p) => panels.push({ ...p, zone: z.index, kind: z.kind })));
   panels.forEach((p, i) => { p.n = i + 1; });
 
+  /* Weld is a costed item, so it is measured, not implied by a note on a drawing. Two different
+   * things, kept apart because they are welded at different times by different crews:
+   *
+   *   hinge weld — where a panel on one plane is joined to the panel on the next, at every change
+   *                of grade. This is the "tie weld at base of slope" line.
+   *   panel seam — the longitudinal lap between neighbouring panels within one plane. Two adjacent
+   *                panels are only side by side for as far as they both run, so the seam is taken
+   *                as the shorter of the two. On a rectangular zone that is exact; where a zone
+   *                narrows to a point it is a little generous, which is the right way to be wrong
+   *                about a quantity someone is pricing. */
+  const hinges = cellHingeLines(zones);
+  let panelSeam = 0;
+  laid.forEach((z) => {
+    const ps = z.plan.panels;
+    for (let i = 1; i < ps.length; i++) panelSeam += Math.min(ps[i - 1].draped, ps[i].draped);
+  });
+
   return {
     zones: laid,
     panels,
+    hinges,
+    hingeWeld: hinges.length,
+    panelSeam,
+    totalWeld: hinges.length + panelSeam,
     totalDraped: laid.reduce((s, z) => s + z.plan.totalDraped, 0),
     totalPlan: laid.reduce((s, z) => s + z.plan.totalPlan, 0),
     material: laid.reduce((s, z) => s + z.plan.material, 0),
@@ -9844,4 +9851,54 @@ function computeCellGridPlan(triangles, rollWidth, minOverlap, baseBearing, opti
     rollWidth,
     minOverlap,
   };
+}
+
+/**
+ * The hinge lines: where one plane meets the next, and therefore where the grid is cut and welded.
+ *
+ * "When there is a change in grade they stop the grid there then weld it to the next strip on a
+ * different grade." So every metre of facet boundary that has another facet on the far side is a
+ * metre of weld, and it is a quantity worth having rather than a line on a drawing — a toe running
+ * the length of a cell is a lot of welding.
+ *
+ * Found as the edges that are on the boundary of TWO different zones. An edge on the boundary of
+ * only one is the outside of the cell, where there is nothing to weld to.
+ */
+function cellHingeLines(zones) {
+  const keyOf = (p) => `${p.x.toFixed(4)},${p.y.toFixed(4)}`;
+  const points = new Map();
+  // For each zone, the edges used exactly once by its own triangles — its own outline.
+  const owners = new Map();
+  zones.forEach((zone, zi) => {
+    const counts = new Map();
+    zone.triangles.forEach((tri) => {
+      for (let k = 0; k < 3; k++) {
+        const p = tri[k], q = tri[(k + 1) % 3];
+        const kp = keyOf(p), kq = keyOf(q);
+        if (kp === kq) continue;
+        points.set(kp, p);
+        points.set(kq, q);
+        const ek = kp < kq ? `${kp}|${kq}` : `${kq}|${kp}`;
+        counts.set(ek, (counts.get(ek) || 0) + 1);
+      }
+    });
+    counts.forEach((n, ek) => {
+      if (n !== 1) return;
+      if (!owners.has(ek)) owners.set(ek, []);
+      owners.get(ek).push(zi);
+    });
+  });
+
+  const segments = [];
+  let length = 0;
+  owners.forEach((zoneList, ek) => {
+    if (zoneList.length < 2) return; // the outside of the cell: nothing on the far side
+    const [a, b] = ek.split("|").map((k) => points.get(k));
+    if (!a || !b) return;
+    segments.push({ a, b, zones: zoneList.slice(0, 2) });
+    // Measured over the ground, like everything else here.
+    length += Math.hypot(b.x - a.x, b.y - a.y, (b.z || 0) - (a.z || 0));
+  });
+
+  return { segments, length };
 }
