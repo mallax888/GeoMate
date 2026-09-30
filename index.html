@@ -303,6 +303,10 @@
           <svg class="tab__icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.8 14.5 5 8 8.2 1.5 5z"/><path d="M1.5 8.2 8 11.4l6.5-3.2M1.5 11.2 8 14.4l6.5-3.2"/></svg>
           Landfill liner
         </button>
+        <button type="button" class="tab" id="tabBaseGrid" role="tab" aria-selected="false">
+          <svg class="tab__icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 11.5 6 4.5l4 4 4.5-6"/><path d="M1.5 14.2h13"/></svg>
+          Base geogrid
+        </button>
       </div>
       </div>
       <div class="panel__headactions">
@@ -687,6 +691,88 @@
         <h3 class="panel__subheading">End walls — the two shorter sides</h3>
         <p class="liner-run-desc" id="linerEndDesc"></p>
         <svg class="strip-diagram liner-diagram" id="linerEndDiagram" viewBox="0 0 240 34" preserveAspectRatio="none"></svg>
+      </div>
+    </div>
+
+    <div id="baseGridView" class="basegrid-view" hidden>
+      <div class="liner-head">
+        <p class="liner-intro">
+          Covers a whole landfill cell — base and embankments — with rolls deployed from the top, run
+          down the batter and cut at the end. Works off the <strong>survey surface</strong>, so every
+          panel length is measured over the ground rather than across the drawing.
+        </p>
+        <button id="baseGridResetBtn" class="btn btn--ghost" type="button">Reset</button>
+      </div>
+
+      <div class="basegrid-upload">
+        <label class="btn btn--primary btn--upload">
+          Upload cell surface (DXF 3DFACE)
+          <input type="file" id="baseGridDxfInput" accept=".dxf" hidden />
+        </label>
+        <label class="btn btn--ghost btn--upload">
+          LandXML surface instead
+          <input type="file" id="baseGridXmlInput" accept=".xml,.landxml" hidden />
+        </label>
+        <p id="baseGridStatus" class="cutplan-status"></p>
+      </div>
+
+      <div class="liner-inputs liner-inputs--specs">
+        <label class="field field--compact">
+          <span>Roll width</span>
+          <div class="field__unit"><input type="number" id="baseGridRollWidth" value="7" min="0.1" step="0.1" /><em>m</em></div>
+        </label>
+        <label class="field field--compact">
+          <span>Minimum overlap</span>
+          <div class="field__unit"><input type="number" id="baseGridOverlap" value="300" min="0" step="10" /><em>mm</em></div>
+        </label>
+        <label class="field field--compact">
+          <span>Roll length</span>
+          <div class="field__unit"><input type="number" id="baseGridRollLength" value="100" min="0" step="1" /><em>m</em></div>
+        </label>
+        <label class="field field--compact">
+          <span>Roll direction</span>
+          <div class="field__unit"><input type="number" id="baseGridBearing" value="0" min="0" max="359" step="1" /><em>°</em></div>
+        </label>
+      </div>
+      <div class="basegrid-actions">
+        <button id="baseGridBestBtn" class="btn btn--ghost" type="button">Find the best direction</button>
+        <button id="baseGridExportBtn" class="btn btn--ghost" type="button">Export panel layout (DXF)</button>
+      </div>
+      <p class="generator__hint">
+        Direction is a survey bearing — 0° runs the rolls north–south, 90° east–west. It barely
+        changes how much material you need, but it can halve the number of runs.
+      </p>
+
+      <p id="baseGridEmpty" class="empty-state"><svg class="empty-state__icon" viewBox="0 0 16 16" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 11.5 6 4.5l4 4 4.5-6"/><path d="M1.5 14.2h13"/></svg><br>Upload the cell's surface — the triangulated base and batters straight out of Civil 3D — to lay the rolls over it.</p>
+
+      <div id="baseGridResults" hidden>
+        <div class="stat-grid liner-stat-grid">
+          <div class="stat"><span class="stat__label">Surface area</span><span class="stat__value" id="baseGridStatSurface">0<small> m²</small></span></div>
+          <div class="stat"><span class="stat__label">Zones</span><span class="stat__value" id="baseGridStatPlan">0</span></div>
+          <div class="stat"><span class="stat__label">Panels</span><span class="stat__value" id="baseGridStatPanels">0</span></div>
+          <div class="stat"><span class="stat__label">Total run</span><span class="stat__value" id="baseGridStatRun">0<small> m</small></span></div>
+          <div class="stat"><span class="stat__label">Grid to order</span><span class="stat__value" id="baseGridStatMaterial">0<small> m²</small></span></div>
+          <div class="stat"><span class="stat__label">Rolls</span><span class="stat__value" id="baseGridStatRolls">0</span></div>
+        </div>
+        <p id="baseGridDrapeNote" class="liner-corner-note"></p>
+
+        <svg id="baseGridPlan" class="basegrid-plan" role="img" aria-label="Panel layout over the cell"></svg>
+
+        <h3 class="panel__subheading">Panel schedule</h3>
+        <div class="table-scroll">
+          <table id="baseGridTable" class="lift-table basegrid-table">
+            <thead>
+              <tr>
+                <th scope="col">Panel</th>
+                <th scope="col">Length over ground</th>
+                <th scope="col">Length on plan</th>
+                <th scope="col">Extra</th>
+                <th scope="col">Rolls</th>
+              </tr>
+            </thead>
+            <tbody id="baseGridTableBody"></tbody>
+          </table>
+        </div>
       </div>
     </div>
   </section>

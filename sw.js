@@ -16,7 +16,7 @@
  * CACHE_NAME still gets bumped on a deploy — activate() drops every other cache, which is what
  * clears anything stale an older version of this file left behind.
  */
-const CACHE_NAME = "geomate-v156";
+const CACHE_NAME = "geomate-v157";
 
 /* How long to wait for the network before giving up and using the stored copy. Long enough for a
  * poor site connection to win, short enough that a dead one is not a blank screen. */

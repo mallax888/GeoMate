@@ -5224,12 +5224,14 @@ const tabCutPlan = document.getElementById("tabCutPlan");
 const tab3D = document.getElementById("tab3D");
 const tabRolls = document.getElementById("tabRolls");
 const tabLiner = document.getElementById("tabLiner");
+const tabBaseGrid = document.getElementById("tabBaseGrid");
 const takeoffView = document.getElementById("takeoffView");
 const sequenceView = document.getElementById("sequenceView");
 const cutPlanView = document.getElementById("cutPlanView");
 const view3DPanel = document.getElementById("view3DPanel");
 const rollScheduleView = document.getElementById("rollScheduleView");
 const linerView = document.getElementById("linerView");
+const baseGridView = document.getElementById("baseGridView");
 const staggerToggle = document.getElementById("staggerToggle");
 const sequenceList = document.getElementById("sequenceList");
 const cutPlanList = document.getElementById("cutPlanList");
@@ -5241,6 +5243,7 @@ tabCutPlan.addEventListener("click", () => switchTab("cutplan"));
 tab3D.addEventListener("click", () => switchTab("view3d"));
 tabRolls.addEventListener("click", () => switchTab("rolls"));
 tabLiner.addEventListener("click", () => switchTab("liner"));
+tabBaseGrid.addEventListener("click", () => switchTab("basegrid"));
 
 /* On a narrow phone several strips of content don't all fit and have to scroll horizontally — the
  * lift-panel tabs, and the takeoff/roll tables (min-width: 690px, see .table-scroll) — without a
@@ -5546,6 +5549,7 @@ const TABS = {
   view3d: { tab: tab3D, view: view3DPanel },
   rolls: { tab: tabRolls, view: rollScheduleView },
   liner: { tab: tabLiner, view: linerView },
+  basegrid: { tab: tabBaseGrid, view: baseGridView },
 };
 
 /* Loading extents from CAD is how this app is actually used, but the only way in was a button inside
@@ -8900,3 +8904,944 @@ if (localStorage.getItem(PRODUCT_LIBRARY_KEY) == null) {
   if (changed) saveProductLibrary(library);
 }
 computeAndRender();
+/* ============================================================
+   Base geogrid — covering a landfill cell with rolls run down the slope.
+
+   A different job from the lift takeoff above it, and from the liner beside it. There are no lifts
+   and no face: there is ONE surface — the base of the cell and the embankments around it — and the
+   grid is deployed from a bench at the top, rolled down the batter, across the base, and cut where
+   it ends. The installer does not want a cut schedule; they want to know how many runs there are,
+   how long each one is, and how much material to order.
+
+   The one thing that must not be got wrong: A ROLL FOLLOWS THE GROUND. Take the lengths off the
+   plan and every panel is short, because the plan distance between two points is less than the
+   distance you actually walk over the ground between them. On the cell this was built against, the
+   surface is 4.0% larger than its own plan area, and an individual panel down the steep face runs
+   up to 5% longer than it measures on the drawing. So every panel length here is a DRAPED length:
+   sampled along the run, with the height at each sample interpolated out of the triangle beneath it.
+   ============================================================ */
+
+/**
+ * The outline of a triangulated surface: the edges belonging to exactly one triangle, chained up.
+ *
+ * Walks BOTH ways from each seed vertex. Walking one way only quietly splits a ring into two arcs
+ * whenever the seed is not already an end of one — on the test cell that turned a single 16,635 m²
+ * outline into a 14,408 m² piece and a 2,181 m² piece, each the wrong shape, and nothing about the
+ * result looked broken enough to notice.
+ */
+function surfaceOutline(triangles) {
+  const keyOf = (p) => `${p.x.toFixed(4)},${p.y.toFixed(4)}`;
+  const edges = new Map();
+  const points = new Map();
+  triangles.forEach((tri) => {
+    for (let i = 0; i < 3; i++) {
+      const p = tri[i], q = tri[(i + 1) % 3];
+      const kp = keyOf(p), kq = keyOf(q);
+      if (kp === kq) continue; // a sliver triangle can carry a zero-length edge
+      points.set(kp, p);
+      points.set(kq, q);
+      const ek = kp < kq ? `${kp}|${kq}` : `${kq}|${kp}`;
+      edges.set(ek, (edges.get(ek) || 0) + 1);
+    }
+  });
+
+  const adj = new Map();
+  edges.forEach((count, ek) => {
+    if (count !== 1) return;
+    const [a, b] = ek.split("|");
+    if (!adj.has(a)) adj.set(a, []);
+    if (!adj.has(b)) adj.set(b, []);
+    adj.get(a).push(b);
+    adj.get(b).push(a);
+  });
+  if (!adj.size) return [];
+
+  const seen = new Set();
+  const walk = (from, first) => {
+    const chain = [first];
+    seen.add(first);
+    let prev = from, cur = first;
+    for (let guard = 0; guard < 100000; guard++) {
+      const next = (adj.get(cur) || []).find((n) => n !== prev && !seen.has(n));
+      if (!next) break;
+      chain.push(next);
+      seen.add(next);
+      prev = cur;
+      cur = next;
+    }
+    return chain;
+  };
+
+  // Open ends first, so an arc is picked up whole instead of from somewhere in its middle.
+  const keys = Array.from(adj.keys());
+  const order = keys.filter((k) => adj.get(k).length === 1).concat(keys.filter((k) => adj.get(k).length !== 1));
+  const loops = [];
+  order.forEach((start) => {
+    if (seen.has(start)) return;
+    seen.add(start);
+    const arms = (adj.get(start) || []).filter((n) => !seen.has(n)).map((n) => walk(start, n));
+    if (!arms.length) return;
+    const chain = arms.length > 1 ? arms[1].slice().reverse().concat([start], arms[0]) : [start].concat(arms[0]);
+    if (chain.length >= 3) loops.push(chain.map((k) => points.get(k)));
+  });
+
+  loops.sort((a, b) => Math.abs(signedArea(b)) - Math.abs(signedArea(a)));
+  return loops;
+}
+
+/**
+ * Triangles in a uniform bucket grid, so getting the height at a point is a handful of tests rather
+ * than a scan of the whole surface. A cell of a few thousand triangles sampled every half metre is
+ * hundreds of thousands of lookups; without this the tool sits there.
+ */
+function makeTinIndex(triangles, cellSize) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  triangles.forEach((t) => t.forEach((p) => {
+    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+    minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+  }));
+  // Aim at a handful of triangles per bucket rather than a fixed size, so it behaves on a 200 m
+  // cell and on a 20 m one.
+  const span = Math.max(maxX - minX, maxY - minY, 1);
+  const cell = cellSize || Math.max(span / Math.max(4, Math.sqrt(triangles.length)), 1e-6);
+  const buckets = new Map();
+  const at = (gx, gy) => `${gx},${gy}`;
+  triangles.forEach((tri, i) => {
+    const xs = [tri[0].x, tri[1].x, tri[2].x];
+    const ys = [tri[0].y, tri[1].y, tri[2].y];
+    const gx0 = Math.floor(Math.min(...xs) / cell), gx1 = Math.floor(Math.max(...xs) / cell);
+    const gy0 = Math.floor(Math.min(...ys) / cell), gy1 = Math.floor(Math.max(...ys) / cell);
+    for (let gx = gx0; gx <= gx1; gx++) {
+      for (let gy = gy0; gy <= gy1; gy++) {
+        const k = at(gx, gy);
+        if (!buckets.has(k)) buckets.set(k, []);
+        buckets.get(k).push(i);
+      }
+    }
+  });
+
+  return {
+    bounds: { minX, minY, maxX, maxY },
+    /** Height of the surface at (x, y), or null where the surface does not reach. */
+    zAt(x, y) {
+      const list = buckets.get(at(Math.floor(x / cell), Math.floor(y / cell)));
+      if (!list) return null;
+      for (const i of list) {
+        const [a, b, c] = triangles[i];
+        // Barycentric, which gives both the inside test and the interpolation in one go.
+        const den = (b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y);
+        if (Math.abs(den) < 1e-12) continue;
+        const l1 = ((b.y - c.y) * (x - c.x) + (c.x - b.x) * (y - c.y)) / den;
+        const l2 = ((c.y - a.y) * (x - c.x) + (a.x - c.x) * (y - c.y)) / den;
+        const l3 = 1 - l1 - l2;
+        if (l1 >= -1e-9 && l2 >= -1e-9 && l3 >= -1e-9) return l1 * a.z + l2 * b.z + l3 * c.z;
+      }
+      return null;
+    },
+  };
+}
+
+/** True 3D area of a triangulated surface — the area that actually has to be covered. */
+function surfaceArea3D(triangles) {
+  let total = 0;
+  triangles.forEach(([a, b, c]) => {
+    const ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z;
+    const vx = c.x - a.x, vy = c.y - a.y, vz = c.z - a.z;
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    total += Math.hypot(nx, ny, nz) / 2;
+  });
+  return total;
+}
+
+/** The spans of an infinite line that lie inside a polygon, as [tIn, tOut] pairs along it. */
+function lineSpansInsidePolygon(origin, dir, poly) {
+  const nx = -dir.y, ny = dir.x;
+  const ts = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    const da = (a.x - origin.x) * nx + (a.y - origin.y) * ny;
+    const db = (b.x - origin.x) * nx + (b.y - origin.y) * ny;
+    if (da > 0 === db > 0) continue;
+    if (Math.abs(db - da) < 1e-15) continue;
+    const f = da / (da - db);
+    const ix = a.x + f * (b.x - a.x), iy = a.y + f * (b.y - a.y);
+    ts.push((ix - origin.x) * dir.x + (iy - origin.y) * dir.y);
+  }
+  ts.sort((p, q) => p - q);
+  const spans = [];
+  for (let i = 0; i + 1 < ts.length; i += 2) spans.push([ts[i], ts[i + 1]]);
+  return spans;
+}
+
+/** How far the roll actually travels between two stations on a line, following the ground. */
+function drapeRun(tin, origin, dir, t0, t1, step) {
+  const n = Math.max(2, Math.ceil((t1 - t0) / step));
+  let draped = 0, plan = 0, offSurface = 0;
+  let prev = null;
+  const path = [];
+  for (let i = 0; i <= n; i++) {
+    const t = t0 + ((t1 - t0) * i) / n;
+    const x = origin.x + dir.x * t, y = origin.y + dir.y * t;
+    const z = tin.zAt(x, y);
+    if (z === null) { offSurface++; prev = null; continue; }
+    if (prev) {
+      draped += Math.hypot(x - prev.x, y - prev.y, z - prev.z);
+      plan += Math.hypot(x - prev.x, y - prev.y);
+    }
+    prev = { x, y, z };
+    path.push({ x, y, z });
+  }
+  return { draped, plan, offSurface, path };
+}
+
+const BASE_GRID_SAMPLE_M = 0.5;
+
+/**
+ * The panel layout: parallel runs at the roll pitch, clipped to the outline, each measured over the
+ * ground. `bearingDeg` is a survey bearing — 0 is north (+Y), 90 is east (+X) — because that is what
+ * is on the drawing the installer is holding.
+ */
+function computeBaseGridPanels(triangles, poly, rollWidth, minOverlap, bearingDeg, sampleStep) {
+  if (!triangles.length || !poly || poly.length < 3) return null;
+  if (!(rollWidth > 0) || minOverlap < 0 || minOverlap >= rollWidth) return null;
+
+  const tin = makeTinIndex(triangles);
+  const step = sampleStep || BASE_GRID_SAMPLE_M;
+  const ang = ((90 - bearingDeg) * Math.PI) / 180;
+  const dir = { x: Math.cos(ang), y: Math.sin(ang) };
+  const across = { x: -dir.y, y: dir.x };
+
+  const pitch = rollWidth - minOverlap;
+  const proj = poly.map((p) => p.x * across.x + p.y * across.y);
+  const lo = Math.min(...proj), hi = Math.max(...proj);
+  const lines = Math.max(1, Math.ceil((hi - lo) / pitch));
+  // Centred, so the overhang at the two outside edges is shared rather than all landing on one.
+  const slack = lines * pitch - (hi - lo);
+  const first = lo - slack / 2 + pitch / 2;
+
+  const panels = [];
+  for (let i = 0; i < lines; i++) {
+    const s = first + i * pitch;
+    const origin = { x: across.x * s, y: across.y * s };
+    // One line can cross a re-entrant outline more than once — each span is its own panel, which is
+    // exactly what happens on site around a nose or an access ramp.
+    lineSpansInsidePolygon(origin, dir, poly).forEach(([t0, t1]) => {
+      if (t1 - t0 < 0.5) return;
+      const run = drapeRun(tin, origin, dir, t0, t1, step);
+      if (run.plan < 0.5) return;
+      panels.push({
+        line: i + 1,
+        draped: run.draped,
+        plan: run.plan,
+        offSurface: run.offSurface,
+        start: { x: origin.x + dir.x * t0, y: origin.y + dir.y * t0 },
+        end: { x: origin.x + dir.x * t1, y: origin.y + dir.y * t1 },
+        path: run.path,
+      });
+    });
+  }
+  if (!panels.length) return null;
+
+  panels.forEach((p, i) => { p.n = i + 1; });
+  const totalDraped = panels.reduce((s, p) => s + p.draped, 0);
+  const totalPlan = panels.reduce((s, p) => s + p.plan, 0);
+  const surface = surfaceArea3D(triangles);
+  const planArea = Math.abs(signedArea(poly));
+
+  return {
+    bearingDeg,
+    dir,
+    across,
+    pitch,
+    rollWidth,
+    minOverlap,
+    panels,
+    lines,
+    totalDraped,
+    totalPlan,
+    material: totalDraped * rollWidth,
+    // What the runs actually cover once the laps come off. It lands a little under the true surface
+    // because a draped centreline catches the fall ALONG a roll but not ACROSS it — reported rather
+    // than buried, because that shortfall is the installer's lap allowance being spent.
+    covered: totalDraped * pitch,
+    surface,
+    planArea,
+    longest: Math.max(...panels.map((p) => p.draped)),
+    shortest: Math.min(...panels.map((p) => p.draped)),
+  };
+}
+
+/**
+ * Panels packed into rolls, first-fit-decreasing.
+ *
+ * NOT total length divided by roll length. A panel has to come off ONE roll — you cannot join two
+ * offcuts end to end and call it a run — so two 96 m panels need two 100 m rolls, not 1.92 of one.
+ * On the cell this was built against, dividing gave 26 rolls where the real answer is 36: ten rolls
+ * short, which is the kind of error that stops an install rather than embarrassing a spreadsheet.
+ *
+ * Panels longer than a roll are reported separately: they cannot be delivered in one piece at all,
+ * and that is a decision for the designer (a longer roll, or a joint partway down), not something
+ * to average away.
+ */
+function packPanelsIntoRolls(lengths, rollLength) {
+  if (!(rollLength > 0)) return null;
+  const overlong = lengths.filter((L) => L > rollLength + 1e-9);
+  const fits = lengths.filter((L) => L <= rollLength + 1e-9).sort((a, b) => b - a);
+  const rolls = [];
+  fits.forEach((L) => {
+    const roll = rolls.find((r) => r.left >= L - 1e-9);
+    if (roll) {
+      roll.left -= L;
+      roll.pieces.push(L);
+    } else {
+      rolls.push({ left: rollLength - L, pieces: [L] });
+    }
+  });
+  return {
+    rolls: rolls.length + overlong.length,
+    packed: rolls,
+    overlong,
+    offcut: rolls.reduce((s, r) => s + r.left, 0),
+  };
+}
+
+/**
+ * Which way to run them. Sweeps bearings and picks the fewest panels — because material barely
+ * moves with direction (1.4% across the whole sweep on the test cell) while the number of runs
+ * doubles, from 21 to 40. Fewer runs means fewer seams and fewer deployments, which is the thing
+ * worth optimising. A maximum panel length caps it, since a 268 m run is not deployable.
+ */
+function bestBaseGridBearing(triangles, poly, rollWidth, minOverlap, maxPanelLength) {
+  let best = null;
+  for (let brg = 0; brg < 180; brg += 5) {
+    const plan = computeBaseGridPanels(triangles, poly, rollWidth, minOverlap, brg, 2.0);
+    if (!plan) continue;
+    if (maxPanelLength > 0 && plan.longest > maxPanelLength) continue;
+    const score = plan.panels.length + plan.material / 100000;
+    if (!best || score < best.score) best = { score, bearing: brg, panels: plan.panels.length, longest: plan.longest };
+  }
+  return best;
+}
+
+/* --- Base geogrid: the tab ------------------------------------------------------------------- */
+
+const baseGridInputs = {
+  rollWidth: document.getElementById("baseGridRollWidth"),
+  overlap: document.getElementById("baseGridOverlap"),
+  rollLength: document.getElementById("baseGridRollLength"),
+  bearing: document.getElementById("baseGridBearing"),
+};
+
+/* The surface stays in memory for the session rather than in localStorage: a cell TIN is megabytes
+ * of triangles and would blow the storage quota that every saved project shares. Re-upload after a
+ * reload — the status line says so rather than leaving an empty tab looking broken. */
+let baseGridSurface = null;
+let baseGridPlanResult = null;
+
+function baseGridStatus(message, kind) {
+  const el = document.getElementById("baseGridStatus");
+  if (!el) return;
+  el.textContent = message || "";
+  el.className = `cutplan-status${kind ? ` is-${kind}` : ""}`;
+}
+
+function resetBaseGridInputs() {
+  baseGridInputs.rollWidth.value = "7";
+  baseGridInputs.overlap.value = "300";
+  baseGridInputs.rollLength.value = "100";
+  baseGridInputs.bearing.value = "0";
+}
+
+function loadBaseGridSurface(triangles, label) {
+  const loops = surfaceOutline(triangles);
+  if (!loops.length) {
+    baseGridStatus("That surface has no outline GeoMate can follow — its triangles do not join up into a closed edge.", "error");
+    return false;
+  }
+  const outline = loops[0];
+  baseGridSurface = { triangles, outline, label };
+  const area = surfaceArea3D(triangles);
+  const plan = Math.abs(signedArea(outline));
+  baseGridStatus(
+    `${label}: ${triangles.length.toLocaleString()} triangles, ${fmt.int(plan)} m² on plan, ${fmt.int(area)} m² over the ground (+${((area / plan - 1) * 100).toFixed(1)}%).`,
+    "ok"
+  );
+  renderBaseGrid();
+  return true;
+}
+
+function wireBaseGridUpload(inputId, parseFn, noTrianglesMessage) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  input.addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      baseGridStatus("Reading the surface…");
+      const triangles = parseFn(await file.text());
+      if (!triangles.length) {
+        baseGridStatus(noTrianglesMessage, "error");
+        return;
+      }
+      loadBaseGridSurface(triangles, file.name);
+    } catch (err) {
+      baseGridStatus(`Couldn't read that file: ${err.message}`, "error");
+    } finally {
+      e.target.value = "";
+    }
+  });
+}
+
+wireBaseGridUpload("baseGridDxfInput", parseDXF3DFaces, "No 3DFACE triangles in that file — export the surface as a mesh, or use the LandXML option.");
+wireBaseGridUpload("baseGridXmlInput", parseLandXMLSurface, "No TIN surface (Pnts/Faces) found in that LandXML file.");
+
+function renderBaseGrid() {
+  const empty = document.getElementById("baseGridEmpty");
+  const results = document.getElementById("baseGridResults");
+  if (!empty || !results) return;
+
+  if (!baseGridSurface) {
+    empty.hidden = false;
+    results.hidden = true;
+    baseGridPlanResult = null;
+    return;
+  }
+
+  const w = parseFloat(baseGridInputs.rollWidth.value);
+  const oMin = (parseFloat(baseGridInputs.overlap.value) || 0) / 1000;
+  const rollLength = parseFloat(baseGridInputs.rollLength.value) || 0;
+  const bearing = parseFloat(baseGridInputs.bearing.value) || 0;
+
+  // Zone by zone: each batter down its own fall line, the base in the direction asked for. The
+  // bearing input now sets the BASE only — a batter's direction is decided by the ground.
+  const plan = computeCellGridPlan(baseGridSurface.triangles, w, oMin, bearing);
+  baseGridPlanResult = plan;
+  empty.hidden = !!plan;
+  results.hidden = !plan;
+  if (!plan) {
+    baseGridStatus("Check the roll width and overlap — the overlap has to be less than the roll.", "error");
+    return;
+  }
+
+  const set = (id, value, unit) => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = unit ? `${value}<small> ${unit}</small>` : value;
+  };
+  set("baseGridStatSurface", fmt.int(plan.surface), "m²");
+  set("baseGridStatPlan", String(plan.zones.length));
+  set("baseGridStatPanels", String(plan.panels.length));
+  set("baseGridStatRun", fmt.int(plan.totalDraped), "m");
+  set("baseGridStatMaterial", fmt.int(plan.material), "m²");
+  // Packed, not divided — see packPanelsIntoRolls for why those are very different numbers.
+  const packing = rollLength > 0 ? packPanelsIntoRolls(plan.panels.map((p) => p.draped), rollLength) : null;
+  set("baseGridStatRolls", packing ? String(packing.rolls) : "—");
+
+  const note = document.getElementById("baseGridDrapeNote");
+  if (note) {
+    const extra = ((plan.totalDraped / plan.totalPlan - 1) * 100).toFixed(1);
+    const short = ((1 - plan.covered / plan.surface) * 100).toFixed(1);
+    note.innerHTML =
+      `Panels run <strong>${extra}% longer over the ground</strong> than they measure on the plan — that is the difference ` +
+      `between ${fmt.int(plan.totalPlan)} m and ${fmt.int(plan.totalDraped)} m of run, and it is material you would not have ordered off a drawing. ` +
+      `At ${(plan.minOverlap * 1000).toFixed(0)} mm laps the runs cover ${fmt.int(plan.covered)} m² against ${fmt.int(plan.surface)} m² of surface, ` +
+      `so about ${short}% of the lap is being spent on cross-fall.` +
+      (packing
+        ? ` Each panel has to come off one roll, so ${plan.panels.length} panels pack into <strong>${packing.rolls} rolls</strong> of ${rollLength} m` +
+          ` — ${fmt.int(packing.rolls * rollLength * plan.rollWidth)} m² bought against ${fmt.int(plan.material)} m² laid` +
+          (packing.overlong.length
+            ? `. <strong>${packing.overlong.length} panel${packing.overlong.length === 1 ? " is" : "s are"} longer than a ${rollLength} m roll</strong> and cannot be delivered in one piece — lengthen the roll or plan a joint.`
+            : ".")
+        : "") +
+      ` Anchor trenches, tie-ins and the folds at the toe are not modelled.`;
+  }
+
+  const tbody = document.getElementById("baseGridTableBody");
+  if (tbody) {
+    // Grouped by zone, because that is the order it gets installed in: one batter deployed off its
+    // bench, tied in at the toe, then the next.
+    tbody.innerHTML = plan.zones
+      .map((z) => {
+        const head = `<tr class="basegrid-zonerow"><td colspan="5">
+            <strong>Zone ${z.index} — ${z.kind}</strong>
+            · ${fmt.int(z.area)} m² · ${(z.grade * 100).toFixed(0)}% grade
+            · rolls run ${z.bearing.toFixed(0)}°${z.slope ? " (down the fall line)" : ""}
+            · ${z.plan.panels.length} panel${z.plan.panels.length === 1 ? "" : "s"}
+          </td></tr>`;
+        const rows = z.plan.panels
+          .map((p) => {
+            // Per panel this IS a simple division: a panel that outruns a roll needs a joint, and
+            // the count says how many pieces. The headline roll figure is packed, not summed.
+            const rolls = rollLength > 0 ? Math.ceil(p.draped / rollLength) : null;
+            return `<tr>
+              <td>${p.n}</td>
+              <td class="num">${p.draped.toFixed(1)} m</td>
+              <td class="num">${p.plan.toFixed(1)} m</td>
+              <td class="num">+${(p.draped - p.plan).toFixed(1)} m</td>
+              <td class="num">${rolls === null ? "—" : rolls}</td>
+            </tr>`;
+          })
+          .join("");
+        return head + rows;
+      })
+      .join("");
+  }
+
+  renderBaseGridPlan(plan);
+}
+
+/** The cell in plan with every panel on it, zone by zone — the picture the installer marks up. */
+function renderBaseGridPlan(plan) {
+  const svg = document.getElementById("baseGridPlan");
+  if (!svg || !baseGridSurface) return;
+  const outline = baseGridSurface.outline;
+  const xs = outline.map((p) => p.x), ys = outline.map((p) => p.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const pad = 14;
+  const W = 900;
+  const scale = (W - pad * 2) / Math.max(maxX - minX, 1e-6);
+  const H = Math.max(180, (maxY - minY) * scale + pad * 2);
+  const tx = (x) => pad + (x - minX) * scale;
+  // Y flips: north is up on a drawing, and up is negative in SVG.
+  const ty = (y) => H - pad - (y - minY) * scale;
+  const pts = (list) => list.map((c) => `${tx(c.x).toFixed(1)},${ty(c.y).toFixed(1)}`).join(" ");
+
+  const half = plan.rollWidth / 2;
+  const body = plan.zones
+    .map((z, zi) => {
+      const ax = z.plan.across.x * half, ay = z.plan.across.y * half;
+      const panels = z.plan.panels
+        .map((p) =>
+          `<polygon points="${pts([
+            { x: p.start.x - ax, y: p.start.y - ay },
+            { x: p.end.x - ax, y: p.end.y - ay },
+            { x: p.end.x + ax, y: p.end.y + ay },
+            { x: p.start.x + ax, y: p.start.y + ay },
+          ])}" class="basegrid-panel" />`
+        )
+        .join("");
+      return (
+        `<g class="basegrid-zone basegrid-zone--${zi % 6}">` +
+        `<polygon points="${pts(z.outline)}" class="basegrid-zonefill" />` +
+        panels +
+        `<polygon points="${pts(z.outline)}" class="basegrid-zoneline" />` +
+        `</g>`
+      );
+    })
+    .join("");
+
+  const nx = W - 34, ny = 30;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.innerHTML =
+    `<polygon points="${pts(outline)}" class="basegrid-outline" />` +
+    body +
+    `<polygon points="${pts(outline)}" class="basegrid-outline basegrid-outline--over" />` +
+    `<g class="basegrid-north"><path d="M${nx} ${ny + 16} L${nx} ${ny - 10} M${nx - 5} ${ny - 4} L${nx} ${ny - 11} L${nx + 5} ${ny - 4}" /><text x="${nx}" y="${ny + 28}">N</text></g>`;
+}
+
+document.getElementById("baseGridBestBtn").addEventListener("click", () => {
+  if (!baseGridSurface) {
+    baseGridStatus("Upload the cell surface first.", "error");
+    return;
+  }
+  const w = parseFloat(baseGridInputs.rollWidth.value);
+  const oMin = (parseFloat(baseGridInputs.overlap.value) || 0) / 1000;
+  const rollLength = parseFloat(baseGridInputs.rollLength.value) || 0;
+  // Only the base is free to choose — a batter's direction is set by the ground it is on.
+  const zones = classifyCellZones(baseGridSurface.triangles);
+  const baseTris = zones.filter((z) => !z.slope).flatMap((z) => z.triangles);
+  const target = baseTris.length ? baseTris : baseGridSurface.triangles;
+  const targetOutline = surfaceOutline(target)[0] || baseGridSurface.outline;
+  const best = bestBaseGridBearing(target, targetOutline, w, oMin, rollLength);
+  if (!best) {
+    baseGridStatus(
+      rollLength > 0
+        ? `No direction keeps every run under the ${rollLength} m roll length. Raise the roll length, or accept a join partway along the longer runs.`
+        : "Couldn't find a workable direction for that roll width.",
+      "error"
+    );
+    return;
+  }
+  baseGridInputs.bearing.value = String(best.bearing);
+  renderBaseGrid();
+  baseGridStatus(
+    `Base runs best at ${best.bearing}° — ${best.panels} runs on the base, longest ${best.longest.toFixed(0)} m. ` +
+      `Direction hardly moves the quantity; it is the number of runs it changes. The batters are not affected: they run down their own fall lines.`,
+    "ok"
+  );
+});
+
+document.getElementById("baseGridResetBtn").addEventListener("click", () => {
+  if (!window.confirm("Reset the base geogrid roll spec and direction, and forget the loaded surface?")) return;
+  resetBaseGridInputs();
+  baseGridSurface = null;
+  baseGridStatus("");
+  renderBaseGrid();
+});
+
+Object.values(baseGridInputs).forEach((el) => {
+  if (el) el.addEventListener("input", renderBaseGrid);
+});
+
+/**
+ * The panel layout as CAD geometry, in the survey coordinates the surface arrived on and at the
+ * levels of the ground beneath each run — so it drops straight onto the design and the panels sit
+ * on the batter rather than floating at RL 0.
+ *
+ *   OUTLINE       the cell's edge
+ *   PANEL_EDGES   each run as a closed polyline, roll width across
+ *   PANEL_CL      each run's centreline, draped over the surface — the line to set out from
+ *   PANEL_TEXT    panel number and its length over the ground
+ */
+function buildBaseGridDxf(surface, plan) {
+  if (!surface || !plan) return null;
+  const lines = [];
+  const put = (code, value) => lines.push(String(code), String(value));
+  const ents = [];
+  const ent = (code, value) => ents.push(String(code), String(value));
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  let minZ = Infinity, maxZ = -Infinity;
+
+  const poly3d = (layer, pts, closed) => {
+    ent(0, "POLYLINE"); ent(8, layer); ent(66, 1); ent(70, closed ? 9 : 8);
+    pts.forEach((p) => {
+      ent(0, "VERTEX"); ent(8, layer);
+      ent(10, p.x.toFixed(4)); ent(20, p.y.toFixed(4)); ent(30, (p.z || 0).toFixed(4));
+      ent(70, 32);
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+      minZ = Math.min(minZ, p.z || 0); maxZ = Math.max(maxZ, p.z || 0);
+    });
+    ent(0, "SEQEND"); ent(8, layer);
+  };
+
+  const tin = makeTinIndex(surface.triangles);
+  /* A roll is wider than the ground it sits on at the edge of the cell, so a panel corner can land
+   * just off the surface. Dropping it to RL 0 would put that corner 280 m below the job — so it
+   * walks back toward a point known to be on the surface until it finds ground. */
+  const onGround = (p, towards) => {
+    const z = tin.zAt(p.x, p.y);
+    if (z !== null) return { x: p.x, y: p.y, z };
+    if (towards) {
+      for (let f = 0.1; f <= 1.0001; f += 0.1) {
+        const zz = tin.zAt(p.x + (towards.x - p.x) * f, p.y + (towards.y - p.y) * f);
+        if (zz !== null) return { x: p.x, y: p.y, z: zz };
+      }
+      if (towards.z !== undefined) return { x: p.x, y: p.y, z: towards.z };
+    }
+    return { x: p.x, y: p.y, z: 0 };
+  };
+  // Outline vertices are triangle corners, so they already carry their own true level — no lookup.
+  poly3d("OUTLINE", surface.outline.map((p) => ({ x: p.x, y: p.y, z: p.z || 0 })), true);
+
+  const half = plan.rollWidth / 2;
+  plan.zones.forEach((z) => {
+  const ax = z.plan.across.x * half, ay = z.plan.across.y * half;
+  z.plan.panels.forEach((p) => {
+    // Each corner falls back toward its own end of the centreline, which is on the surface by
+    // construction — that is the nearest ground it could sensibly take its level from.
+    const startOn = p.path.length ? p.path[0] : p.start;
+    const endOn = p.path.length ? p.path[p.path.length - 1] : p.end;
+    poly3d("PANEL_EDGES", [
+      onGround({ x: p.start.x - ax, y: p.start.y - ay }, startOn),
+      onGround({ x: p.end.x - ax, y: p.end.y - ay }, endOn),
+      onGround({ x: p.end.x + ax, y: p.end.y + ay }, endOn),
+      onGround({ x: p.start.x + ax, y: p.start.y + ay }, startOn),
+    ], true);
+    if (p.path.length >= 2) poly3d("PANEL_CL", p.path, false);
+
+    const mid = p.path.length ? p.path[Math.floor(p.path.length / 2)] : onGround(p.start, null);
+    let rot = (Math.atan2(z.plan.dir.y, z.plan.dir.x) * 180) / Math.PI;
+    if (rot > 90 || rot <= -90) rot += 180;
+    const label = `${p.n}  ${p.draped.toFixed(1)}m`;
+    ent(0, "TEXT"); ent(8, "PANEL_TEXT");
+    ent(10, mid.x.toFixed(4)); ent(20, mid.y.toFixed(4)); ent(30, (mid.z || 0).toFixed(4));
+    ent(40, Math.max(0.3, Math.min(1.5, plan.rollWidth * 0.18)).toFixed(3));
+    ent(1, label);
+    ent(50, rot.toFixed(2));
+    ent(7, "STANDARD");
+    ent(72, 1);
+    ent(11, mid.x.toFixed(4)); ent(21, mid.y.toFixed(4)); ent(31, (mid.z || 0).toFixed(4));
+    ent(73, 2);
+  });
+  });
+
+  put(0, "SECTION"); put(2, "HEADER");
+  put(9, "$ACADVER"); put(1, "AC1009");
+  put(9, "$EXTMIN"); put(10, minX.toFixed(4)); put(20, minY.toFixed(4)); put(30, minZ.toFixed(4));
+  put(9, "$EXTMAX"); put(10, maxX.toFixed(4)); put(20, maxY.toFixed(4)); put(30, maxZ.toFixed(4));
+  put(0, "ENDSEC");
+
+  put(0, "SECTION"); put(2, "TABLES");
+  put(0, "TABLE"); put(2, "LTYPE"); put(70, 1);
+  put(0, "LTYPE"); put(2, "CONTINUOUS"); put(70, 0); put(3, "Solid line"); put(72, 65); put(73, 0); put(40, "0.0");
+  put(0, "ENDTAB");
+  const layers = [["OUTLINE", 7], ["PANEL_EDGES", 3], ["PANEL_CL", 1], ["PANEL_TEXT", 2]];
+  put(0, "TABLE"); put(2, "LAYER"); put(70, layers.length);
+  layers.forEach(([name, colour]) => {
+    put(0, "LAYER"); put(2, name); put(70, 0); put(62, colour); put(6, "CONTINUOUS");
+  });
+  put(0, "ENDTAB");
+  put(0, "TABLE"); put(2, "STYLE"); put(70, 1);
+  put(0, "STYLE"); put(2, "STANDARD"); put(70, 0);
+  put(40, "0.0"); put(41, "1.0"); put(50, "0.0"); put(71, 0); put(42, "0.2"); put(3, "txt"); put(4, "");
+  put(0, "ENDTAB");
+  put(0, "ENDSEC");
+
+  put(0, "SECTION"); put(2, "ENTITIES");
+  lines.push(...ents);
+  put(0, "ENDSEC");
+  put(0, "EOF");
+  return lines.join("\r\n") + "\r\n";
+}
+
+document.getElementById("baseGridExportBtn").addEventListener("click", () => {
+  if (!baseGridSurface || !baseGridPlanResult) {
+    baseGridStatus("Upload the cell surface first — there is no layout to export yet.", "error");
+    return;
+  }
+  const dxf = buildBaseGridDxf(baseGridSurface, baseGridPlanResult);
+  if (!dxf) return;
+  downloadFile(`${fileStem("geomate")}_base_geogrid.dxf`, dxf, "application/dxf");
+  baseGridStatus(
+    `Exported ${baseGridPlanResult.panels.length} panels across ${baseGridPlanResult.zones.length} zones, draped on the surface. Opens in Civil 3D — Save As there for a DWG.`,
+    "ok"
+  );
+});
+
+/**
+ * Splits a cell surface into the areas that get laid in one direction each.
+ *
+ * A cell is not one thing. The batters are rolled DOWN THE FALL LINE, deployed off the bench at the
+ * top and tied in at the toe; the base is a separate job in its own direction, and the grid changes
+ * direction where the two meet. Laying the whole cell one way — which is what this tool did first —
+ * produces a drawing no installer would work to.
+ *
+ * Zones come out of the surface itself:
+ *   grade  — the batters stand well clear of the base. On the cell this was built against there is
+ *            NOTHING between 10% and 20% grade, so the toe is not a judgement call.
+ *   aspect — which way the steepest descent points. Two batters at the same grade facing different
+ *            ways are different deployments, each wanting its own direction.
+ *
+ * The awkward part is that a survey TIN is not tidy. This one is 280 triangles whose MEDIAN area is
+ * 1.4 m²: a handful of huge faces carrying the batters and the base, and ~170 slivers strung along
+ * the breaklines carrying 1.3% of the area between them. Their computed aspect is noise. Left alone
+ * they shatter the base into five pieces, one of them 188 slivers totalling 230 m². So:
+ *
+ *   1. degenerate triangles are dropped — no area, and a normal that means nothing
+ *   2. the slope/base call is smoothed against each triangle's neighbours, by area, so a sliver
+ *      cannot outvote the face it lies on
+ *   3. adjacent zones that belong together are merged — any two base zones, and two batter zones
+ *      that face the same way
+ *   4. whatever is still too small to deploy a roll on is absorbed into the neighbour it shares the
+ *      most edge with, because a 40 m² offcut of batter is part of the face beside it, not a zone
+ */
+function classifyCellZones(triangles, options) {
+  const opts = options || {};
+  const gradeSplit = opts.gradeSplit ?? 0.12;
+  const aspectTol = opts.aspectTol ?? 45;
+  const minZoneArea = opts.minZoneArea ?? 400;
+
+  const kept = [];
+  const info = [];
+  triangles.forEach((tri) => {
+    const [a, b, c] = tri;
+    const ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z;
+    const vx = c.x - a.x, vy = c.y - a.y, vz = c.z - a.z;
+    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    if (nz < 0) { nx = -nx; ny = -ny; nz = -nz; }
+    const area = Math.hypot(nx, ny, nz) / 2;
+    if (!(area > 1e-9)) return; // nothing there to lay grid on, and no usable normal
+    kept.push(tri);
+    if (Math.abs(nz) < 1e-12) {
+      // Vertical: no plan extent, so it cannot take a roll. Treated as batter and left to be
+      // absorbed by whichever face it hangs off.
+      info.push({ area, grade: Infinity, aspect: 0, vertical: true });
+      return;
+    }
+    const gx = -nx / nz, gy = -ny / nz;
+    info.push({
+      area,
+      grade: Math.hypot(gx, gy),
+      // The bearing the ground falls TOWARD, which is the way a roll runs when it goes down.
+      aspect: ((Math.atan2(gx, gy) * 180) / Math.PI + 360) % 360,
+      vertical: false,
+    });
+  });
+  if (!kept.length) return [];
+
+  const keyOf = (p) => `${p.x.toFixed(4)},${p.y.toFixed(4)}`;
+  const byEdge = new Map();
+  kept.forEach((tri, i) => {
+    for (let k = 0; k < 3; k++) {
+      const a = keyOf(tri[k]), b = keyOf(tri[(k + 1) % 3]);
+      if (a === b) continue;
+      const ek = a < b ? `${a}|${b}` : `${b}|${a}`;
+      if (!byEdge.has(ek)) byEdge.set(ek, []);
+      byEdge.get(ek).push(i);
+    }
+  });
+  const neighbours = kept.map(() => new Set());
+  byEdge.forEach((ids) => ids.forEach((i) => ids.forEach((j) => { if (i !== j) neighbours[i].add(j); })));
+
+  let isSlope = info.map((t) => t.grade >= gradeSplit);
+  for (let pass = 0; pass < 2; pass++) {
+    const next = isSlope.slice();
+    isSlope.forEach((mine, i) => {
+      let same = 0, other = 0;
+      neighbours[i].forEach((j) => { if (isSlope[j] === mine) same += info[j].area; else other += info[j].area; });
+      if (other > same * 1.5) next[i] = !mine;
+    });
+    isSlope = next;
+  }
+
+  const angleGap = (a, b) => {
+    const d = Math.abs(a - b) % 360;
+    return Math.min(d, 360 - d);
+  };
+  const meanAspect = (members) => {
+    let sx = 0, sy = 0;
+    members.forEach((i) => {
+      if (info[i].vertical) return;
+      const rad = (info[i].aspect * Math.PI) / 180;
+      sx += Math.sin(rad) * info[i].area;
+      sy += Math.cos(rad) * info[i].area;
+    });
+    return ((Math.atan2(sx, sy) * 180) / Math.PI + 360) % 360;
+  };
+
+  const zoneOf = new Array(kept.length).fill(-1);
+  let zones = [];
+  kept.forEach((_, seed) => {
+    if (zoneOf[seed] !== -1) return;
+    const slope = isSlope[seed];
+    const members = [seed];
+    zoneOf[seed] = zones.length;
+    const stack = [seed];
+    while (stack.length) {
+      const cur = stack.pop();
+      neighbours[cur].forEach((n) => {
+        if (zoneOf[n] !== -1 || isSlope[n] !== slope) return;
+        // On a batter, keep walking while the ground keeps facing the same way — that is what parts
+        // two faces meeting at a corner. On the base, aspect is drainage noise, so it is ignored.
+        if (slope && !info[cur].vertical && !info[n].vertical && angleGap(info[cur].aspect, info[n].aspect) > aspectTol) return;
+        zoneOf[n] = zones.length;
+        members.push(n);
+        stack.push(n);
+      });
+    }
+    zones.push({ slope, members });
+  });
+
+  const areaOf = (z) => z.members.reduce((s, i) => s + info[i].area, 0);
+  const touchingZones = (zi) => {
+    const touching = new Map();
+    zones[zi].members.forEach((i) => {
+      neighbours[i].forEach((n) => {
+        const z = zoneOf[n];
+        if (z === zi || z === -1 || !zones[z].members.length) return;
+        touching.set(z, (touching.get(z) || 0) + info[n].area);
+      });
+    });
+    return touching;
+  };
+  const absorb = (from, into) => {
+    zones[from].members.forEach((i) => { zoneOf[i] = into; zones[into].members.push(i); });
+    zones[from].members = [];
+  };
+
+  // Merge the zones that were only ever split by a sliver: any two touching base zones, and two
+  // touching batters that face the same way.
+  for (let guard = 0; guard < 200; guard++) {
+    let merged = false;
+    for (let zi = 0; zi < zones.length && !merged; zi++) {
+      if (!zones[zi].members.length) continue;
+      for (const [zj] of touchingZones(zi)) {
+        if (zones[zi].slope !== zones[zj].slope) continue;
+        if (zones[zi].slope && angleGap(meanAspect(zones[zi].members), meanAspect(zones[zj].members)) > aspectTol) continue;
+        const [keep, drop] = areaOf(zones[zi]) >= areaOf(zones[zj]) ? [zi, zj] : [zj, zi];
+        absorb(drop, keep);
+        merged = true;
+        break;
+      }
+    }
+    if (!merged) break;
+  }
+
+  // Anything still too small to deploy on joins the neighbour it shares the most edge with.
+  for (let guard = 0; guard < 200; guard++) {
+    const small = zones.findIndex((z) => z.members.length && areaOf(z) < minZoneArea);
+    if (small === -1) break;
+    const touching = touchingZones(small);
+    if (!touching.size) break;
+    absorb(small, [...touching.entries()].sort((a, b) => b[1] - a[1])[0][0]);
+  }
+
+  return zones
+    .filter((z) => z.members.length)
+    .map((z) => {
+      const area = areaOf(z);
+      let grade = 0, graded = 0;
+      z.members.forEach((i) => {
+        if (!Number.isFinite(info[i].grade)) return;
+        grade += info[i].grade * info[i].area;
+        graded += info[i].area;
+      });
+      return {
+        slope: z.slope,
+        triangles: z.members.map((i) => kept[i]),
+        area,
+        grade: graded > 0 ? grade / graded : 0,
+        aspect: meanAspect(z.members),
+      };
+    })
+    .sort((a, b) => b.area - a.area);
+}
+
+/**
+ * The whole cell laid out zone by zone: every batter rolled down its own fall line, the base in its
+ * own direction. This is the shape of the answer — one uniform direction across a cell is not how
+ * any of it gets installed.
+ */
+function computeCellGridPlan(triangles, rollWidth, minOverlap, baseBearing, options) {
+  const zones = classifyCellZones(triangles, options);
+  if (!zones.length) return null;
+
+  const laid = [];
+  zones.forEach((zone, i) => {
+    const loops = surfaceOutline(zone.triangles);
+    if (!loops.length) return;
+    // A batter runs down the fall line — that is the deployment, off the bench and down the slope.
+    // The base has no fall line worth following, so it takes the direction the user asked for.
+    const bearing = zone.slope ? zone.aspect : baseBearing;
+    const plan = computeBaseGridPanels(zone.triangles, loops[0], rollWidth, minOverlap, bearing);
+    if (!plan) return;
+    laid.push({
+      index: laid.length + 1,
+      kind: zone.slope ? "Batter" : "Base",
+      slope: zone.slope,
+      grade: zone.grade,
+      bearing,
+      area: zone.area,
+      outline: loops[0],
+      plan,
+    });
+  });
+  if (!laid.length) return null;
+
+  const panels = [];
+  laid.forEach((z) => z.plan.panels.forEach((p) => panels.push({ ...p, zone: z.index, kind: z.kind })));
+  panels.forEach((p, i) => { p.n = i + 1; });
+
+  return {
+    zones: laid,
+    panels,
+    totalDraped: laid.reduce((s, z) => s + z.plan.totalDraped, 0),
+    totalPlan: laid.reduce((s, z) => s + z.plan.totalPlan, 0),
+    material: laid.reduce((s, z) => s + z.plan.material, 0),
+    covered: laid.reduce((s, z) => s + z.plan.covered, 0),
+    surface: surfaceArea3D(triangles),
+    rollWidth,
+    minOverlap,
+  };
+}

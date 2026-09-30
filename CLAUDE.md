@@ -182,7 +182,41 @@ These come from the user directly. Violating them makes output wrong on site.
    but only read coordinates inside ENTITIES, so every heavy POLYLINE in a block
    became a polygon of all-zero vertices. That is where the two phantom
    `RL 0.00` rows with no face length in the RE580 takeoff came from.
-12. **What leaves the app is set out from.** The PDF is a picture of the plan;
+12. **A landfill cell is not one thing, and the grid follows the ground.**
+   The Base geogrid tab covers a whole cell from its survey surface. Two rules
+   the user stated and neither is negotiable. **(a) The grid changes direction
+   at the toe.** The batters are rolled DOWN THE FALL LINE, deployed off the
+   bench at the top and tied in at the toe; the base is a separate job in its
+   own direction. Laying a cell one uniform way produces a drawing no installer
+   would work to — that was this tool's first version and it was wrong.
+   `classifyCellZones` splits the surface by grade (batter vs base) and by
+   aspect (which way each batter faces), and every zone is laid on its own
+   bearing; only the BASE direction is free to be optimised. **(b) A roll
+   follows the ground**, so every panel length is DRAPED — sampled along the
+   run with the height interpolated from the triangle under each sample. On the
+   test cell the surface is 4.0% bigger than its own plan area and panels run
+   ~2-4% longer than they measure on the drawing. Take lengths off the plan and
+   every panel is short.
+   Things that bit, in order of how quietly they did it:
+   - `surfaceOutline` must walk BOTH ways from its seed. One way only splits a
+     ring into two arcs whenever the seed is mid-chain — it turned one 16,635 m²
+     outline into a 14,408 m² piece and a 2,181 m² piece, each the wrong shape,
+     and nothing about the result looked broken.
+   - A survey TIN is not tidy. This one's MEDIAN triangle is 1.4 m²: a few huge
+     faces plus ~170 slivers holding 1.3% of the area. Their aspect is noise.
+     Unsmoothed, they shattered the base into five zones, one of them 188
+     slivers totalling 230 m². Hence the neighbour smoothing, the merge of
+     adjacent like zones, and the absorb-the-too-small pass.
+   - **Rolls are PACKED, not divided.** A panel comes off ONE roll; you cannot
+     join two offcuts and call it a run. Dividing total length by roll length
+     said 26 rolls where the answer is 30 — verified against an independent
+     first-fit-decreasing, and tight, since 29 of the panels exceed half a roll.
+   - A panel corner can overhang the surface at the cell edge. Falling back to
+     RL 0 there puts that corner 280 m under the job in CAD; it walks back
+     toward the centreline until it finds ground instead.
+   The zoning is INFERRED from the surface. A toe line or zone divisions from
+   the designer beat it and should be preferred whenever they are supplied.
+13. **What leaves the app is set out from.** The PDF is a picture of the plan;
    the **cut plan DXF** (`buildCutPlanDxf`, the button under the roll schedule)
    is the plan itself — every strip a closed polyline in the survey coordinates
    the extents arrived on, each lift at its own RL, layered by RL so a level can
@@ -213,7 +247,7 @@ Geometry / cut planning — the part that is subtle:
 - `stripWorldQuads(cutPlan)` — every strip's four true world corners (and any
   patch pieces), each built against its own corner segment's own direction.
   **One definition on purpose**, shared by the true-plan drawing and the DXF
-  export — see rule 12.
+  export — see rule 13.
 - `dxfCodeValuePairs(text)` — a DXF as the (group code, value) pairs it is made
   of. Every parser starts here; four of them carried their own copy.
 - `dxfEntityRecords(text)` — the file as flat entity records in file order, each
