@@ -238,6 +238,16 @@ These come from the user directly. Violating them makes output wrong on site.
      the plane carries on at the right grade.
    - `lines.push(...arr)` overflows the call stack once a layout runs to
      hundreds of thousands of group codes. Both DXF exporters loop instead.
+   **LandXML `<F i="1">` means the face is INVISIBLE — deleted from the TIN.**
+   Civil 3D leaves those in the file whenever a surface has been cropped or had
+   faces removed, which is exactly what happens when a survey is trimmed to a
+   cell boundary. Reading them back rebuilds the surface as it was BEFORE the
+   crop: extra triangles round the edge and a boundary that does not match the
+   drawing. Verified both ways — the same surface as LandXML with nothing cut
+   parses identically to its DXF (280 triangles, 16,635 m² plan, 17,300 m²
+   surface, same coordinates), and a copy with 60 faces marked `i="1"` comes
+   back as 220. The northing/easting swap in that parser is correct and that
+   test is what proves it.
    The zoning is INFERRED from the surface. A toe line or zone divisions from
    the designer beat it and should be preferred whenever they are supplied.
 13. **What leaves the app is set out from.** The PDF is a picture of the plan;

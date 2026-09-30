@@ -2092,6 +2092,14 @@ function parseLandXMLSurface(text) {
 
   const triangles = [];
   byLocalName("F").forEach((f) => {
+    /* i="1" marks a face as INVISIBLE — deleted from the TIN. Civil 3D writes these whenever a
+     * surface has been cropped or had faces removed, which is exactly what happens when a survey is
+     * trimmed to a cell boundary, and it leaves them in the file rather than dropping them. Reading
+     * them back in rebuilds the surface as it was BEFORE it was cropped: extra triangles round the
+     * edge, a boundary that does not match the drawing, and a takeoff over ground that is not in the
+     * job. The shape being "a little different" from the one in CAD is exactly what this looks like. */
+    const invisible = f.getAttribute("i");
+    if (invisible === "1" || invisible === "true") return;
     const ids = f.textContent.trim().split(/\s+/).slice(0, 3);
     const tri = ids.map((id) => pts.get(id));
     if (tri.length === 3 && tri.every(Boolean)) triangles.push(tri);
