@@ -3466,7 +3466,6 @@ function packRollsWindowed(results, rollLength, groupSize, productId) {
 
 const tbody = document.getElementById("liftTableBody");
 const rowTemplate = document.getElementById("liftRowTemplate");
-const emptyState = document.getElementById("emptyState");
 
 const settingsInputs = {
   rollGroupSize: document.getElementById("rollGroupSize"),
@@ -4163,33 +4162,25 @@ const SAMPLE_PROJECT = {
   ],
 };
 
-document.getElementById("emptyUploadBtn").addEventListener("click", startExtentsUpload);
-
 /* Dropping the drawing on the page is how anyone expects a file tool to work, and it is the same
  * upload underneath: the file is handed to the extents input and its own change handler runs, so a
  * dropped file goes through exactly the same parsing, the same wall/floor question and the same
  * status line as a picked one. Nothing here knows how to read a DXF. */
 {
-  const zone = document.getElementById("dxfDropZone");
-  // The drop zone lives on the Cut plan tab now — that is the tab the uploads are on and the one
-  // the app opens on, so the front door and the thing behind it are finally in the same room.
+  // The whole Cut plan panel is the drop target — the tab the uploads are on and the one the app
+  // opens on. There is no framed zone inside it any more; a dashed box that only repeated the
+  // Extents upload below it was not earning its place, and dropping never needed one.
   const panel = document.getElementById("cutPlanView");
   const input = document.getElementById("dxfExtentsInput");
-  if (zone && panel && input) {
+  if (panel && input) {
     const dxfFrom = (dt) => [...((dt && dt.files) || [])].find((f) => /\.dxf$/i.test(f.name));
     // Mid-drag the browser will not say what the file is called, only that one is being carried —
     // so the highlight is on "a file", and the .dxf test waits until the drop, when there is a name.
     const carriesFile = (dt) => !!(dt && ([...(dt.items || [])].some((i) => i.kind === "file") || (dt.files || []).length));
     let depth = 0;
-    // The zone lights up when it is on screen. With lifts loaded it is hidden, so the panel itself
-    // carries the signal instead — otherwise dropping onto the table looks like nothing is
-    // listening. Only ever one of the two, or the drawing gets a dashed box inside a dashed box.
-    const empty = document.getElementById("emptyState");
-    const lit = (on) => {
-      const showing = !!empty && !empty.hidden;
-      zone.classList.toggle("is-dragover", on && showing);
-      panel.classList.toggle("is-dragover", on && !showing);
-    };
+    // One signal, always the same one: the panel outlines itself. Otherwise dropping onto the cards
+    // looks like nothing is listening.
+    const lit = (on) => panel.classList.toggle("is-dragover", on);
     panel.addEventListener("dragenter", (e) => {
       if (!carriesFile(e.dataTransfer)) return;
       e.preventDefault();
@@ -4583,7 +4574,6 @@ function computeAndRender() {
   productSpecWarning.innerHTML = productSpecIssues.map((m) => `<span>${escapeHtml(m)}</span>`).join("<br>");
 
   const rows = Array.from(tbody.querySelectorAll(".lift-row"));
-  emptyState.hidden = rows.length > 0;
   // Headings over an empty table are clutter dressed as content — RL, Product, Face length and the
   // rest, standing over nothing. The table appears when there is something to put in it.
   const tableWrap = document.getElementById("liftTableWrap");
@@ -5590,15 +5580,14 @@ const TABS = {
  * which is already showing the same call to action a few centimetres below it — two identical green
  * buttons on one screen is not two ways in, it is a mistake. */
 // Cut plan leads: it is where the extents, the surfaces and the centrelines are loaded, and where
-// the empty state now asks for a drawing. Opening anywhere else would open behind the front door.
+// a dropped drawing lands. Opening anywhere else would open behind the front door.
 let currentTab = "cutplan";
 
 function updateHeaderUpload() {
   const btn = document.getElementById("headerUploadBtn");
   if (!btn) return;
-  const empty = document.getElementById("emptyState");
-  // Cut plan has its own uploads, and now the empty state too — so the header button is for every
-  // OTHER tab, where going back to CAD would otherwise mean hunting for the right one.
+  // Cut plan carries its own uploads — so the header button is for every OTHER tab, where going back
+  // to CAD would otherwise mean hunting for the right one.
   btn.hidden = currentTab === "cutplan";
 }
 

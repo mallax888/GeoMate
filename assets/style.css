@@ -829,54 +829,13 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
 }
 .empty-state__icon { display: block; margin: 0 auto 0.7rem; color: var(--line-strong); }
 
-/* The opening screen of a file-driven tool is a different job from those, and gets the room for it:
-   one obvious thing to do, inside a framed drop zone — because "somewhere to put the drawing" is
-   what the user is looking for, and a bare button in the middle of a panel does not read as one. */
-.empty-state--start { padding: 2rem 1.25rem 1.75rem; }
-.dropzone {
-  max-width: 34rem;
-  margin: 0 auto;
-  padding: 2.5rem 1.75rem 2.25rem;
-  border: 1.5px dashed var(--line-strong);
-  border-radius: 12px;
-  background: var(--surface-2);
-  transition: border-color 0.15s ease, background 0.15s ease;
-}
-/* While a file is over the panel, so it is obvious the drop will land. */
-.dropzone.is-dragover {
-  border-color: var(--accent);
-  border-style: solid;
-  background: var(--accent-tint);
-}
-/* Once lifts are loaded the zone above is hidden, so the panel carries the same signal. */
+/* The whole Cut plan panel is the drop target, so the whole panel is what lights up. There used to
+   be a framed drop zone drawn inside it, repeating the Extents upload that sits a few centimetres
+   below — one of the two had to go, and it was not the one that does the work. */
 #cutPlanView.is-dragover {
   outline: 1.5px dashed var(--accent);
   outline-offset: 6px;
   border-radius: 8px;
-}
-.dropzone__icon { display: block; margin: 0 auto 1rem; color: var(--accent); }
-.dropzone__title {
-  margin: 0 0 0.5rem;
-  font-size: 1.12rem;
-  font-weight: 700;
-  color: var(--ink);
-  letter-spacing: -0.01em;
-}
-.dropzone__sub {
-  margin: 0 auto 1.5rem;
-  max-width: 26rem;
-  font-size: 0.84rem;
-  line-height: 1.5;
-  color: var(--ink-muted);
-}
-.dropzone__drop {
-  margin: 0.95rem 0 0;
-  font-size: 0.78rem;
-  color: var(--ink-muted);
-}
-/* Nothing to drag on a touch device, so it is not offered there. */
-@media (hover: none) and (pointer: coarse) {
-  .dropzone__drop { display: none; }
 }
 /* A call to action, not a toolbar button. */
 .btn--lg {
@@ -1154,12 +1113,22 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
    card so Extents/Benched/Battered read as separate choices, and within a card only the DXF path
    (the common one) stays a loud primary button; LandXML is the same result via an alternate file
    format, so it's a ghost button, not a second equally-weighted CTA. */
-.cutplan-methods { display: flex; flex-direction: column; gap: 0.9rem; }
-.cutplan-methods__pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.9rem; align-items: start; }
+/* One spacing step between cards and one inside them, set once here and used by everything below.
+   The cards sit side by side and one above the other, so a gap that is 0.9rem in one place and 1rem
+   in the next does not read as a refinement — it reads as a mistake, which is what it was. */
+.cutplan-methods { --cp-gap: 0.9rem; --cp-stack: 0.6rem; display: flex; flex-direction: column; gap: var(--cp-gap, 0.9rem); }
+/* stretch, not start: the pair is two choices of equal standing, and they say so by being the same
+   height whichever one happens to carry more controls. */
+.cutplan-methods__pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--cp-gap, 0.9rem);
+  align-items: stretch;
+}
 /* Extents splits into what the lift is and how the strips run across it. The divider is the only
    thing separating them, so the two halves read as one card rather than two stacked panels. */
-.cutplan-method__cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.9rem 1.4rem; }
-.cutplan-method__col { display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; }
+.cutplan-method__cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--cp-gap, 0.9rem) 1.4rem; }
+.cutplan-method__col { display: flex; flex-direction: column; gap: var(--cp-stack, 0.6rem); align-items: flex-start; min-width: 0; }
 .cutplan-method__col + .cutplan-method__col { border-left: 1px solid var(--line); padding-left: 1.4rem; }
 .cutplan-method__coltitle {
   font-size: 0.68rem;
@@ -1187,10 +1156,12 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
   }
 }
 .cutplan-method {
+  display: flex;
+  flex-direction: column;
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 0.9rem 1rem 1rem;
+  padding: 0.9rem 1rem;
 }
 .cutplan-method__title {
   display: flex;
@@ -1201,7 +1172,7 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
   text-transform: uppercase;
   letter-spacing: 0.03em;
   color: var(--accent-strong);
-  margin: 0 0 0.7rem;
+  margin: 0 0 var(--cp-stack, 0.6rem);
 }
 .cutplan-method__title svg { flex: none; opacity: 0.85; }
 .cutplan-method p { margin: 0 0 0.8rem; }
@@ -1214,11 +1185,35 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
 }
 .cutplan-method ul li::marker { color: var(--accent); }
 .cutplan-method .cutplan-upload:last-child { margin-bottom: 0; }
-.cutplan-upload { display: flex; align-items: flex-end; gap: 0.8rem; margin-bottom: 1rem; flex-wrap: wrap; }
+.cutplan-upload { display: flex; align-items: flex-end; gap: var(--cp-stack, 0.6rem); margin-bottom: var(--cp-stack, 0.6rem); flex-wrap: wrap; }
 .cutplan-upload__product { flex: none; }
 .cutplan-upload__product select { min-width: 8rem; }
-.cutplan-tolerance { flex: none; }
-.cutplan-tolerance .field__unit { width: 6rem; }
+/* The two mesh cards each have a row of settings and a row of uploads, and both rows are laid out
+   on a grid rather than left to wrap where they like: one field is as wide as three sharing the
+   row, and the DXF and LandXML buttons are the same size as each other in both cards. That is what
+   makes Benched and Battered line up with each other instead of each finding its own rhythm. */
+.cutplan-upload--fields,
+.cutplan-upload--files {
+  display: grid;
+  align-items: end;
+  gap: var(--cp-stack, 0.6rem);
+  width: 100%;
+}
+/* Three columns in both cards, not "however many this one happens to have" — so Benched's single
+   tolerance box is exactly as wide as Battered's Start RL beside it, instead of stretching the
+   width of the card because it is on its own. */
+.cutplan-upload--fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.cutplan-upload--files { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.cutplan-upload--files .btn { width: 100%; }
+/* The settings row sets the card's width; the uploads row is pushed to the bottom so that both
+   cards' buttons sit on the same line even when one of them has more to say above. */
+.cutplan-method .cutplan-upload--files { margin-top: auto; }
+/* "Flatness tolerance" needs two lines at this column width and "Start RL" needs one, so without
+   this the boxes in the two cards sit at different heights — side by side, that reads as a mistake.
+   Every label in these rows gets the taller one's height and the boxes line up across both cards. */
+.cutplan-upload--fields .field > span { display: block; min-height: 2.1em; line-height: 1.05; }
+.cutplan-upload--fields .field__unit { width: 100%; }
+.cutplan-upload--fields .field__unit input { width: 100%; min-width: 0; }
 .btn--upload { cursor: pointer; }
 .cutplan-status { font-size: 0.78rem; color: var(--ink-muted); }
 .cutplan-status.is-error { color: var(--critical); }
@@ -1937,6 +1932,9 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
      on a narrow phone squeezes the text into a single word-per-line column instead of wrapping
      normally, and can push buttons off the edge — stack them instead. */
   .roll-schedule-head, .sequence-controls, .cutplan-upload, .view3d-controls, .liner-head { flex-direction: column; align-items: stretch; }
+  /* The two grid rows in the mesh cards are not flex, so flex-direction does nothing for them —
+     they go to one column of their own accord. */
+  .cutplan-upload--fields, .cutplan-upload--files { grid-template-columns: 1fr; }
   .roll-schedule-head__actions, .view3d-controls__actions { justify-content: stretch; }
   .roll-schedule-head__actions .btn, .sequence-controls .btn, .view3d-controls__actions .btn, .liner-head .btn { width: 100%; justify-content: center; }
 

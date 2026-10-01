@@ -18,7 +18,7 @@
  * CACHE_NAME is still bumped on a deploy — activate() drops every other cache, which clears
  * anything an older version of this file left behind.
  */
-const CACHE_NAME = "geomate-v166";
+const CACHE_NAME = "geomate-v167";
 
 const ASSETS = [
   "./",

@@ -335,15 +335,14 @@
           <tbody id="liftTableBody"></tbody>
         </table>
       </div>
-        <p class="empty-state__alt">
-          <span>No drawing yet?</span>
-          <button id="loadSampleBtn" class="btn btn--link" type="button">Load the sample project</button>
-          <span class="empty-state__sep"></span>
-          <button id="emptyAddLiftBtn" class="btn btn--link" type="button">Add a lift by hand</button>
-          <span class="empty-state__sep"></span>
-          <span>Generate or paste a run from the left</span>
-        </p>
-      </div>
+      <p class="empty-state__alt">
+        <span>No drawing yet?</span>
+        <button id="loadSampleBtn" class="btn btn--link" type="button">Load the sample project</button>
+        <span class="empty-state__sep"></span>
+        <button id="emptyAddLiftBtn" class="btn btn--link" type="button">Add a lift by hand</button>
+        <span class="empty-state__sep"></span>
+        <span>Generate or paste a run from the left</span>
+      </p>
     </div>
 
     <div id="sequenceView" class="sequence-view" hidden>
@@ -359,17 +358,10 @@
     </div>
 
     <div id="cutPlanView" class="cutplan-view">
-        <div id="emptyState" class="empty-state empty-state--start">
-          <div id="dxfDropZone" class="dropzone">
-            <svg class="dropzone__icon" viewBox="0 0 24 24" width="38" height="38" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M12 3v11" /><path d="M8 6.8 12 3l4 3.8" />
-              <path d="M3.5 14.5v4a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-4" />
-            </svg>
-            <h3 class="dropzone__title">Start with your lift extents</h3>
-            <p class="dropzone__sub">One outline per lift, straight out of CAD — a polyline, a block, or separate lines that meet. GeoMate finds the boundary and lays the strips inside it.</p>
-            <button id="emptyUploadBtn" class="btn btn--primary btn--lg" type="button">Choose a DXF file</button>
-            <p class="dropzone__drop">or drop it anywhere in this panel</p>
-          </div>
+      <!-- No framed "start here" drop zone above these cards. It sat directly over Extents, which
+           carries the same upload in its own card, so the page opened with two green buttons asking
+           for the same file — a waste of a button, and the panel it framed is still the drop target
+           whether or not anything is drawn around it. -->
       <div class="cutplan-intro">
         <div class="cutplan-methods">
           <div class="cutplan-method">
@@ -445,7 +437,16 @@
               <li>The tool finds the flat bench at each lift's RL itself and matches it to the existing table rows — no pre-built extents needed.</li>
               <li>DXF (3DFACE) or LandXML (Civil 3D's native export) both work.</li>
             </ul>
-            <div class="cutplan-upload">
+            <!-- Same two rows as Battered below, in the same order: what to set, then what to
+                 upload. The two cards sit side by side, so anything laid out differently in one of
+                 them reads as a difference in meaning when there is none. -->
+            <div class="cutplan-upload cutplan-upload--fields">
+              <label class="field field--compact">
+                <span>Flatness tolerance</span>
+                <div class="field__unit"><input type="number" id="benchedTolerance" value="5" min="0" step="1" /><em>mm</em></div>
+              </label>
+            </div>
+            <div class="cutplan-upload cutplan-upload--files">
               <label class="btn btn--primary btn--upload">
                 Upload benched surface DXF (mesh)
                 <input type="file" id="dxfBenchedInput" accept=".dxf" hidden />
@@ -453,10 +454,6 @@
               <label class="btn btn--ghost btn--upload">
                 Upload benched LandXML instead
                 <input type="file" id="landxmlBenchedInput" accept=".xml,.landxml" hidden />
-              </label>
-              <label class="field field--compact cutplan-tolerance">
-                <span>Flatness tolerance</span>
-                <div class="field__unit"><input type="number" id="benchedTolerance" value="5" min="0" step="1" /><em>mm</em></div>
               </label>
             </div>
             <span id="benchedStatus" class="cutplan-status"></span>
@@ -472,10 +469,10 @@
               <li>Set a spacing below; the tool reads the surface's own elevation range and slices it at every RL that fits.</li>
               <li>Lays one horizontal grid layer per lift out to the cut, in every direction — a fill sequence, not one row per wall.</li>
             </ul>
-            <div class="cutplan-upload">
+            <div class="cutplan-upload cutplan-upload--fields">
               <label class="field field--compact">
                 <span>Start RL</span>
-                <input type="number" id="batteredStartRL" step="0.01" placeholder="0" />
+                <div class="field__unit"><input type="number" id="batteredStartRL" step="0.01" placeholder="0" /></div>
               </label>
               <label class="field field--compact">
                 <span>Spacing</span>
@@ -483,11 +480,11 @@
               </label>
               <label class="field field--compact">
                 <span>Count</span>
-                <input type="number" id="batteredCount" min="1" step="1" placeholder="0" />
+                <div class="field__unit"><input type="number" id="batteredCount" min="1" step="1" placeholder="0" /></div>
               </label>
             </div>
             <p class="generator__hint">Leave Start RL and Count blank to use the whole surface (lowest point up to highest, in steps of Spacing) — set either one to override just that end.</p>
-            <div class="cutplan-upload">
+            <div class="cutplan-upload cutplan-upload--files">
               <label class="btn btn--primary btn--upload">
                 Upload battered surface DXF (mesh)
                 <input type="file" id="dxfBatteredInput" accept=".dxf" hidden />

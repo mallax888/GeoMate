@@ -440,6 +440,17 @@ export, and state persistence.
   The lesson is the general one: **never make the common path pay for the rare
   one.** Opening the app happens constantly; a deploy landing happens rarely.
   Do not put the update check back in front of the render.
+- **After moving a block of markup, check the nesting in a real browser, not by
+  eye.** Moving the empty state into `#cutPlanView` dropped one `</div>`.
+  Browsers do not complain: they silently nested `#view3DPanel`,
+  `#rollScheduleView` and `#linerView` INSIDE `#cutPlanView`, so switching tab
+  set `hidden` on their ancestor and three tabs rendered blank; and `#emptyState`
+  swallowed the whole cut plan, putting its `text-align: center` and muted
+  0.82rem on every card below it — which is what the user saw and reported as
+  "fix this arrangement and the gaps". Nothing threw, and every geometry test
+  passed, because none of it is a JS problem. One `evaluate()` listing each
+  view's `parentElement` catches it in seconds (`domcheck.js`), and the entry
+  tests now also assert that every tab renders something taller than 10 px.
 - Product library commits happen on `focusout`, **not** `input` — committing
   on `input` created a library entry per keystroke ("Sta", "Star", "Start"…).
   Keep `input` for live UI refresh only.
