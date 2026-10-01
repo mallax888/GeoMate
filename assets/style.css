@@ -652,31 +652,49 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
   margin-top: 0.15rem;
 }
 
-/* ---------- Buttons ---------- */
+/* ---------- Buttons ----------
+   A flat, slightly rounded button with its weight carried by colour and a quiet border rather than
+   by a drop shadow and a hop on hover. The old one lifted 1px and grew a shadow on every hover,
+   which on a page with this many controls made the whole thing twitch under the cursor. Pressing
+   still gives feedback — the surface darkens and the button settles by a hair — but resting state
+   is calm. A visible focus ring on every one of them, because these get driven from the keyboard. */
 .btn {
   font-family: var(--font-body);
   font-size: 0.8rem;
   font-weight: 600;
-  border-radius: 4px;
-  padding: 0.5rem 0.85rem;
+  line-height: 1.2;
+  border-radius: 8px;
+  padding: 0.55rem 0.95rem;
   cursor: pointer;
   border: 1px solid transparent;
-  transition: transform 0.1s ease, box-shadow 0.1s ease, background-color 0.1s ease, border-color 0.1s ease;
-}
-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn:not(:disabled):hover { transform: translateY(-1px); box-shadow: var(--shadow); }
-.btn:not(:disabled):active { transform: translateY(0); box-shadow: none; }
-.btn--primary { background: var(--accent-pop); color: var(--ink-on-accent); }
-.btn--primary:hover { background: var(--accent-pop-deep); }
-.btn--ghost {
-  background: transparent;
-  border-color: var(--line-strong);
-  color: var(--ink);
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
+  justify-content: center;
+  gap: 0.45rem;
+  transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease, box-shadow 0.14s ease;
 }
-.btn--ghost:hover { background: var(--surface-2); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
+}
+.btn:not(:disabled):active { transform: translateY(0.5px); }
+
+.btn--primary {
+  background: var(--accent-pop);
+  color: var(--ink-on-accent);
+  border-color: var(--accent-pop);
+}
+.btn--primary:not(:disabled):hover { background: var(--accent-pop-deep); border-color: var(--accent-pop-deep); }
+
+/* The default for anything that is not the one obvious action: legible, bounded, and quiet. */
+.btn--ghost {
+  background: var(--surface);
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+.btn--ghost:not(:disabled):hover { background: var(--surface-2); border-color: var(--ink-muted); }
+
 .btn--block { width: 100%; margin-top: 1.1rem; }
 
 /* ---------- Methodology ---------- */
@@ -831,7 +849,7 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
   background: var(--accent-tint);
 }
 /* Once lifts are loaded the zone above is hidden, so the panel carries the same signal. */
-#takeoffView.is-dragover {
+#cutPlanView.is-dragover {
   outline: 1.5px dashed var(--accent);
   outline-offset: 6px;
   border-radius: 8px;
@@ -1016,7 +1034,7 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
 
 /* ---------- Tabs ---------- */
 .panel__headrow { flex-wrap: wrap; gap: 0.6rem; }
-.tabs-wrap { position: relative; min-width: 0; margin-right: auto; }
+.tabs-wrap { position: relative; min-width: 0; flex: 1 1 auto; }
 .tabs-wrap, .table-scroll {
   /* Edge fade for anything horizontally scrollable, so content sitting just past the visible edge
      (later tabs, the takeoff table's Strips/Overlap/Area/Layout columns) doesn't go unnoticed. */
@@ -1036,7 +1054,8 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
 .tabs-wrap::after, .table-scroll::after { right: 0; background: linear-gradient(to left, var(--surface), transparent); }
 .tabs-wrap.has-more-left::before, .table-scroll.has-more-left::before { opacity: 1; }
 .tabs-wrap.has-more-right::after, .table-scroll.has-more-right::after { opacity: 1; }
-.tabs { display: flex; gap: 0.3rem; }
+/* Fills the row so .tabs__spacer has width to push the output tabs over with. */
+.tabs { display: flex; gap: 0.2rem; width: 100%; }
 .tab {
   font-family: var(--font-body);
   font-size: 0.76rem;
@@ -1044,8 +1063,11 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
   color: var(--ink-muted);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 4px;
-  padding: 0.35rem 0.7rem;
+  border-radius: 7px;
+  /* The strip fills its row so the output tabs can be pushed right, which leaves the tabs
+     themselves free to be squeezed — and a two-line "Cut plan & extents" reads as two tabs. */
+  white-space: nowrap;
+  padding: 0.35rem 0.55rem;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -2099,3 +2121,30 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
   touch-action: none;
 }
 #cellView3D:active { cursor: grabbing; }
+
+/* The two tabs that get printed and handed over are held apart from the four you work in, so the
+   strip reads as two groups rather than six equal things. Below the width that needs, it wraps and
+   the separation quietly disappears — which is fine, the order still tells the story. */
+.tabs__spacer { flex: 1 1 auto; min-width: 0.5rem; }
+.tabs__group {
+  align-self: center;
+  margin-right: 0.15rem;
+  padding-left: 0.7rem;
+  border-left: 1px solid var(--line-strong);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+/* The words cost about 80px, which is the difference between the strip fitting and the last tab
+   being cut in half on a 1440 screen. Below that the rule on its own still says "these two are
+   different", which is the whole job of the label. */
+@media (max-width: 1599px) {
+  .tabs__group-text { display: none; }
+  .tabs__group { padding-left: 0; margin-right: 0.3rem; }
+}
+@media (max-width: 1100px) {
+  .tabs__spacer { display: none; }
+}

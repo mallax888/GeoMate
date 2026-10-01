@@ -4171,7 +4171,9 @@ document.getElementById("emptyUploadBtn").addEventListener("click", startExtents
  * status line as a picked one. Nothing here knows how to read a DXF. */
 {
   const zone = document.getElementById("dxfDropZone");
-  const panel = document.getElementById("takeoffView");
+  // The drop zone lives on the Cut plan tab now — that is the tab the uploads are on and the one
+  // the app opens on, so the front door and the thing behind it are finally in the same room.
+  const panel = document.getElementById("cutPlanView");
   const input = document.getElementById("dxfExtentsInput");
   if (zone && panel && input) {
     const dxfFrom = (dt) => [...((dt && dt.files) || [])].find((f) => /\.dxf$/i.test(f.name));
@@ -5587,14 +5589,17 @@ const TABS = {
  * has its own upload with the product picker and centrelines beside it, and for the empty state,
  * which is already showing the same call to action a few centimetres below it — two identical green
  * buttons on one screen is not two ways in, it is a mistake. */
-let currentTab = "takeoff";
+// Cut plan leads: it is where the extents, the surfaces and the centrelines are loaded, and where
+// the empty state now asks for a drawing. Opening anywhere else would open behind the front door.
+let currentTab = "cutplan";
 
 function updateHeaderUpload() {
   const btn = document.getElementById("headerUploadBtn");
   if (!btn) return;
   const empty = document.getElementById("emptyState");
-  const emptyShowing = !!empty && !empty.hidden && currentTab === "takeoff";
-  btn.hidden = currentTab === "cutplan" || emptyShowing;
+  // Cut plan has its own uploads, and now the empty state too — so the header button is for every
+  // OTHER tab, where going back to CAD would otherwise mean hunting for the right one.
+  btn.hidden = currentTab === "cutplan";
 }
 
 /* Opens the file picker and NOTHING else. This used to switch to Cut plan first, so that the

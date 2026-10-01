@@ -279,29 +279,31 @@
       <h2 id="liftsHeading" class="panel__heading">Lifts</h2>
       <div class="tabs-wrap">
       <div class="tabs" role="tablist" aria-label="Lift view">
-        <button type="button" class="tab is-active" id="tabTakeoff" role="tab" aria-selected="true">
+        <button type="button" class="tab is-active" id="tabCutPlan" role="tab" aria-selected="true">
+          <svg class="tab__icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 13 8 3l6 10z"/><path d="M2 9.2h12" stroke-dasharray="1.6 1.8"/></svg>
+          Cut plan &amp; extents
+        </button>
+        <button type="button" class="tab" id="tabTakeoff" role="tab" aria-selected="false">
           <svg class="tab__icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M1.5 6.7h13M6.2 2.5v11"/></svg>
           Takeoff table
-        </button>
-        <button type="button" class="tab" id="tabSequence" role="tab" aria-selected="false">
-          <svg class="tab__icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.3 3h9.2M4.3 8h9.2M4.3 13h9.2"/><circle cx="1.7" cy="3" r="1"/><circle cx="1.7" cy="8" r="1"/><circle cx="1.7" cy="13" r="1"/></svg>
-          Installation sequence
-        </button>
-        <button type="button" class="tab" id="tabCutPlan" role="tab" aria-selected="false">
-          <svg class="tab__icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 13 8 3l6 10z"/><path d="M2 9.2h12" stroke-dasharray="1.6 1.8"/></svg>
-          Cut plan
         </button>
         <button type="button" class="tab" id="tab3D" role="tab" aria-selected="false">
           <svg class="tab__icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.5 14 5v6l-6 3.5L2 11V5z"/><path d="M2 5l6 3.5 6-3.5M8 8.5v6"/></svg>
           3D view
         </button>
-        <button type="button" class="tab" id="tabRolls" role="tab" aria-selected="false">
-          <svg class="tab__icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="8" cy="3.2" rx="5.5" ry="1.9"/><path d="M2.5 3.2v8.8c0 1.05 2.46 1.9 5.5 1.9s5.5-.85 5.5-1.9V3.2"/></svg>
-          Roll schedule
-        </button>
         <button type="button" class="tab" id="tabLiner" role="tab" aria-selected="false">
           <svg class="tab__icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.8 14.5 5 8 8.2 1.5 5z"/><path d="M1.5 8.2 8 11.4l6.5-3.2M1.5 11.2 8 14.4l6.5-3.2"/></svg>
           Landfill liner
+        </button>
+        <span class="tabs__spacer" aria-hidden="true"></span>
+        <span class="tabs__group" aria-hidden="true"><span class="tabs__group-text">For site</span></span>
+        <button type="button" class="tab" id="tabSequence" role="tab" aria-selected="false">
+          <svg class="tab__icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.3 3h9.2M4.3 8h9.2M4.3 13h9.2"/><circle cx="1.7" cy="3" r="1"/><circle cx="1.7" cy="8" r="1"/><circle cx="1.7" cy="13" r="1"/></svg>
+          Installation sequence
+        </button>
+        <button type="button" class="tab" id="tabRolls" role="tab" aria-selected="false">
+          <svg class="tab__icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="8" cy="3.2" rx="5.5" ry="1.9"/><path d="M2.5 3.2v8.8c0 1.05 2.46 1.9 5.5 1.9s5.5-.85 5.5-1.9V3.2"/></svg>
+          Roll schedule
         </button>
       </div>
       </div>
@@ -316,7 +318,7 @@
 
     <div id="rowWarnings" class="row-warnings" hidden></div>
 
-    <div id="takeoffView">
+    <div id="takeoffView" hidden>
       <div class="table-scroll" id="liftTableWrap">
         <table id="liftTable" class="lift-table">
           <thead>
@@ -333,17 +335,6 @@
           <tbody id="liftTableBody"></tbody>
         </table>
       </div>
-      <div id="emptyState" class="empty-state empty-state--start">
-        <div id="dxfDropZone" class="dropzone">
-          <svg class="dropzone__icon" viewBox="0 0 24 24" width="38" height="38" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M12 3v11" /><path d="M8 6.8 12 3l4 3.8" />
-            <path d="M3.5 14.5v4a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-4" />
-          </svg>
-          <h3 class="dropzone__title">Start with your lift extents</h3>
-          <p class="dropzone__sub">One outline per lift, straight out of CAD — a polyline, a block, or separate lines that meet. GeoMate finds the boundary and lays the strips inside it.</p>
-          <button id="emptyUploadBtn" class="btn btn--primary btn--lg" type="button">Choose a DXF file</button>
-          <p class="dropzone__drop">or drop it anywhere in this panel</p>
-        </div>
         <p class="empty-state__alt">
           <span>No drawing yet?</span>
           <button id="loadSampleBtn" class="btn btn--link" type="button">Load the sample project</button>
@@ -367,7 +358,18 @@
       <ol id="sequenceList" class="sequence-list"></ol>
     </div>
 
-    <div id="cutPlanView" class="cutplan-view" hidden>
+    <div id="cutPlanView" class="cutplan-view">
+        <div id="emptyState" class="empty-state empty-state--start">
+          <div id="dxfDropZone" class="dropzone">
+            <svg class="dropzone__icon" viewBox="0 0 24 24" width="38" height="38" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 3v11" /><path d="M8 6.8 12 3l4 3.8" />
+              <path d="M3.5 14.5v4a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-4" />
+            </svg>
+            <h3 class="dropzone__title">Start with your lift extents</h3>
+            <p class="dropzone__sub">One outline per lift, straight out of CAD — a polyline, a block, or separate lines that meet. GeoMate finds the boundary and lays the strips inside it.</p>
+            <button id="emptyUploadBtn" class="btn btn--primary btn--lg" type="button">Choose a DXF file</button>
+            <p class="dropzone__drop">or drop it anywhere in this panel</p>
+          </div>
       <div class="cutplan-intro">
         <div class="cutplan-methods">
           <div class="cutplan-method">
