@@ -285,6 +285,30 @@ These come from the user directly. Violating them makes output wrong on site.
    back with our own parser, which is too lenient to prove anything about
    AutoCAD: 0 errors, 0 fixes, every polyline closed and flat.
 
+   **One document writer, `dxfDoc()`.** There were three copies of the header,
+   the three tables and the 3D polyline, and they had already drifted: the 3D
+   view's wrote layers naming `CONTINUOUS` and text naming `STANDARD` without
+   defining either table, and had no `$EXTMIN`/`$EXTMAX`, so zoom-extents framed
+   nothing. Geometry goes into a document; the document spells itself. Each
+   export is then a `write*Geometry` call, which is what lets one file hold more
+   than one of them.
+
+   **`buildEverythingDxf` is the "export all output back to CAD" button.** Cut
+   plan plus liner, both at the coordinates they arrived on. It deliberately
+   leaves out the 3D view's lift stack: that draws `r.footprint`, which is in the
+   view's own front-on frame, and dropping it in would put the lifts somewhere
+   else entirely in space. Nothing is lost — the same boundary is already there
+   as `EXT_RL_x`, in real coordinates. Because both halves keep their own
+   coordinates, a cut plan from one job and a cell from another make a valid file
+   that opens looking empty; the gap between the two bounding boxes is measured
+   and the button says so (5,264 km on the pair in the scratch directory) rather
+   than leaving someone to work out why.
+
+   Proof the extraction moved nothing: export each of the three files before and
+   after, read both with `ezdxf`, and compare every entity's layer, closed flag
+   and rounded vertices. All three identical; the combined file is exactly
+   1069 + 234 = 1303 entities with both halves intact and no layer collisions.
+
 - **An error about a file says what is IN the file.** Twice now the unhelpful
   version has been reported as a bug in the app: *"no closed polylines found"*
   on a drawing that was plainly closed, and *"No 3DFACE triangles found in that

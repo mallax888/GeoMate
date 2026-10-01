@@ -7571,6 +7571,142 @@ function project3D(x, y, z, yaw, pitch) {
 const DXF_LAYER_COLORS = [1, 2, 3, 4, 5, 6, 8, 9];
 
 /**
+ * ONE DXF document, written once.
+ *
+ * There used to be three copies of this — the cut plan's, the 3D view's and the liner's — each with
+ * its own group-code spelling of the same header, the same three tables and the same 3D polyline.
+ * Three copies meant three places to get a group code wrong, and they had already drifted: the 3D
+ * view's wrote layers naming CONTINUOUS and a header naming STANDARD without ever defining either
+ * table, and had no $EXTMIN/$EXTMAX, so "zoom extents" on open framed nothing. That is the kind of
+ * thing one reader shrugs at and the next one refuses.
+ *
+ * More to the point, nothing could write a file holding more than one of them, which is what
+ * "export everything to CAD" needs. Geometry now goes into a document; the document knows how to
+ * spell itself.
+ *
+ * R12 (AC1009) — the plainest ASCII dialect every CAD package reads.
+ */
+function dxfDoc() {
+  const layers = [];
+  const ents = [];
+  const ent = (code, value) => ents.push(String(code), String(value));
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  let minZ = Infinity, maxZ = -Infinity;
+  const seen = (x, y, z) => {
+    minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+    minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+  };
+
+  return {
+    /** Declares a layer once, whoever asks and however often. Returns the name, so call sites read
+     *  as `doc.polyline(doc.layer("OUTLINE", 7), ...)`. */
+    layer(name, color) {
+      if (!layers.some((l) => l.name === name)) layers.push({ name, color });
+      return name;
+    },
+
+    /**
+     * Flag 70 = 9 for closed, 8 for open (bit 3 "3D polyline"), and each VERTEX carries the matching
+     * 3D flag 32. Plain 2D-polyline flags would let a stricter reader flatten every vertex onto one
+     * plane instead of keeping each lift at its own RL — which is the whole point of the file.
+     *
+     * `z` fixes every vertex at one level (a lift lies flat at its RL); leave it out and each point
+     * carries its own, which is what a draped panel on a batter needs.
+     */
+    polyline(layer, pts, { closed = true, z = null } = {}) {
+      ent(0, "POLYLINE"); ent(8, layer); ent(66, 1); ent(70, closed ? 9 : 8);
+      pts.forEach((p) => {
+        const pz = z !== null ? z : p.z || 0;
+        ent(0, "VERTEX"); ent(8, layer);
+        ent(10, p.x.toFixed(4)); ent(20, p.y.toFixed(4)); ent(30, pz.toFixed(4));
+        ent(70, 32);
+        seen(p.x, p.y, pz);
+      });
+      ent(0, "SEQEND"); ent(8, layer);
+    },
+
+    /**
+     * Group codes in the order AutoCAD itself writes TEXT. Readers are mostly order-tolerant, but
+     * this is the file's whole reason for existing — it is not the place to find out which ones are
+     * not. 72 = centred, 73 = middle, and those two only take effect when the second alignment point
+     * (11/21/31) is present; without it the insertion point is the baseline-left corner and every
+     * label sits off to one side of the thing it labels.
+     */
+    text(layer, at, label, height, rot) {
+      const z = at.z || 0;
+      ent(0, "TEXT"); ent(8, layer);
+      ent(10, at.x.toFixed(4)); ent(20, at.y.toFixed(4)); ent(30, z.toFixed(4));
+      ent(40, height.toFixed(3));
+      ent(1, label);
+      ent(50, rot.toFixed(2));
+      ent(7, "STANDARD");
+      ent(72, 1);
+      ent(11, at.x.toFixed(4)); ent(21, at.y.toFixed(4)); ent(31, z.toFixed(4));
+      ent(73, 2);
+    },
+
+    /** Whether anything has actually been drawn — an empty file is worth refusing to write. */
+    get isEmpty() {
+      return ents.length === 0;
+    },
+
+    /** What has been drawn so far, in plan. Snapshot it between two halves of a file and you can
+     *  tell whether they are anywhere near each other. */
+    bounds() {
+      return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : null;
+    },
+
+    toText() {
+      const lines = [];
+      const put = (code, value) => lines.push(String(code), String(value));
+      const bounded = Number.isFinite(minX);
+
+      put(0, "SECTION"); put(2, "HEADER");
+      put(9, "$ACADVER"); put(1, "AC1009");
+      if (bounded) {
+        put(9, "$EXTMIN"); put(10, minX.toFixed(4)); put(20, minY.toFixed(4)); put(30, minZ.toFixed(4));
+        put(9, "$EXTMAX"); put(10, maxX.toFixed(4)); put(20, maxY.toFixed(4)); put(30, maxZ.toFixed(4));
+      }
+      put(0, "ENDSEC");
+
+      // LTYPE before LAYER, and STYLE after — the order AutoCAD writes them, and layers reference a
+      // linetype so it has to be defined by the time they are read. Both tables exist only because
+      // the entities name CONTINUOUS and STANDARD: a file that references a table entry it never
+      // defines is exactly the sort of thing that opens in one package and not the next.
+      put(0, "SECTION"); put(2, "TABLES");
+
+      put(0, "TABLE"); put(2, "LTYPE"); put(70, 1);
+      put(0, "LTYPE"); put(2, "CONTINUOUS"); put(70, 0); put(3, "Solid line"); put(72, 65); put(73, 0); put(40, "0.0");
+      put(0, "ENDTAB");
+
+      put(0, "TABLE"); put(2, "LAYER"); put(70, layers.length);
+      layers.forEach(({ name, color }) => {
+        put(0, "LAYER"); put(2, name); put(70, 0); put(62, color); put(6, "CONTINUOUS");
+      });
+      put(0, "ENDTAB");
+
+      put(0, "TABLE"); put(2, "STYLE"); put(70, 1);
+      put(0, "STYLE"); put(2, "STANDARD"); put(70, 0);
+      put(40, "0.0"); put(41, "1.0"); put(50, "0.0"); put(71, 0); put(42, "0.2");
+      put(3, "txt"); put(4, "");
+      put(0, "ENDTAB");
+
+      put(0, "ENDSEC");
+
+      put(0, "SECTION"); put(2, "ENTITIES");
+      // NOT lines.push(...ents): every element becomes an argument, and a draped layout runs to
+      // hundreds of thousands of them — which overflows the call stack rather than failing politely.
+      for (const v of ents) lines.push(v);
+      put(0, "ENDSEC");
+      put(0, "EOF");
+
+      return lines.join("\r\n") + "\r\n";
+    },
+  };
+}
+
+/**
  * DXF R12 (AC1009, the plainest ASCII dialect every CAD package reads) export of the current 3D
  * view's stack: one closed 3D POLYLINE per lift, on its own layer, at its own RL. Deliberately reuses
  * the exact same footprint geometry render3D() already draws — same shared frame, same simplifications
@@ -7584,41 +7720,15 @@ function buildLiftsDxf(results) {
     .sort((a, b) => a.rl - b.rl);
   if (!lifts.length) return null;
 
-  const lines = [];
-  const put = (code, value) => lines.push(String(code), String(value));
-
-  put(0, "SECTION"); put(2, "HEADER");
-  put(9, "$ACADVER"); put(1, "AC1009");
-  put(0, "ENDSEC");
-
-  const layerNames = lifts.map((lift, i) => `GRID_RL_${String(lift.rlLabel).replace(/[^A-Za-z0-9_.-]+/g, "_")}`);
-
-  put(0, "SECTION"); put(2, "TABLES");
-  put(0, "TABLE"); put(2, "LAYER"); put(70, lifts.length);
-  layerNames.forEach((name, i) => {
-    put(0, "LAYER"); put(2, name); put(70, 0);
-    put(62, DXF_LAYER_COLORS[i % DXF_LAYER_COLORS.length]); put(6, "CONTINUOUS");
-  });
-  put(0, "ENDTAB"); put(0, "ENDSEC");
-
-  put(0, "SECTION"); put(2, "ENTITIES");
+  const doc = dxfDoc();
   lifts.forEach((lift, i) => {
-    const layer = layerNames[i];
-    // Flag 70 = 9 (bit 0 "closed" + bit 3 "3D polyline"); each VERTEX carries the matching
-    // "3D polyline vertex" flag (32) — plain 2D-polyline flags here would silently flatten every
-    // vertex onto one plane in stricter readers instead of keeping each lift at its own RL.
-    put(0, "POLYLINE"); put(8, layer); put(66, 1); put(70, 9);
-    lift.footprint.forEach((p) => {
-      put(0, "VERTEX"); put(8, layer);
-      put(10, p.x.toFixed(4)); put(20, p.y.toFixed(4)); put(30, lift.rl.toFixed(4));
-      put(70, 32);
-    });
-    put(0, "SEQEND"); put(8, layer);
+    const layer = doc.layer(
+      `GRID_RL_${String(lift.rlLabel).replace(/[^A-Za-z0-9_.-]+/g, "_")}`,
+      DXF_LAYER_COLORS[i % DXF_LAYER_COLORS.length]
+    );
+    doc.polyline(layer, lift.footprint, { z: lift.rl });
   });
-  put(0, "ENDSEC");
-
-  put(0, "EOF");
-  return lines.join("\r\n") + "\r\n";
+  return doc.toText();
 }
 
 /* One way of saving a file. The blob/anchor/click/revoke dance had been copied next to the CSV
@@ -7665,52 +7775,26 @@ function fileStem(fallback) {
  * an embedment, with no survey coordinates anywhere to put it on. The caller reports how many were
  * left out rather than silently writing a short file.
  */
-function buildCutPlanDxf(results, rollLookup) {
-  const lifts = results
+/** The lifts a cut plan can be written for: planned from real extents, so they have coordinates. */
+function cutPlanLifts(results) {
+  return results
     .filter((r) => r.cutPlan && r.cutPlan.cornerSegments && r.cutPlan.poly && Number.isFinite(parseFloat(r.rl)))
     .map((r) => ({ r, rl: parseFloat(r.rl), rlLabel: String(r.rl) }))
     .sort((a, b) => a.rl - b.rl);
-  if (!lifts.length) return null;
+}
 
-  const lines = [];
-  const put = (code, value) => lines.push(String(code), String(value));
-  const layers = [];
-  const layerFor = (kind, rlLabel, color) => {
-    const name = `${kind}_RL_${rlLabel.replace(/[^A-Za-z0-9_.-]+/g, "_")}`;
-    if (!layers.some((l) => l.name === name)) layers.push({ name, color });
-    return name;
-  };
-
-  // Written as the entities are built, so "zoom extents" frames the job on open.
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
-  const seen = (p, z) => {
-    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
-    minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
-    minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
-  };
-
-  const entities = [];
-  const ent = (code, value) => entities.push(String(code), String(value));
-  const closedPolyline = (layer, pts, z) => {
-    // Flag 70 = 9 (bit 0 "closed" + bit 3 "3D polyline"), and each VERTEX carries the matching 3D
-    // flag 32 — plain 2D-polyline flags would let a stricter reader flatten every lift onto one
-    // plane instead of keeping each at its own RL.
-    ent(0, "POLYLINE"); ent(8, layer); ent(66, 1); ent(70, 9);
-    pts.forEach((p) => {
-      ent(0, "VERTEX"); ent(8, layer);
-      ent(10, p.x.toFixed(4)); ent(20, p.y.toFixed(4)); ent(30, z.toFixed(4));
-      ent(70, 32);
-      seen(p, z);
-    });
-    ent(0, "SEQEND"); ent(8, layer);
-  };
+/** Draws the cut plan into a document. Separate from the file it usually becomes, so the combined
+ *  export can put it in a document alongside the liner instead of in one of its own. */
+function writeCutPlanGeometry(doc, lifts, rollLookup) {
+  const layerFor = (kind, rlLabel, color) =>
+    doc.layer(`${kind}_RL_${rlLabel.replace(/[^A-Za-z0-9_.-]+/g, "_")}`, color);
 
   lifts.forEach(({ r, rl, rlLabel }, liftIdx) => {
     const color = DXF_LAYER_COLORS[liftIdx % DXF_LAYER_COLORS.length];
     const quads = stripWorldQuads(r.cutPlan);
     const rollNums = rollLookup ? stripRollNumbersFor(r, rollLookup) : null;
 
-    closedPolyline(layerFor("EXT", rlLabel, 8), r.cutPlan.poly, rl);
+    doc.polyline(layerFor("EXT", rlLabel, 8), r.cutPlan.poly, { z: rl });
 
     const gridLayer = layerFor("GRID", rlLabel, color);
     const patchLayer = layerFor("PATCH", rlLabel, color);
@@ -7719,74 +7803,38 @@ function buildCutPlanDxf(results, rollLookup) {
     quads.forEach((q, i) => {
       // Corner order walks the strip: near edge left→right, far edge right→left, so the polyline
       // closes as the rectangle it is rather than crossing itself into a bow tie.
-      closedPolyline(gridLayer, [q.nearLeft, q.nearRight, q.farRight, q.farLeft], rl);
-      q.stitchQuads.forEach((s) => closedPolyline(patchLayer, [s.nearLeft, s.nearRight, s.farRight, s.farLeft], rl));
+      doc.polyline(gridLayer, [q.nearLeft, q.nearRight, q.farRight, q.farLeft], { z: rl });
+      q.stitchQuads.forEach((s) =>
+        doc.polyline(patchLayer, [s.nearLeft, s.nearRight, s.farRight, s.farLeft], { z: rl })
+      );
 
-      const mid = { x: (q.centerNear.x + q.farCenter.x) / 2, y: (q.centerNear.y + q.farCenter.y) / 2 };
+      const mid = { x: (q.centerNear.x + q.farCenter.x) / 2, y: (q.centerNear.y + q.farCenter.y) / 2, z: rl };
       // stripRollNumbersFor hands back an already-joined string ("3" or "3,4"), not a list.
       const roll = rollNums && rollNums[i] ? ` R${rollNums[i]}` : "";
-      const label = `${i + 1}  ${q.length.toFixed(2)}m${roll}`;
       // Rotated to read along the strip rather than across it, and kept the right way up: past
       // vertical a label reads upside down, so it is flipped back through 180°.
       let rot = (Math.atan2(q.dir.y, q.dir.x) * 180) / Math.PI;
       if (rot > 90 || rot <= -90) rot += 180;
-      const height = Math.max(0.12, Math.min(0.45, q.width * 0.22));
-      // Group codes in the order AutoCAD itself writes TEXT. Readers are mostly order-tolerant, but
-      // this is the file's whole reason for existing — it is not the place to find out which ones
-      // are not. 72 = centred, 73 = middle, and those two only take effect when the second
-      // alignment point (11/21/31) is present; without it the insertion point is the baseline-left
-      // corner and every label sits off to one side of its strip.
-      ent(0, "TEXT"); ent(8, textLayer);
-      ent(10, mid.x.toFixed(4)); ent(20, mid.y.toFixed(4)); ent(30, rl.toFixed(4));
-      ent(40, height.toFixed(3));
-      ent(1, label);
-      ent(50, rot.toFixed(2));
-      ent(7, "STANDARD");
-      ent(72, 1);
-      ent(11, mid.x.toFixed(4)); ent(21, mid.y.toFixed(4)); ent(31, rl.toFixed(4));
-      ent(73, 2);
+      doc.text(
+        textLayer,
+        mid,
+        `${i + 1}  ${q.length.toFixed(2)}m${roll}`,
+        Math.max(0.12, Math.min(0.45, q.width * 0.22)),
+        rot
+      );
     });
   });
+}
 
-  put(0, "SECTION"); put(2, "HEADER");
-  put(9, "$ACADVER"); put(1, "AC1009");
-  put(9, "$EXTMIN"); put(10, minX.toFixed(4)); put(20, minY.toFixed(4)); put(30, minZ.toFixed(4));
-  put(9, "$EXTMAX"); put(10, maxX.toFixed(4)); put(20, maxY.toFixed(4)); put(30, maxZ.toFixed(4));
-  put(0, "ENDSEC");
+function buildCutPlanDxf(results, rollLookup) {
+  const lifts = cutPlanLifts(results);
+  if (!lifts.length) return null;
 
-  // LTYPE before LAYER, and STYLE after — the order AutoCAD writes them, and layers reference a
-  // linetype so it has to be defined by the time they are read. Both tables exist only because the
-  // entities name CONTINUOUS and STANDARD: a file that references a table entry it never defines is
-  // the kind of thing one reader shrugs at and the next one refuses.
-  put(0, "SECTION"); put(2, "TABLES");
-
-  put(0, "TABLE"); put(2, "LTYPE"); put(70, 1);
-  put(0, "LTYPE"); put(2, "CONTINUOUS"); put(70, 0); put(3, "Solid line"); put(72, 65); put(73, 0); put(40, "0.0");
-  put(0, "ENDTAB");
-
-  put(0, "TABLE"); put(2, "LAYER"); put(70, layers.length);
-  layers.forEach(({ name, color }) => {
-    put(0, "LAYER"); put(2, name); put(70, 0); put(62, color); put(6, "CONTINUOUS");
-  });
-  put(0, "ENDTAB");
-
-  put(0, "TABLE"); put(2, "STYLE"); put(70, 1);
-  put(0, "STYLE"); put(2, "STANDARD"); put(70, 0);
-  put(40, "0.0"); put(41, "1.0"); put(50, "0.0"); put(71, 0); put(42, "0.2");
-  put(3, "txt"); put(4, "");
-  put(0, "ENDTAB");
-
-  put(0, "ENDSEC");
-
-  put(0, "SECTION"); put(2, "ENTITIES");
-  // NOT lines.push(...arr): every element becomes an argument, and a draped layout runs to hundreds
-  // of thousands of them — which overflows the call stack rather than failing politely.
-  for (const v of entities) lines.push(v);
-  put(0, "ENDSEC");
-  put(0, "EOF");
+  const doc = dxfDoc();
+  writeCutPlanGeometry(doc, lifts, rollLookup);
 
   return {
-    text: lines.join("\r\n") + "\r\n",
+    text: doc.toText(),
     lifts: lifts.length,
     strips: lifts.reduce((n, { r }) => n + r.cutPlan.cutLengths.length, 0),
     skipped: results.length - lifts.length,
@@ -8379,8 +8427,53 @@ document.getElementById("exportBtn").addEventListener("click", () => {
   downloadFile(`${project.replace(/[^a-z0-9-_]+/gi, "_")}.csv`, lines.join("\n"), "text/csv;charset=utf-8;");
 });
 
-/* The cut plan as CAD geometry rather than a picture of it. The note under the button covers DWG:
- * see buildCutPlanDxf for what actually goes in the file. */
+/* "Can I export all output back to CAD? Is there a button." There is now, and this is it: one file
+ * holding every piece of geometry the app has a real position for. See buildEverythingDxf for what
+ * goes in and, just as importantly, what deliberately does not. */
+{
+  const btn = document.getElementById("exportAllDxfBtn");
+  const note = document.getElementById("exportAllDxfNote");
+  if (btn && note) {
+    btn.addEventListener("click", () => {
+      const built = buildEverythingDxf(
+        window.__geogridResults || [],
+        buildRollLookup(window.__geogridRolls || []),
+        baseGridSurface,
+        baseGridPlanResult
+      );
+      if (!built) {
+        // Say which of the three reasons it is. "Nothing happened" on a button is the least useful
+        // answer available, and this one can be empty for genuinely different reasons.
+        note.textContent = (window.__geogridResults || []).length
+          ? "Nothing with survey coordinates yet — these lifts were typed in by hand, so there is nowhere on the ground to put them. Upload the lift extents DXF, or a cell surface on the Landfill liner tab."
+          : "Nothing to export yet — load your lift extents, or a cell surface on the Landfill liner tab.";
+        note.classList.add("is-error");
+        return;
+      }
+      downloadFile(`${fileStem("geomate")}_all.dxf`, built.text, "application/dxf");
+      note.classList.remove("is-error");
+      // What actually went in the file, not what the button promises — a job with no cell loaded
+      // should not be told its liner was exported.
+      const parts = [];
+      if (built.lifts) parts.push(`${built.strips} strips across ${built.lifts} lift${built.lifts === 1 ? "" : "s"}`);
+      if (built.panels) parts.push(`${built.panels} liner panels and ${fmt.int(built.weld)} m of weld`);
+      // Far apart means two different jobs' coordinates in one file: still correct, but it opens
+      // looking empty, and that is worth a word rather than a puzzle.
+      const apart =
+        built.apart > 1000
+          ? ` <strong>Note:</strong> the cut plan and the cell sit ${fmt.int(built.apart / 1000)} km apart — they are on different coordinate systems, so zoom to each separately.`
+          : "";
+      note.innerHTML =
+        `Exported ${parts.join(", plus ")}` +
+        (built.skipped ? `, leaving out ${built.skipped} hand-typed lift${built.skipped === 1 ? "" : "s"} with no survey coordinates` : "") +
+        ". Opens straight in Civil 3D — <strong>Save As</strong> there to get a DWG." +
+        apart;
+    });
+  }
+}
+
+/* The cut plan on its own, for when that is all anyone wants to hand over. The note under the button
+ * covers DWG: see buildCutPlanDxf for what actually goes in the file. */
 {
   const btn = document.getElementById("exportCutPlanDxfBtn");
   const note = document.getElementById("exportCutPlanDxfNote");
@@ -9611,27 +9704,8 @@ Object.values(baseGridInputs).forEach((el) => {
  *   PANEL_CL      each run's centreline, draped over the surface — the line to set out from
  *   PANEL_TEXT    panel number and its length over the ground
  */
-function buildBaseGridDxf(surface, plan) {
-  if (!surface || !plan) return null;
-  const lines = [];
-  const put = (code, value) => lines.push(String(code), String(value));
-  const ents = [];
-  const ent = (code, value) => ents.push(String(code), String(value));
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  let minZ = Infinity, maxZ = -Infinity;
-
-  const poly3d = (layer, pts, closed) => {
-    ent(0, "POLYLINE"); ent(8, layer); ent(66, 1); ent(70, closed ? 9 : 8);
-    pts.forEach((p) => {
-      ent(0, "VERTEX"); ent(8, layer);
-      ent(10, p.x.toFixed(4)); ent(20, p.y.toFixed(4)); ent(30, (p.z || 0).toFixed(4));
-      ent(70, 32);
-      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
-      minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
-      minZ = Math.min(minZ, p.z || 0); maxZ = Math.max(maxZ, p.z || 0);
-    });
-    ent(0, "SEQEND"); ent(8, layer);
-  };
+function writeLinerGeometry(doc, surface, plan) {
+  const poly3d = (layer, pts, closed) => doc.polyline(layer, pts, { closed });
 
   const tin = makeTinIndex(surface.triangles);
 
@@ -9662,13 +9736,19 @@ function buildBaseGridDxf(surface, plan) {
     return pts;
   };
 
+  const OUTLINE = doc.layer("OUTLINE", 7);
+  const PANEL_EDGES = doc.layer("PANEL_EDGES", 3);
+  const PANEL_CL = doc.layer("PANEL_CL", 1);
+  const PANEL_TEXT = doc.layer("PANEL_TEXT", 2);
+  const WELD_HINGE = doc.layer("WELD_HINGE", 6);
+
   // Outline vertices are triangle corners, so they already carry their own true level — no lookup.
-  poly3d("OUTLINE", surface.outline.map((p) => ({ x: p.x, y: p.y, z: p.z || 0 })), true);
+  poly3d(OUTLINE, surface.outline.map((p) => ({ x: p.x, y: p.y, z: p.z || 0 })), true);
 
   // Every change of grade, on its own layer: this is where the grid is cut and welded to the strip
   // on the next plane, and it is a costed length, so it goes in the drawing as geometry to measure.
   (plan.hinges ? plan.hinges.segments : []).forEach((seg) => {
-    poly3d("WELD_HINGE", [
+    poly3d(WELD_HINGE, [
       { x: seg.a.x, y: seg.a.y, z: seg.a.z || 0 },
       { x: seg.b.x, y: seg.b.y, z: seg.b.z || 0 },
     ], false);
@@ -9685,56 +9765,102 @@ function buildBaseGridDxf(surface, plan) {
       const side = drapeEdge(a, b, z.plane);
       ring.push(...side.slice(0, -1));
     }
-    if (ring.length >= 3) poly3d("PANEL_EDGES", ring, true);
-    if (p.path.length >= 2) poly3d("PANEL_CL", p.path, false);
+    if (ring.length >= 3) poly3d(PANEL_EDGES, ring, true);
+    if (p.path.length >= 2) poly3d(PANEL_CL, p.path, false);
 
     const mid = p.path.length
       ? p.path[Math.floor(p.path.length / 2)]
       : { x: p.start.x, y: p.start.y, z: z.plane ? z.plane.zAt(p.start.x, p.start.y) : 0 };
     let rot = (Math.atan2(z.plan.dir.y, z.plan.dir.x) * 180) / Math.PI;
     if (rot > 90 || rot <= -90) rot += 180;
-    const label = `${p.n}  ${p.draped.toFixed(1)}m`;
-    ent(0, "TEXT"); ent(8, "PANEL_TEXT");
-    ent(10, mid.x.toFixed(4)); ent(20, mid.y.toFixed(4)); ent(30, (mid.z || 0).toFixed(4));
-    ent(40, Math.max(0.3, Math.min(1.5, plan.rollWidth * 0.18)).toFixed(3));
-    ent(1, label);
-    ent(50, rot.toFixed(2));
-    ent(7, "STANDARD");
-    ent(72, 1);
-    ent(11, mid.x.toFixed(4)); ent(21, mid.y.toFixed(4)); ent(31, (mid.z || 0).toFixed(4));
-    ent(73, 2);
+    doc.text(
+      PANEL_TEXT,
+      mid,
+      `${p.n}  ${p.draped.toFixed(1)}m`,
+      Math.max(0.3, Math.min(1.5, plan.rollWidth * 0.18)),
+      rot
+    );
   });
   });
+}
 
-  put(0, "SECTION"); put(2, "HEADER");
-  put(9, "$ACADVER"); put(1, "AC1009");
-  put(9, "$EXTMIN"); put(10, minX.toFixed(4)); put(20, minY.toFixed(4)); put(30, minZ.toFixed(4));
-  put(9, "$EXTMAX"); put(10, maxX.toFixed(4)); put(20, maxY.toFixed(4)); put(30, maxZ.toFixed(4));
-  put(0, "ENDSEC");
+function buildBaseGridDxf(surface, plan) {
+  if (!surface || !plan) return null;
+  const doc = dxfDoc();
+  writeLinerGeometry(doc, surface, plan);
+  return doc.toText();
+}
 
-  put(0, "SECTION"); put(2, "TABLES");
-  put(0, "TABLE"); put(2, "LTYPE"); put(70, 1);
-  put(0, "LTYPE"); put(2, "CONTINUOUS"); put(70, 0); put(3, "Solid line"); put(72, 65); put(73, 0); put(40, "0.0");
-  put(0, "ENDTAB");
-  const layers = [["OUTLINE", 7], ["PANEL_EDGES", 3], ["PANEL_CL", 1], ["PANEL_TEXT", 2], ["WELD_HINGE", 6]];
-  put(0, "TABLE"); put(2, "LAYER"); put(70, layers.length);
-  layers.forEach(([name, colour]) => {
-    put(0, "LAYER"); put(2, name); put(70, 0); put(62, colour); put(6, "CONTINUOUS");
-  });
-  put(0, "ENDTAB");
-  put(0, "TABLE"); put(2, "STYLE"); put(70, 1);
-  put(0, "STYLE"); put(2, "STANDARD"); put(70, 0);
-  put(40, "0.0"); put(41, "1.0"); put(50, "0.0"); put(71, 0); put(42, "0.2"); put(3, "txt"); put(4, "");
-  put(0, "ENDTAB");
-  put(0, "ENDSEC");
+/**
+ * EVERYTHING THE APP KNOWS THAT HAS A PLACE ON THE GROUND, in one file.
+ *
+ * Both halves are already in the survey coordinates they arrived on, so they can share a document
+ * without either being moved: the cut plan on its RL-named layers, the liner on its own five. Open
+ * it over the design and every strip, panel, centreline and weld is a real polyline to snap to.
+ *
+ *   EXT_RL_x / GRID_RL_x / PATCH_RL_x / TEXT_RL_x    per lift — boundary, strips, patches, labels
+ *   OUTLINE / PANEL_EDGES / PANEL_CL / PANEL_TEXT    the cell and its panels
+ *   WELD_HINGE                                       every change of grade, as a costed length
+ *
+ * WHAT IS DELIBERATELY NOT IN HERE: the 3D view's lift stack. That export draws r.footprint, which
+ * lives in the view's own frame — all lifts rotated front-on and shared, which is what makes the
+ * stack readable on screen and exactly what makes it wrong next to real coordinates. Dropping it in
+ * would land the lifts somewhere else entirely in space. Nothing is lost by leaving it out: the same
+ * boundary is already here as EXT_RL_x, in the coordinates it actually has. Hand-typed lifts have no
+ * survey position at all — a face length and an embedment is not a location — so they are counted as
+ * skipped rather than invented.
+ */
+function buildEverythingDxf(results, rollLookup, surface, plan) {
+  const doc = dxfDoc();
+  const lifts = cutPlanLifts(results || []);
+  if (lifts.length) writeCutPlanGeometry(doc, lifts, rollLookup);
+  const afterCutPlan = doc.bounds();
 
-  put(0, "SECTION"); put(2, "ENTITIES");
-  // NOT lines.push(...arr): every element becomes an argument, and a draped layout runs to hundreds
-  // of thousands of them — which overflows the call stack rather than failing politely.
-  for (const v of ents) lines.push(v);
-  put(0, "ENDSEC");
-  put(0, "EOF");
-  return lines.join("\r\n") + "\r\n";
+  const hasLiner = !!(surface && plan);
+  if (hasLiner) writeLinerGeometry(doc, surface, plan);
+
+  if (doc.isEmpty) return null;
+
+  /* ARE THESE TWO THINGS EVEN THE SAME JOB?
+   *
+   * Both halves go in at the coordinates they arrived on, which is right — moving survey geometry
+   * to make a file look tidier is how a drawing ends up in the wrong place on site. But it means a
+   * cut plan from one job and a cell surface from another produce a perfectly valid file whose
+   * "zoom extents" is two specks a thousand kilometres apart, and which looks empty at any useful
+   * scale. Measured on exactly that mistake: a local-grid cut plan at (407k, 854k) and a cell on a
+   * national grid at (1752k, 5944k).
+   *
+   * So the distance between them is measured and handed back, and the button says so. The file is
+   * still written — the geometry is correct and the user may well know why — but nobody has to work
+   * out for themselves why their drawing opened empty.
+   */
+  let apart = 0;
+  if (afterCutPlan && hasLiner && surface.outline && surface.outline.length) {
+    // The cell's own box comes from its outline rather than from the document, which by this point
+    // holds BOTH halves and so always overlaps itself. The outline is the cell's plan extent; a
+    // panel may overhang it by a roll width, which is nothing against the distance being tested for.
+    const cell = surface.outline.reduce(
+      (b, p) => ({ minX: Math.min(b.minX, p.x), maxX: Math.max(b.maxX, p.x), minY: Math.min(b.minY, p.y), maxY: Math.max(b.maxY, p.y) }),
+      { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity }
+    );
+    // Gap between the two boxes on each axis, zero where they overlap.
+    const gap = (aMin, aMax, bMin, bMax) => Math.max(0, bMin - aMax, aMin - bMax);
+    apart = Math.hypot(
+      gap(afterCutPlan.minX, afterCutPlan.maxX, cell.minX, cell.maxX),
+      gap(afterCutPlan.minY, afterCutPlan.maxY, cell.minY, cell.maxY)
+    );
+  }
+
+  const panels = hasLiner ? plan.zones.reduce((n, z) => n + z.plan.panels.length, 0) : 0;
+  return {
+    text: doc.toText(),
+    lifts: lifts.length,
+    strips: lifts.reduce((n, { r }) => n + r.cutPlan.cutLengths.length, 0),
+    skipped: (results || []).length - lifts.length,
+    panels,
+    weld: hasLiner ? plan.totalWeld : 0,
+    apart,
+  };
 }
 
 document.getElementById("baseGridExportBtn").addEventListener("click", () => {

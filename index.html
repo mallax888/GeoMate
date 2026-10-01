@@ -894,8 +894,13 @@
 
     <button id="exportBtn" class="btn btn--primary btn--block" type="button">Export CSV</button>
     <button id="exportFullPdfBtn" class="btn btn--ghost btn--block" type="button">Export full PDF (all sheets + 3D view)</button>
-    <button id="exportCutPlanDxfBtn" class="btn btn--ghost btn--block" type="button">Export cut plan for CAD (DXF)</button>
-    <p id="exportCutPlanDxfNote" class="export-note">Every strip as a closed polyline in survey coordinates, each lift on its own layer at its own RL. Opens straight in Civil 3D — <strong>Save As</strong> there to get a DWG.</p>
+    <!-- The one that answers "can I get all of this back into CAD" goes first and carries the
+         weight; the cut-plan-only export stays underneath for when that is all anyone wants to
+         hand over. -->
+    <button id="exportAllDxfBtn" class="btn btn--primary btn--block" type="button">Export everything to CAD (DXF)</button>
+    <p id="exportAllDxfNote" class="export-note">One file, layer-grouped: lift extents, every strip, the patches and the strip labels, plus the landfill liner's panels, centrelines and weld hinges when a cell surface is loaded. All in survey coordinates. Opens straight in Civil 3D — <strong>Save As</strong> there to get a DWG.</p>
+    <button id="exportCutPlanDxfBtn" class="btn btn--ghost btn--block" type="button">Export cut plan only (DXF)</button>
+    <p id="exportCutPlanDxfNote" class="export-note">Every strip as a closed polyline in survey coordinates, each lift on its own layer at its own RL — without the liner.</p>
   </aside>
 
 </main>
