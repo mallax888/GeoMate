@@ -183,7 +183,15 @@ These come from the user directly. Violating them makes output wrong on site.
    became a polygon of all-zero vertices. That is where the two phantom
    `RL 0.00` rows with no face length in the RE580 takeoff came from.
 12. **A landfill cell is not one thing, and the grid follows the ground.**
-   The Base geogrid tab covers a whole cell from its survey surface. Two rules
+   **It lives in the Landfill liner tab, and there is only one of those.** The
+   surface tool and the old typed-dimensions liner calculator were two tabs
+   claiming the same job, which is what the user noticed: *"surely this is what
+   the base geogrid does as well?"* They now share one tab under the name they
+   asked for. The surface tool leads; the four-numbers calculator is kept behind
+   a disclosure, because it is the only one that works before a survey model
+   exists — and it is clearly marked as not matching the real surface when one
+   does.
+   The tool covers a whole cell from its survey surface. Two rules
    the user stated and neither is negotiable. **(a) The grid changes direction
    at the toe.** The batters are rolled DOWN THE FALL LINE, deployed off the
    bench at the top and tied in at the toe; the base is a separate job in its

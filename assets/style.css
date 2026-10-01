@@ -2075,3 +2075,7 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
 @media (max-width: 520px) {
   .update-bar { flex-wrap: wrap; justify-content: center; text-align: center; }
 }
+/* The typed-dimensions calculator, kept but demoted: the surface tool above supersedes it whenever
+   there is a model, and two tools claiming the same job side by side is what caused the confusion. */
+.liner-fallback { margin-top: 2rem; border-top: 1px solid var(--line); padding-top: 0.6rem; }
+.liner-fallback .liner-head { margin-bottom: 1.2rem; }

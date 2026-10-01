@@ -5251,14 +5251,12 @@ const tabCutPlan = document.getElementById("tabCutPlan");
 const tab3D = document.getElementById("tab3D");
 const tabRolls = document.getElementById("tabRolls");
 const tabLiner = document.getElementById("tabLiner");
-const tabBaseGrid = document.getElementById("tabBaseGrid");
 const takeoffView = document.getElementById("takeoffView");
 const sequenceView = document.getElementById("sequenceView");
 const cutPlanView = document.getElementById("cutPlanView");
 const view3DPanel = document.getElementById("view3DPanel");
 const rollScheduleView = document.getElementById("rollScheduleView");
 const linerView = document.getElementById("linerView");
-const baseGridView = document.getElementById("baseGridView");
 const staggerToggle = document.getElementById("staggerToggle");
 const sequenceList = document.getElementById("sequenceList");
 const cutPlanList = document.getElementById("cutPlanList");
@@ -5270,7 +5268,6 @@ tabCutPlan.addEventListener("click", () => switchTab("cutplan"));
 tab3D.addEventListener("click", () => switchTab("view3d"));
 tabRolls.addEventListener("click", () => switchTab("rolls"));
 tabLiner.addEventListener("click", () => switchTab("liner"));
-tabBaseGrid.addEventListener("click", () => switchTab("basegrid"));
 
 /* On a narrow phone several strips of content don't all fit and have to scroll horizontally — the
  * lift-panel tabs, and the takeoff/roll tables (min-width: 690px, see .table-scroll) — without a
@@ -5576,7 +5573,6 @@ const TABS = {
   view3d: { tab: tab3D, view: view3DPanel },
   rolls: { tab: tabRolls, view: rollScheduleView },
   liner: { tab: tabLiner, view: linerView },
-  basegrid: { tab: tabBaseGrid, view: baseGridView },
 };
 
 /* Loading extents from CAD is how this app is actually used, but the only way in was a button inside
