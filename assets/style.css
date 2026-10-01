@@ -1013,8 +1013,26 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
 .tabs-wrap::after, .table-scroll::after { right: 0; background: linear-gradient(to left, var(--surface), transparent); }
 .tabs-wrap.has-more-left::before, .table-scroll.has-more-left::before { opacity: 1; }
 .tabs-wrap.has-more-right::after, .table-scroll.has-more-right::after { opacity: 1; }
-/* Fills the row so .tabs__spacer has width to push the output tabs over with. */
-.tabs { display: flex; gap: 0.2rem; width: 100%; }
+/* Fills the row so .tabs__spacer has width to push the output tabs over with.
+   Scrollable at EVERY width, not only on a phone. The six labels need about 770px and the strip
+   only gets that much from roughly 1400px up — below that the tabs were spilling out of their wrap
+   and painting over the Upload DXF / + Add lift buttons, and below about 820px they dragged the
+   whole document into sideways scroll. The edge fades and the scroll-position JS were already
+   wired to this element; only the overflow was gated behind a phone breakpoint. Nothing changes on
+   a wide screen, where there is nothing to scroll. The vertical padding (cancelled by the negative
+   margin) keeps a focus outline from being clipped by the scroll container. */
+.tabs {
+  display: flex;
+  gap: 0.2rem;
+  width: 100%;
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+  padding: 2px 0;
+  margin: -2px 0;
+}
+.tab { flex: none; }
 .tab {
   font-family: var(--font-body);
   font-size: 0.76rem;
@@ -1904,8 +1922,9 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
   .titleblock__meta #projectName { min-width: 0; flex: 1; }
 
   .tabs-wrap { flex: 1 1 100%; }
-  .tabs { overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
-  .tab { flex: none; padding: 0.55rem 0.65rem; font-size: 0.78rem; gap: 0.3rem; }
+  /* The strip scrolls at every width now (see .tabs) — all that is left here is making the tabs
+     themselves big enough to hit with a thumb. */
+  .tab { padding: 0.55rem 0.65rem; font-size: 0.78rem; gap: 0.3rem; }
   .tab__icon { width: 13px; height: 13px; }
   .panel__headrow { gap: 0.7rem; }
 
