@@ -1531,7 +1531,9 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
    below, the upload buttons' row above). margin-left: auto keeps it pinned there whether or not
    the empty-state text beside it is showing. */
 .cutplan-list-head .btn { margin-left: auto; }
-.cutplan-list-head .empty-state { margin: 0; padding: 0; }
+/* flex: 1 so the line fills the row. Without it the paragraph shrank to its text, and its centred
+   icon centred inside THAT — leaving the icon stranded well left of the panel, over nothing. */
+.cutplan-list-head .empty-state { margin: 0; padding: 0; flex: 1 1 auto; }
 .cutplan-print-view { display: none; }
 .cutplan-print-page { margin-bottom: 1.5rem; }
 .cutplan-print-page__head { display: flex; align-items: baseline; gap: 0.7rem; margin-bottom: 0.6rem; }

@@ -5615,6 +5615,12 @@ function switchTab(which) {
   if (which === "view3d" && window.__geogridResults) render3D(window.__geogridResults);
 }
 
+/* The chrome around the tabs was only ever set BY a tab click, so on a fresh load it was whatever
+ * the markup happened to say — which left "+ Add lift" sitting on Cut plan, a tab with no table to
+ * add a lift to, until you clicked something. Running it once here makes the first paint identical
+ * to the state every later click produces. */
+switchTab(currentTab);
+
 function renderSequence(results) {
   sequenceList.innerHTML = "";
   const stagger = staggerToggle.checked;
