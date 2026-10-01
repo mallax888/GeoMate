@@ -2079,3 +2079,23 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
    there is a model, and two tools claiming the same job side by side is what caused the confusion. */
 .liner-fallback { margin-top: 2rem; border-top: 1px solid var(--line); padding-top: 0.6rem; }
 .liner-fallback .liner-head { margin-bottom: 1.2rem; }
+
+/* The cell in 3D. The whole point of this tool is that the surface is not flat, so a plan view
+   hides the one thing that matters — the batters, and the panels lying down them. */
+.basegrid-3d { margin-top: 1.6rem; }
+.basegrid-3d__head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.basegrid-3d__head .panel__subheading { margin: 0; }
+.basegrid-3d__actions { display: flex; align-items: center; gap: 0.9rem; }
+.basegrid-3d__actions .checkbox { margin: 0; }
+#cellView3D {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: 0.6rem;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: grab;
+  touch-action: none;
+}
+#cellView3D:active { cursor: grabbing; }

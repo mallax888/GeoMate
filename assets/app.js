@@ -5865,8 +5865,41 @@ document.getElementById("dxfLengthsInput").addEventListener("change", async (e) 
   }
 });
 
+/**
+ * Why a file produced no surface, in terms of what is in it.
+ *
+ * "No 3DFACE triangles found in that file" is true and useless — it never says what the file DOES
+ * hold, so the commonest mistakes (handing a LandXML to the DXF button, or handing over the lift
+ * extents instead of a surface) read as the app being broken. Same failing, and same fix, as the
+ * extents upload's old "no closed polylines".
+ */
+function explainNoSurface(text, wanted) {
+  const head = text.slice(0, 4000);
+  const looksXml = /^\s*<\?xml|<LandXML/i.test(head);
+  const looksDxf = /^\s*0\s*[\r\n]+\s*SECTION/i.test(head) || /\bAC10\d\d\b/.test(head);
+  const count = (re) => (text.match(re) || []).length;
+
+  if (wanted === "dxf" && looksXml) {
+    return /<LandXML/i.test(head)
+      ? "That is a LandXML file, not a DXF — use the LandXML button beside this one."
+      : "That is an XML file, not a DXF. If it came out of Civil 3D as a surface, use the LandXML button beside this one.";
+  }
+  if (wanted === "landxml" && looksDxf) {
+    return "That is a DXF, not LandXML — use the DXF button beside this one.";
+  }
+  if (wanted === "dxf") {
+    const polylines = count(/[\r\n]\s*(?:LW)?POLYLINE\s*[\r\n]/g);
+    const faces = count(/[\r\n]\s*3DFACE\s*[\r\n]/g);
+    if (!faces && polylines) {
+      return `That DXF has ${polylines} polyline${polylines === 1 ? "" : "s"} but no 3DFACE triangles. This wants the triangulated SURFACE — in Civil 3D, export the surface as a mesh (3DFACE) or use LandXML — not the boundary or the lift extents.`;
+    }
+    return "No 3DFACE triangles in that file. This wants a triangulated surface exported as a mesh, not a 2D drawing.";
+  }
+  return "No TIN surface (Pnts/Faces) in that LandXML. Check the surface was included in the export rather than just an alignment or parcels.";
+}
+
 /** Shared by every "raw surface mesh" upload (DXF 3DFACE, LandXML, …) — parseFn(text) must return an array of triangles. */
-function wireMeshUpload(inputId, parseFn, noTrianglesMessage) {
+function wireMeshUpload(inputId, parseFn, wanted) {
   document.getElementById(inputId).addEventListener("change", async (e) => {
     const file = e.target.files[0];
     const statusEl = document.getElementById("benchedStatus");
@@ -5876,7 +5909,7 @@ function wireMeshUpload(inputId, parseFn, noTrianglesMessage) {
       const text = await file.text();
       const triangles = parseFn(text);
       if (!triangles.length) {
-        statusEl.textContent = noTrianglesMessage;
+        statusEl.textContent = explainNoSurface(text, wanted);
         statusEl.className = "cutplan-status is-error";
         return;
       }
@@ -5912,8 +5945,8 @@ function wireMeshUpload(inputId, parseFn, noTrianglesMessage) {
   });
 }
 
-wireMeshUpload("dxfBenchedInput", parseDXF3DFaces, "No 3DFACE triangles found in that file.");
-wireMeshUpload("landxmlBenchedInput", parseLandXMLSurface, "No TIN surface (Pnts/Faces) found in that LandXML file.");
+wireMeshUpload("dxfBenchedInput", parseDXF3DFaces, "dxf");
+wireMeshUpload("landxmlBenchedInput", parseLandXMLSurface, "landxml");
 
 /**
  * From a full excavation surface (already dug, all sides), builds one extents-mode lift row per
@@ -6047,7 +6080,7 @@ function runBatteredSurfaceBuild(triangles) {
   computeAndRender();
 }
 
-function wireBatteredSurfaceUpload(inputId, parseFn, noTrianglesMessage) {
+function wireBatteredSurfaceUpload(inputId, parseFn, wanted) {
   document.getElementById(inputId).addEventListener("change", async (e) => {
     const file = e.target.files[0];
     const statusEl = document.getElementById("batteredStatus");
@@ -6057,7 +6090,7 @@ function wireBatteredSurfaceUpload(inputId, parseFn, noTrianglesMessage) {
       const text = await file.text();
       const triangles = parseFn(text);
       if (!triangles.length) {
-        statusEl.textContent = noTrianglesMessage;
+        statusEl.textContent = explainNoSurface(text, wanted);
         statusEl.className = "cutplan-status is-error";
         return;
       }
@@ -6072,8 +6105,8 @@ function wireBatteredSurfaceUpload(inputId, parseFn, noTrianglesMessage) {
   });
 }
 
-wireBatteredSurfaceUpload("dxfBatteredInput", parseDXF3DFaces, "No 3DFACE triangles found in that file.");
-wireBatteredSurfaceUpload("landxmlBatteredInput", parseLandXMLSurface, "No TIN surface (Pnts/Faces) found in that LandXML file.");
+wireBatteredSurfaceUpload("dxfBatteredInput", parseDXF3DFaces, "dxf");
+wireBatteredSurfaceUpload("landxmlBatteredInput", parseLandXMLSurface, "landxml");
 
 document.getElementById("rebuildBatteredBtn").addEventListener("click", () => {
   if (lastBatteredTriangles) runBatteredSurfaceBuild(lastBatteredTriangles);
@@ -9297,7 +9330,7 @@ function loadBaseGridSurface(triangles, label) {
   return true;
 }
 
-function wireBaseGridUpload(inputId, parseFn, noTrianglesMessage) {
+function wireBaseGridUpload(inputId, parseFn, wanted) {
   const input = document.getElementById(inputId);
   if (!input) return;
   input.addEventListener("change", async (e) => {
@@ -9305,9 +9338,10 @@ function wireBaseGridUpload(inputId, parseFn, noTrianglesMessage) {
     if (!file) return;
     try {
       baseGridStatus("Reading the surface…");
-      const triangles = parseFn(await file.text());
+      const text = await file.text();
+      const triangles = parseFn(text);
       if (!triangles.length) {
-        baseGridStatus(noTrianglesMessage, "error");
+        baseGridStatus(explainNoSurface(text, wanted), "error");
         return;
       }
       loadBaseGridSurface(triangles, file.name);
@@ -9319,8 +9353,8 @@ function wireBaseGridUpload(inputId, parseFn, noTrianglesMessage) {
   });
 }
 
-wireBaseGridUpload("baseGridDxfInput", parseDXF3DFaces, "No 3DFACE triangles in that file — export the surface as a mesh, or use the LandXML option.");
-wireBaseGridUpload("baseGridXmlInput", parseLandXMLSurface, "No TIN surface (Pnts/Faces) found in that LandXML file.");
+wireBaseGridUpload("baseGridDxfInput", parseDXF3DFaces, "dxf");
+wireBaseGridUpload("baseGridXmlInput", parseLandXMLSurface, "landxml");
 
 function renderBaseGrid() {
   const empty = document.getElementById("baseGridEmpty");
@@ -9421,6 +9455,7 @@ function renderBaseGrid() {
   }
 
   renderBaseGridPlan(plan);
+  renderCellView3D(plan);
 }
 
 /** The cell in plan with every panel on it, zone by zone — the picture the installer marks up. */
@@ -9829,6 +9864,7 @@ function computeCellGridPlan(triangles, rollWidth, minOverlap, baseBearing, opti
       kind: zone.slope ? "Batter" : "Base",
       slope: zone.slope,
       plane: zone.plane,
+      triangles: zone.triangles,
       grade: zone.grade,
       bearing,
       area: zone.area,
@@ -9924,4 +9960,197 @@ function cellHingeLines(zones) {
   });
 
   return { segments, length };
+}
+
+/* --- The cell in 3D ---------------------------------------------------------------------------
+ *
+ * The plan view flattens the one thing this whole tool exists for. A cell is batters and a base,
+ * the panels lie DOWN the batters, and on a drawing that all collapses into the same page. So the
+ * surface gets drawn as itself: shaded triangles, each zone in the colour it has in the plan above,
+ * with the panels lying on it.
+ *
+ * Reuses project3D and the pitch limits from the lift stack's 3D view, so turning the cell feels the
+ * same as turning the stack rather than being a second thing with its own habits.
+ */
+const cellView3D = {
+  canvas: document.getElementById("cellView3D"),
+  yaw: -0.6,
+  pitch: 0.55,
+  zoom: 1,
+  panX: 0,
+  panY: 0,
+};
+
+/* Matches .basegrid-zone--N in the stylesheet: the same zone is the same colour in the plan, in the
+ * 3D view and in the schedule, so they read as one drawing rather than three. */
+const CELL_ZONE_COLORS = ["#2f7d4f", "#b4690e", "#3b6ea5", "#8a4f9e", "#12796b", "#9c4221"];
+
+function renderCellView3D(plan) {
+  const canvas = cellView3D.canvas;
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  if (!plan || !baseGridSurface) return;
+
+  const showPanels = !!(document.getElementById("cellView3DPanels") || {}).checked;
+  const { yaw, pitch } = cellView3D;
+
+  // One shared frame for everything drawn, so the surface and the panels cannot drift apart.
+  const tris = baseGridSurface.triangles;
+  let cx = 0, cy = 0, cz = 0, n = 0;
+  tris.forEach((t) => t.forEach((p) => { cx += p.x; cy += p.y; cz += p.z; n++; }));
+  cx /= n; cy /= n; cz /= n;
+
+  /* A cell is wide and shallow — this one is 265 m across with 34 m of fall — so at true scale the
+   * batters barely read and the whole point of a 3D view is lost. Exaggerated by default, and the
+   * control says so in as many words so nobody mistakes the picture for the ground. */
+  const exag = parseFloat((document.getElementById("cellView3DExag") || {}).value) || 1;
+  const toScreen = (p) => project3D(p.x - cx, p.y - cy, (p.z - cz) * exag, yaw, pitch);
+  let minSX = Infinity, maxSX = -Infinity, minSY = Infinity, maxSY = -Infinity;
+  tris.forEach((t) => t.forEach((p) => {
+    const s = toScreen(p);
+    minSX = Math.min(minSX, s.sx); maxSX = Math.max(maxSX, s.sx);
+    minSY = Math.min(minSY, s.sy); maxSY = Math.max(maxSY, s.sy);
+  }));
+  const pad = 40;
+  const scale = Math.min((W - pad * 2) / Math.max(maxSX - minSX, 1e-6), (H - pad * 2) / Math.max(maxSY - minSY, 1e-6)) * cellView3D.zoom;
+  const ox = W / 2 - ((minSX + maxSX) / 2) * scale + cellView3D.panX;
+  const oy = H / 2 - ((minSY + maxSY) / 2) * scale + cellView3D.panY;
+  const px = (p) => {
+    const s = toScreen(p);
+    return { x: ox + s.sx * scale, y: oy + s.sy * scale, depth: s.depth };
+  };
+
+  // Which zone each triangle belongs to, so the surface is coloured the same as the plan.
+  const zoneOfTri = new Map();
+  plan.zones.forEach((z, zi) => {
+    (z.triangles || []).forEach((t) => zoneOfTri.set(t, zi));
+  });
+
+  // Painter's algorithm: furthest first. A TIN of a few hundred triangles sorts in no time, and it
+  // avoids needing a depth buffer for something this simple.
+  const faces = tris.map((t) => {
+    const pts = t.map(px);
+    const depth = (pts[0].depth + pts[1].depth + pts[2].depth) / 3;
+    // Flat shading off the true normal — without it the batters and the base are one silhouette.
+    const [a, b, c] = t;
+    const ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z;
+    const vx = c.x - a.x, vy = c.y - a.y, vz = c.z - a.z;
+    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    const len = Math.hypot(nx, ny, nz) || 1;
+    nx /= len; ny /= len; nz /= len;
+    if (nz < 0) { nx = -nx; ny = -ny; nz = -nz; }
+    // Light from over the viewer's left shoulder, slightly above.
+    const light = Math.max(0.25, Math.min(1, 0.42 + 0.58 * (nx * -0.45 + ny * -0.35 + nz * 0.82)));
+    return { pts, depth, light, zone: zoneOfTri.get(t) };
+  });
+  faces.sort((p, q) => q.depth - p.depth);
+
+  const mix = (hex, light) => {
+    const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+    const f = (v) => Math.round(Math.min(255, v * light + 255 * (1 - light) * 0.25));
+    return `rgb(${f(r)},${f(g)},${f(b)})`;
+  };
+
+  faces.forEach((f) => {
+    const base = f.zone === undefined ? "#7a8a80" : CELL_ZONE_COLORS[f.zone % CELL_ZONE_COLORS.length];
+    ctx.beginPath();
+    ctx.moveTo(f.pts[0].x, f.pts[0].y);
+    ctx.lineTo(f.pts[1].x, f.pts[1].y);
+    ctx.lineTo(f.pts[2].x, f.pts[2].y);
+    ctx.closePath();
+    ctx.fillStyle = mix(base, f.light);
+    ctx.fill();
+    // A hairline of the same colour closes the seams antialiasing leaves between triangles.
+    ctx.strokeStyle = ctx.fillStyle;
+    ctx.lineWidth = 0.6;
+    ctx.stroke();
+  });
+
+  if (showPanels) {
+    const half = plan.rollWidth / 2;
+    const drawn = [];
+    plan.zones.forEach((z, zi) => {
+      const ax = z.plan.across.x * half, ay = z.plan.across.y * half;
+      // Each zone is one plane, so a panel corner sits on it exactly — no sampling needed here.
+      const lift = (x, y) => ({ x, y, z: (z.plane ? z.plane.zAt(x, y) : 0) + 0.05 });
+      z.plan.panels.forEach((p) => {
+        const quad = [
+          lift(p.start.x - ax, p.start.y - ay),
+          lift(p.end.x - ax, p.end.y - ay),
+          lift(p.end.x + ax, p.end.y + ay),
+          lift(p.start.x + ax, p.start.y + ay),
+        ].map(px);
+        drawn.push({ quad, depth: quad.reduce((s, q) => s + q.depth, 0) / 4, zone: zi });
+      });
+    });
+    drawn.sort((p, q) => q.depth - p.depth);
+    drawn.forEach((d) => {
+      ctx.beginPath();
+      ctx.moveTo(d.quad[0].x, d.quad[0].y);
+      for (let i = 1; i < d.quad.length; i++) ctx.lineTo(d.quad[i].x, d.quad[i].y);
+      ctx.closePath();
+      ctx.strokeStyle = "rgba(255,255,255,0.85)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    });
+  }
+
+  // The hinges last and on top: these are the weld lines, and they are the thing to look at.
+  if (plan.hinges) {
+    ctx.strokeStyle = "#d94a3d";
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    plan.hinges.segments.forEach((seg) => {
+      const a = px({ x: seg.a.x, y: seg.a.y, z: (seg.a.z || 0) + 0.08 });
+      const b = px({ x: seg.b.x, y: seg.b.y, z: (seg.b.z || 0) + 0.08 });
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+    });
+    ctx.stroke();
+  }
+}
+
+{
+  const canvas = cellView3D.canvas;
+  if (canvas) {
+    let dragging = false, lastX = 0, lastY = 0;
+    const redraw = () => renderCellView3D(baseGridPlanResult);
+    canvas.addEventListener("pointerdown", (e) => {
+      dragging = true;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      canvas.setPointerCapture(e.pointerId);
+    });
+    canvas.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - lastX, dy = e.clientY - lastY;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      cellView3D.yaw += dx * 0.008;
+      cellView3D.pitch = Math.max(VIEW3D_PITCH_MIN, Math.min(VIEW3D_PITCH_MAX, cellView3D.pitch + dy * 0.006));
+      redraw();
+    });
+    ["pointerup", "pointercancel"].forEach((evt) =>
+      canvas.addEventListener(evt, (e) => {
+        dragging = false;
+        if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+      })
+    );
+    canvas.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      cellView3D.zoom = Math.max(0.4, Math.min(5, cellView3D.zoom * (1 - e.deltaY * 0.001)));
+      redraw();
+    }, { passive: false });
+    const panelsToggle = document.getElementById("cellView3DPanels");
+    if (panelsToggle) panelsToggle.addEventListener("change", redraw);
+    const exagSelect = document.getElementById("cellView3DExag");
+    if (exagSelect) exagSelect.addEventListener("change", redraw);
+    const resetBtn = document.getElementById("cellView3DReset");
+    if (resetBtn) resetBtn.addEventListener("click", () => {
+      Object.assign(cellView3D, { yaw: -0.6, pitch: 0.55, zoom: 1, panX: 0, panY: 0 });
+      redraw();
+    });
+  }
 }

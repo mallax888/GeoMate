@@ -256,6 +256,14 @@ These come from the user directly. Violating them makes output wrong on site.
    surface, same coordinates), and a copy with 60 faces marked `i="1"` comes
    back as 220. The northing/easting swap in that parser is correct and that
    test is what proves it.
+   **It has its own 3D view**, and it needs one: the whole premise is that the
+   surface is not flat, and a plan drawing hides exactly that. It draws the TIN
+   shaded, each zone in the colour it carries in the plan and the schedule, with
+   the panels on it and the hinge welds in red on top — reusing `project3D` and
+   the pitch limits from the lift stack's view so turning the two feels the
+   same. Vertical exaggeration defaults to ×2 and says so on the control: this
+   cell is 265 m across with 34 m of fall, and at true scale the batters do not
+   read at all.
    The zoning is INFERRED from the surface. A toe line or zone divisions from
    the designer beat it and should be preferred whenever they are supplied.
 13. **What leaves the app is set out from.** The PDF is a picture of the plan;
@@ -276,6 +284,15 @@ These come from the user directly. Violating them makes output wrong on site.
    Verified with `ezdxf` (`recover.readfile` + `audit()`), not just by reading it
    back with our own parser, which is too lenient to prove anything about
    AutoCAD: 0 errors, 0 fixes, every polyline closed and flat.
+
+- **An error about a file says what is IN the file.** Twice now the unhelpful
+  version has been reported as a bug in the app: *"no closed polylines found"*
+  on a drawing that was plainly closed, and *"No 3DFACE triangles found in that
+  file"* on a LandXML handed to the DXF button. Both were true and neither was
+  actionable. `explainNoBoundaries` and `explainNoSurface` name the thing the
+  user actually has — a LandXML at a DXF input, a boundary where a surface was
+  wanted, polylines that do not close and by how much — and what to do about it.
+  Any new file input gets the same treatment.
 
 ## Architecture map (`assets/app.js`, ~6400 lines, no modules)
 

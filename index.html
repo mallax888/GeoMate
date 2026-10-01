@@ -697,6 +697,30 @@
 
         <svg id="baseGridPlan" class="basegrid-plan" role="img" aria-label="Panel layout over the cell"></svg>
 
+        <div class="basegrid-3d">
+          <div class="basegrid-3d__head">
+            <h3 class="panel__subheading">The cell in 3D</h3>
+            <div class="basegrid-3d__actions">
+              <label class="field field--inline">
+                <span>Vertical exaggeration</span>
+                <select id="cellView3DExag">
+                  <option value="1">×1 (true scale)</option>
+                  <option value="2" selected>×2</option>
+                  <option value="3">×3</option>
+                  <option value="5">×5</option>
+                </select>
+              </label>
+              <label class="checkbox">
+                <input type="checkbox" id="cellView3DPanels" checked />
+                <span>Show panels</span>
+              </label>
+              <button id="cellView3DReset" class="btn btn--ghost" type="button">Reset view</button>
+            </div>
+          </div>
+          <canvas id="cellView3D" width="1400" height="760" aria-label="Three-dimensional view of the cell surface with the panels on it"></canvas>
+          <p class="generator__hint">Drag to turn it, scroll to zoom. Each zone keeps the colour it has in the plan above, so the batters and the base are the same pieces in both.</p>
+        </div>
+
         <h3 class="panel__subheading">Panel schedule</h3>
         <div class="table-scroll">
           <table id="baseGridTable" class="lift-table basegrid-table">
