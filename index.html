@@ -665,8 +665,8 @@
           <div class="field__unit"><input type="number" id="baseGridWeldRate" min="0" step="0.5" placeholder="e.g. 12" /><em>/m</em></div>
         </label>
         <label class="field field--compact">
-          <span>Roll direction</span>
-          <div class="field__unit"><input type="number" id="baseGridBearing" value="0" min="0" max="359" step="1" /><em>°</em></div>
+          <span>Base roll direction</span>
+          <div class="field__unit"><input type="number" id="baseGridBearing" placeholder="auto" min="0" max="359" step="1" /><em>°</em></div>
         </label>
       </div>
       <div class="basegrid-actions">
@@ -674,8 +674,10 @@
         <button id="baseGridExportBtn" class="btn btn--ghost" type="button">Export panel layout (DXF)</button>
       </div>
       <p class="generator__hint">
-        Direction is a survey bearing — 0° runs the rolls north–south, 90° east–west. It barely
-        changes how much material you need, but it can halve the number of runs.
+        Leave the direction blank and each piece of base picks the way that lays it in the fewest,
+        longest runs — which is along it, not across. Type a bearing to force one: 0° runs the rolls
+        north–south, 90° east–west. The batters ignore it either way; they run down their own fall
+        lines. Direction barely changes how much material you need, but it can halve the number of runs.
       </p>
 
       <p id="baseGridEmpty" class="empty-state"><svg class="empty-state__icon" viewBox="0 0 16 16" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 11.5 6 4.5l4 4 4.5-6"/><path d="M1.5 14.2h13"/></svg><br>Upload the cell's surface — the triangulated base and batters straight out of Civil 3D — to lay the rolls over it.</p>

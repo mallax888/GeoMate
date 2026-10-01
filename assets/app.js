@@ -9131,6 +9131,40 @@ function lineSpansInsidePolygon(origin, dir, poly) {
   return spans;
 }
 
+/** A quad wound anticlockwise, which is what clipPolygonToConvex expects of its window. */
+function ccwRect(pts) {
+  return signedArea(pts) < 0 ? pts.slice().reverse() : pts;
+}
+
+/**
+ * A polygon clipped to the inside of a convex window, by Sutherland-Hodgman.
+ *
+ * Used to cut a panel down to the plane it belongs to. The window is the panel's own rectangle,
+ * which is convex; the subject is the zone outline, which is not — and that is the way round this
+ * algorithm needs them. Clipping the other way would need a general polygon clipper for no gain.
+ */
+function clipPolygonToConvex(subject, window) {
+  let out = subject.slice();
+  for (let i = 0; i < window.length && out.length; i++) {
+    const a = window[i], b = window[(i + 1) % window.length];
+    // Inside is to the left of a->b. The caller passes the window anticlockwise.
+    const side = (p) => (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+    const input = out;
+    out = [];
+    for (let j = 0; j < input.length; j++) {
+      const cur = input[j], prev = input[(j + input.length - 1) % input.length];
+      const dCur = side(cur), dPrev = side(prev);
+      const curIn = dCur >= -1e-9, prevIn = dPrev >= -1e-9;
+      if (curIn !== prevIn) {
+        const t = dPrev / (dPrev - dCur);
+        out.push({ x: prev.x + (cur.x - prev.x) * t, y: prev.y + (cur.y - prev.y) * t });
+      }
+      if (curIn) out.push(cur);
+    }
+  }
+  return out;
+}
+
 /** How far the roll actually travels between two stations on a line, following the ground. */
 function drapeRun(tin, origin, dir, t0, t1, step) {
   const n = Math.max(2, Math.ceil((t1 - t0) / step));
@@ -9187,13 +9221,33 @@ function computeBaseGridPanels(triangles, poly, rollWidth, minOverlap, bearingDe
       if (t1 - t0 < 0.5) return;
       const run = drapeRun(tin, origin, dir, t0, t1, step);
       if (run.plan < 0.5) return;
+      const start = { x: origin.x + dir.x * t0, y: origin.y + dir.y * t0 };
+      const end = { x: origin.x + dir.x * t1, y: origin.y + dir.y * t1 };
+      /* A roll is cut at a change of grade and welded to the strip on the next plane, so a panel
+       * must not run past the edge of its own plane. Clipping the span along the run is not enough:
+       * the panel is a BAND of roll width, and at a boundary that runs more or less along the
+       * direction of travel the band spills sideways over the hinge into the next zone. So the
+       * footprint is the zone itself cut down to this panel's rectangle — stopping at the hinge in
+       * both directions, which is what the red lines on the model are. */
+      const half = rollWidth / 2;
+      const ax = across.x * half, ay = across.y * half;
+      const rect = ccwRect([
+        { x: start.x - ax, y: start.y - ay },
+        { x: end.x - ax, y: end.y - ay },
+        { x: end.x + ax, y: end.y + ay },
+        { x: start.x + ax, y: start.y + ay },
+      ]);
+      const footprint = clipPolygonToConvex(poly, rect);
       panels.push({
         line: i + 1,
         draped: run.draped,
         plan: run.plan,
         offSurface: run.offSurface,
-        start: { x: origin.x + dir.x * t0, y: origin.y + dir.y * t0 },
-        end: { x: origin.x + dir.x * t1, y: origin.y + dir.y * t1 },
+        start,
+        end,
+        footprint: footprint.length >= 3 ? footprint : rect,
+        clipped: footprint.length >= 3,
+        area: footprint.length >= 3 ? Math.abs(signedArea(footprint)) : 0,
         path: run.path,
       });
     });
@@ -9308,7 +9362,7 @@ function resetBaseGridInputs() {
   baseGridInputs.rollWidth.value = "7";
   baseGridInputs.overlap.value = "300";
   baseGridInputs.rollLength.value = "100";
-  baseGridInputs.bearing.value = "0";
+  baseGridInputs.bearing.value = "";
   baseGridInputs.weldRate.value = "";
 }
 
@@ -9371,7 +9425,9 @@ function renderBaseGrid() {
   const w = parseFloat(baseGridInputs.rollWidth.value);
   const oMin = (parseFloat(baseGridInputs.overlap.value) || 0) / 1000;
   const rollLength = parseFloat(baseGridInputs.rollLength.value) || 0;
-  const bearing = parseFloat(baseGridInputs.bearing.value) || 0;
+  // Blank means "work it out per zone" — see computeCellGridPlan.
+  const typed = baseGridInputs.bearing.value.trim();
+  const bearing = typed === "" ? null : parseFloat(typed) || 0;
 
   // Zone by zone: each batter down its own fall line, the base in the direction asked for. The
   // bearing input now sets the BASE only — a batter's direction is decided by the ground.
@@ -9478,16 +9534,9 @@ function renderBaseGridPlan(plan) {
   const half = plan.rollWidth / 2;
   const body = plan.zones
     .map((z, zi) => {
-      const ax = z.plan.across.x * half, ay = z.plan.across.y * half;
+      // The clipped footprint, so a panel stops at the hinge instead of lying over the next plane.
       const panels = z.plan.panels
-        .map((p) =>
-          `<polygon points="${pts([
-            { x: p.start.x - ax, y: p.start.y - ay },
-            { x: p.end.x - ax, y: p.end.y - ay },
-            { x: p.end.x + ax, y: p.end.y + ay },
-            { x: p.start.x + ax, y: p.start.y + ay },
-          ])}" class="basegrid-panel" />`
-        )
+        .map((p) => `<polygon points="${pts(p.footprint)}" class="basegrid-panel" />`)
         .join("");
       return (
         `<g class="basegrid-zone basegrid-zone--${zi % 6}">` +
@@ -9625,14 +9674,18 @@ function buildBaseGridDxf(surface, plan) {
     ], false);
   });
 
-  const half = plan.rollWidth / 2;
   plan.zones.forEach((z) => {
-  const ax = z.plan.across.x * half, ay = z.plan.across.y * half;
   z.plan.panels.forEach((p) => {
-    const left = drapeEdge({ x: p.start.x - ax, y: p.start.y - ay }, { x: p.end.x - ax, y: p.end.y - ay }, z.plane);
-    const right = drapeEdge({ x: p.start.x + ax, y: p.start.y + ay }, { x: p.end.x + ax, y: p.end.y + ay }, z.plane);
-    // Down one edge and back up the other, so it closes as the panel it is.
-    poly3d("PANEL_EDGES", left.concat(right.slice().reverse()), true);
+    /* The panel's own footprint — already cut to its plane, so it stops at the hinge — with every
+     * side of it draped. A straight line between two corners does not lie on the ground, so each
+     * side is sampled the same way the centreline is. */
+    const ring = [];
+    for (let i = 0; i < p.footprint.length; i++) {
+      const a = p.footprint[i], b = p.footprint[(i + 1) % p.footprint.length];
+      const side = drapeEdge(a, b, z.plane);
+      ring.push(...side.slice(0, -1));
+    }
+    if (ring.length >= 3) poly3d("PANEL_EDGES", ring, true);
     if (p.path.length >= 2) poly3d("PANEL_CL", p.path, false);
 
     const mid = p.path.length
@@ -9842,6 +9895,50 @@ function classifyCellZones(triangles, options) {
 }
 
 /**
+ * Which way to run the rolls on one piece of ground, from its outline alone.
+ *
+ * A batter has no choice — it runs down the fall line. A piece of base does, and getting it wrong
+ * is not a rounding error: a long thin strip of base with the rolls running ACROSS it came out as
+ * 34 panels with a median length of 1.6 m, 28 of them under ten metres. Nobody lays a floor in
+ * 1.6 m stubs; you run the long way and cut at the end.
+ *
+ * Judged on panel count, lightly penalising total length so that two directions giving the same
+ * number of runs pick the shorter. Plan geometry only — no draping — because the direction is
+ * decided by the shape, and sweeping 36 bearings over a draped surface would cost far more than it
+ * could tell us.
+ */
+function bestBearingForOutline(poly, rollWidth, minOverlap) {
+  if (!poly || poly.length < 3) return 0;
+  const pitch = rollWidth - minOverlap;
+  if (!(pitch > 0)) return 0;
+  let best = null;
+  for (let brg = 0; brg < 180; brg += 5) {
+    const ang = ((90 - brg) * Math.PI) / 180;
+    const dir = { x: Math.cos(ang), y: Math.sin(ang) };
+    const across = { x: -dir.y, y: dir.x };
+    const proj = poly.map((p) => p.x * across.x + p.y * across.y);
+    const lo = Math.min(...proj), hi = Math.max(...proj);
+    const lines = Math.max(1, Math.ceil((hi - lo) / pitch));
+    const slack = lines * pitch - (hi - lo);
+    const first = lo - slack / 2 + pitch / 2;
+    let panels = 0, total = 0;
+    for (let i = 0; i < lines; i++) {
+      const s = first + i * pitch;
+      const origin = { x: across.x * s, y: across.y * s };
+      lineSpansInsidePolygon(origin, dir, poly).forEach(([t0, t1]) => {
+        if (t1 - t0 < 0.5) return;
+        panels++;
+        total += t1 - t0;
+      });
+    }
+    if (!panels) continue;
+    const score = panels + total / 100000;
+    if (!best || score < best.score) best = { score, bearing: brg };
+  }
+  return best ? best.bearing : 0;
+}
+
+/**
  * The whole cell laid out zone by zone: every batter rolled down its own fall line, the base in its
  * own direction. This is the shape of the answer — one uniform direction across a cell is not how
  * any of it gets installed.
@@ -9854,9 +9951,16 @@ function computeCellGridPlan(triangles, rollWidth, minOverlap, baseBearing, opti
   zones.forEach((zone, i) => {
     const loops = surfaceOutline(zone.triangles);
     if (!loops.length) return;
-    // A batter runs down the fall line — that is the deployment, off the bench and down the slope.
-    // The base has no fall line worth following, so it takes the direction the user asked for.
-    const bearing = zone.slope ? zone.aspect : baseBearing;
+    /* A batter runs down the fall line — that is the deployment, off the bench and down the slope.
+     * A piece of base has no fall line worth following, so it picks the direction that lays IT in
+     * the fewest runs. One bearing shared across every base zone is what produced a 1,383 m² strip
+     * cut into 34 panels with a median length of 1.6 m. `baseBearing` overrides it when the user
+     * has asked for a particular direction. */
+    const bearing = zone.slope
+      ? zone.aspect
+      : baseBearing === null || baseBearing === undefined
+        ? bestBearingForOutline(loops[0], rollWidth, minOverlap)
+        : baseBearing;
     const plan = computeBaseGridPanels(zone.triangles, loops[0], rollWidth, minOverlap, bearing);
     if (!plan) return;
     laid.push({
@@ -10022,18 +10126,21 @@ function renderCellView3D(plan) {
     return { x: ox + s.sx * scale, y: oy + s.sy * scale, depth: s.depth };
   };
 
-  // Which zone each triangle belongs to, so the surface is coloured the same as the plan.
+  // Painter's algorithm: furthest first. A TIN of a few hundred triangles sorts in no time, and it
+  // avoids needing a depth buffer for something this simple.
+  /* Surface and panels go into ONE depth-sorted list, not two passes. Drawing every triangle and
+   * then every panel puts a panel on a far batter over the top of nearer ground — it reads as
+   * panels floating outside the cell, which is exactly the thing this view exists to disprove.
+   * A panel sits 50 mm above its own plane, so it sorts just in front of its own triangles. */
+  const items = [];
+
   const zoneOfTri = new Map();
   plan.zones.forEach((z, zi) => {
     (z.triangles || []).forEach((t) => zoneOfTri.set(t, zi));
   });
 
-  // Painter's algorithm: furthest first. A TIN of a few hundred triangles sorts in no time, and it
-  // avoids needing a depth buffer for something this simple.
-  const faces = tris.map((t) => {
+  tris.forEach((t) => {
     const pts = t.map(px);
-    const depth = (pts[0].depth + pts[1].depth + pts[2].depth) / 3;
-    // Flat shading off the true normal — without it the batters and the base are one silhouette.
     const [a, b, c] = t;
     const ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z;
     const vx = c.x - a.x, vy = c.y - a.y, vz = c.z - a.z;
@@ -10041,11 +10148,26 @@ function renderCellView3D(plan) {
     const len = Math.hypot(nx, ny, nz) || 1;
     nx /= len; ny /= len; nz /= len;
     if (nz < 0) { nx = -nx; ny = -ny; nz = -nz; }
-    // Light from over the viewer's left shoulder, slightly above.
+    // Flat shading off the true normal — without it the batters and the base are one silhouette.
     const light = Math.max(0.25, Math.min(1, 0.42 + 0.58 * (nx * -0.45 + ny * -0.35 + nz * 0.82)));
-    return { pts, depth, light, zone: zoneOfTri.get(t) };
+    items.push({ kind: "face", pts, depth: (pts[0].depth + pts[1].depth + pts[2].depth) / 3, light, zone: zoneOfTri.get(t) });
   });
-  faces.sort((p, q) => q.depth - p.depth);
+
+  if (showPanels) {
+    plan.zones.forEach((z, zi) => {
+      // Each zone is one plane, so a point on it sits exactly — no sampling needed here.
+      const lift = (q) => ({ x: q.x, y: q.y, z: (z.plane ? z.plane.zAt(q.x, q.y) : 0) + 0.05 });
+      z.plan.panels.forEach((q) => {
+        const ring = q.footprint.map((v) => px(lift(v)));
+        if (ring.length < 3) return;
+        items.push({ kind: "panel", pts: ring, depth: ring.reduce((s, v) => s + v.depth, 0) / ring.length, zone: zi });
+      });
+    });
+  }
+
+  // Painter's algorithm: furthest first. A few hundred items sorts in no time and saves needing a
+  // depth buffer for something this simple.
+  items.sort((p, q) => q.depth - p.depth);
 
   const mix = (hex, light) => {
     const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
@@ -10053,49 +10175,25 @@ function renderCellView3D(plan) {
     return `rgb(${f(r)},${f(g)},${f(b)})`;
   };
 
-  faces.forEach((f) => {
-    const base = f.zone === undefined ? "#7a8a80" : CELL_ZONE_COLORS[f.zone % CELL_ZONE_COLORS.length];
+  items.forEach((it) => {
     ctx.beginPath();
-    ctx.moveTo(f.pts[0].x, f.pts[0].y);
-    ctx.lineTo(f.pts[1].x, f.pts[1].y);
-    ctx.lineTo(f.pts[2].x, f.pts[2].y);
+    ctx.moveTo(it.pts[0].x, it.pts[0].y);
+    for (let i = 1; i < it.pts.length; i++) ctx.lineTo(it.pts[i].x, it.pts[i].y);
     ctx.closePath();
-    ctx.fillStyle = mix(base, f.light);
-    ctx.fill();
-    // A hairline of the same colour closes the seams antialiasing leaves between triangles.
-    ctx.strokeStyle = ctx.fillStyle;
-    ctx.lineWidth = 0.6;
-    ctx.stroke();
-  });
-
-  if (showPanels) {
-    const half = plan.rollWidth / 2;
-    const drawn = [];
-    plan.zones.forEach((z, zi) => {
-      const ax = z.plan.across.x * half, ay = z.plan.across.y * half;
-      // Each zone is one plane, so a panel corner sits on it exactly — no sampling needed here.
-      const lift = (x, y) => ({ x, y, z: (z.plane ? z.plane.zAt(x, y) : 0) + 0.05 });
-      z.plan.panels.forEach((p) => {
-        const quad = [
-          lift(p.start.x - ax, p.start.y - ay),
-          lift(p.end.x - ax, p.end.y - ay),
-          lift(p.end.x + ax, p.end.y + ay),
-          lift(p.start.x + ax, p.start.y + ay),
-        ].map(px);
-        drawn.push({ quad, depth: quad.reduce((s, q) => s + q.depth, 0) / 4, zone: zi });
-      });
-    });
-    drawn.sort((p, q) => q.depth - p.depth);
-    drawn.forEach((d) => {
-      ctx.beginPath();
-      ctx.moveTo(d.quad[0].x, d.quad[0].y);
-      for (let i = 1; i < d.quad.length; i++) ctx.lineTo(d.quad[i].x, d.quad[i].y);
-      ctx.closePath();
+    if (it.kind === "face") {
+      const base = it.zone === undefined ? "#7a8a80" : CELL_ZONE_COLORS[it.zone % CELL_ZONE_COLORS.length];
+      ctx.fillStyle = mix(base, it.light);
+      ctx.fill();
+      // A hairline of the same colour closes the seams antialiasing leaves between triangles.
+      ctx.strokeStyle = ctx.fillStyle;
+      ctx.lineWidth = 0.6;
+      ctx.stroke();
+    } else {
       ctx.strokeStyle = "rgba(255,255,255,0.85)";
       ctx.lineWidth = 1;
       ctx.stroke();
-    });
-  }
+    }
+  });
 
   // The hinges last and on top: these are the weld lines, and they are the thing to look at.
   if (plan.hinges) {
