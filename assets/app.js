@@ -9457,6 +9457,9 @@ function resetBaseGridInputs() {
   baseGridInputs.rollLength.value = "100";
   baseGridInputs.bearing.value = "";
   baseGridInputs.weldRate.value = "";
+  // Reset puts the direction back to auto itself, so there is nothing left to undo.
+  baseGridBearingBefore = null;
+  showBearingUndo(false);
 }
 
 function loadBaseGridSurface(triangles, label) {
@@ -9673,14 +9676,54 @@ document.getElementById("baseGridBestBtn").addEventListener("click", () => {
     );
     return;
   }
+  // What was in the box before this button overwrote it — blank means "work it out per zone", and
+  // that is the state there was previously no way back to.
+  baseGridBearingBefore = baseGridInputs.bearing.value;
   baseGridInputs.bearing.value = String(best.bearing);
+  showBearingUndo(true);
   renderBaseGrid();
   baseGridStatus(
     `Base runs best at ${best.bearing}° — ${best.panels} runs on the base, longest ${best.longest.toFixed(0)} m. ` +
-      `Direction hardly moves the quantity; it is the number of runs it changes. The batters are not affected: they run down their own fall lines.`,
+      `Direction hardly moves the quantity; it is the number of runs it changes. The batters are not affected: they run down their own fall lines. ` +
+      `Not what you wanted? Undo puts it back.`,
     "ok"
   );
 });
+
+/* "When I click best direction it doesn't give me the option to go back."
+ *
+ * Quite right: the button wrote a number into the direction box and the previous value was gone.
+ * Worse, the value it usually replaced was BLANK — which is not nothing, it is the setting that
+ * lets each piece of base choose its own direction, and there is no way to guess that from a box
+ * with a number in it. The old value is kept and the button to put it back appears next to the one
+ * that changed it. */
+let baseGridBearingBefore = null;
+
+function showBearingUndo(on) {
+  const btn = document.getElementById("baseGridBearingUndoBtn");
+  if (!btn) return;
+  btn.hidden = !on;
+  btn.textContent = on && baseGridBearingBefore ? `Undo — back to ${baseGridBearingBefore}°` : "Undo — back to auto";
+}
+
+{
+  const undo = document.getElementById("baseGridBearingUndoBtn");
+  if (undo) {
+    undo.addEventListener("click", () => {
+      baseGridInputs.bearing.value = baseGridBearingBefore || "";
+      showBearingUndo(false);
+      renderBaseGrid();
+      baseGridStatus(
+        baseGridBearingBefore
+          ? `Back to ${baseGridBearingBefore}° on the base.`
+          : "Back to auto — each piece of base picks the direction that lays it in the fewest, longest runs. The batters run down their own fall lines either way.",
+        "ok"
+      );
+    });
+  }
+  // Typing a direction is the user setting it themselves; there is nothing of ours left to undo.
+  if (baseGridInputs.bearing) baseGridInputs.bearing.addEventListener("input", () => showBearingUndo(false));
+}
 
 document.getElementById("baseGridResetBtn").addEventListener("click", () => {
   if (!window.confirm("Reset the base geogrid roll spec and direction, and forget the loaded surface?")) return;
@@ -10279,18 +10322,6 @@ function renderCellView3D(plan) {
     items.push({ kind: "face", pts, depth: (pts[0].depth + pts[1].depth + pts[2].depth) / 3, light, zone: zoneOfTri.get(t) });
   });
 
-  if (showPanels) {
-    plan.zones.forEach((z, zi) => {
-      // Each zone is one plane, so a point on it sits exactly — no sampling needed here.
-      const lift = (q) => ({ x: q.x, y: q.y, z: (z.plane ? z.plane.zAt(q.x, q.y) : 0) + 0.05 });
-      z.plan.panels.forEach((q) => {
-        const ring = q.footprint.map((v) => px(lift(v)));
-        if (ring.length < 3) return;
-        items.push({ kind: "panel", pts: ring, depth: ring.reduce((s, v) => s + v.depth, 0) / ring.length, zone: zi });
-      });
-    });
-  }
-
   // Painter's algorithm: furthest first. A few hundred items sorts in no time and saves needing a
   // depth buffer for something this simple.
   items.sort((p, q) => q.depth - p.depth);
@@ -10301,25 +10332,111 @@ function renderCellView3D(plan) {
     return `rgb(${f(r)},${f(g)},${f(b)})`;
   };
 
-  items.forEach((it) => {
+  const facePath = (it) => {
     ctx.beginPath();
     ctx.moveTo(it.pts[0].x, it.pts[0].y);
     for (let i = 1; i < it.pts.length; i++) ctx.lineTo(it.pts[i].x, it.pts[i].y);
     ctx.closePath();
-    if (it.kind === "face") {
-      const base = it.zone === undefined ? "#7a8a80" : CELL_ZONE_COLORS[it.zone % CELL_ZONE_COLORS.length];
-      ctx.fillStyle = mix(base, it.light);
-      ctx.fill();
-      // A hairline of the same colour closes the seams antialiasing leaves between triangles.
-      ctx.strokeStyle = ctx.fillStyle;
-      ctx.lineWidth = 0.6;
-      ctx.stroke();
-    } else {
-      ctx.strokeStyle = "rgba(255,255,255,0.85)";
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    }
+  };
+
+  items.forEach((it) => {
+    facePath(it);
+    const base = it.zone === undefined ? "#7a8a80" : CELL_ZONE_COLORS[it.zone % CELL_ZONE_COLORS.length];
+    ctx.fillStyle = mix(base, it.light);
+    ctx.fill();
+    // A hairline of the same colour closes the seams antialiasing leaves between triangles.
+    ctx.strokeStyle = ctx.fillStyle;
+    ctx.lineWidth = 0.6;
+    ctx.stroke();
   });
+
+  /* THE PANELS GO ON AFTERWARDS, AND ONLY WHERE THEIR OWN GROUND IS THE GROUND YOU CAN SEE.
+   *
+   * They used to go into the depth-sorted list with the triangles, one depth value per panel. That
+   * cannot work here and the measurements say why: the longest panel on this cell is 169.5 m and
+   * the median triangle is 2.9 m across, so a single depth for a strip 58 times the size of the
+   * ground under it loses to every triangle nearer than its own midpoint — which then paints over
+   * it. The result was strips that showed up in patches, which is what was reported.
+   *
+   * Sorting more finely does not fix it either: chop the strip into segments and each segment is
+   * still being compared against a triangle whose centroid can be a metre nearer or further than
+   * the bit of ground actually under it.
+   *
+   * So the surface is drawn once more, offscreen, in flat per-zone id colours — the same faces, the
+   * same order, so it is the same picture. That buffer answers the only question that matters for a
+   * panel: at this point on screen, which zone's ground is visible? A panel sits 50 mm above its own
+   * zone's plane and a zone is planar by construction, so a panel is visible exactly where the
+   * buffer shows its own zone, and hidden where a nearer part of the cell has come in front. That
+   * is real hidden-line removal, at the cost of one extra face pass and one read.
+   *
+   * It also settles the overhang: where a roll hangs past the edge of the cell the buffer shows
+   * background, no ground, and the line stops there rather than trailing off into space.
+   */
+  if (showPanels) {
+    const ID_SCALE = 0.5; // half resolution — plenty to answer "which zone is here", quarter the read
+    const idW = Math.max(1, Math.round(W * ID_SCALE)), idH = Math.max(1, Math.round(H * ID_SCALE));
+    const idCanvas = document.createElement("canvas");
+    idCanvas.width = idW;
+    idCanvas.height = idH;
+    const idCtx = idCanvas.getContext("2d", { willReadFrequently: true });
+    idCtx.scale(ID_SCALE, ID_SCALE);
+    // Widely-spaced ids so a pixel that antialiasing blended between two zones matches neither and
+    // is simply treated as hidden — that costs a hairline at a zone boundary and nothing else.
+    const idOf = (zi) => (zi === undefined ? 0 : (zi + 1) * 20);
+    items.forEach((it) => {
+      idCtx.beginPath();
+      idCtx.moveTo(it.pts[0].x, it.pts[0].y);
+      for (let i = 1; i < it.pts.length; i++) idCtx.lineTo(it.pts[i].x, it.pts[i].y);
+      idCtx.closePath();
+      const c = `rgb(${idOf(it.zone)},0,0)`;
+      idCtx.fillStyle = c;
+      idCtx.fill();
+      idCtx.strokeStyle = c;
+      idCtx.lineWidth = 0.6;
+      idCtx.stroke();
+    });
+    const idData = idCtx.getImageData(0, 0, idW, idH).data;
+    const zoneAt = (sx, sy) => {
+      const ix = Math.round(sx * ID_SCALE), iy = Math.round(sy * ID_SCALE);
+      if (ix < 0 || iy < 0 || ix >= idW || iy >= idH) return -1;
+      const v = idData[(iy * idW + ix) * 4];
+      return v === 0 ? -1 : v / 20 - 1;
+    };
+
+    // Short enough that a strip follows the ground it crosses, long enough not to flood the loop.
+    const STEP_M = 2;
+    ctx.lineCap = "round";
+    plan.zones.forEach((z, zi) => {
+      // Each zone is one plane, so a point on it sits exactly — no sampling of the TIN needed.
+      const lift = (q) => ({ x: q.x, y: q.y, z: (z.plane ? z.plane.zAt(q.x, q.y) : 0) + 0.05 });
+      z.plan.panels.forEach((q) => {
+        const f = q.footprint;
+        if (!f || f.length < 3) return;
+        for (let i = 0; i < f.length; i++) {
+          const a = f[i], c = f[(i + 1) % f.length];
+          const steps = Math.max(1, Math.ceil(Math.hypot(c.x - a.x, c.y - a.y) / STEP_M));
+          for (let s = 0; s < steps; s++) {
+            const t0 = s / steps, t1 = (s + 1) / steps;
+            const p0 = px(lift({ x: a.x + (c.x - a.x) * t0, y: a.y + (c.y - a.y) * t0 }));
+            const p1 = px(lift({ x: a.x + (c.x - a.x) * t1, y: a.y + (c.y - a.y) * t1 }));
+            if (zoneAt((p0.x + p1.x) / 2, (p0.y + p1.y) / 2) !== zi) continue;
+            // A dark line under a light one, so a strip reads on the orange batter and the pale
+            // base alike. One white hairline was legible on about half the zones and no more.
+            ctx.beginPath();
+            ctx.moveTo(p0.x, p0.y);
+            ctx.lineTo(p1.x, p1.y);
+            ctx.strokeStyle = "rgba(20,28,24,0.55)";
+            ctx.lineWidth = 3.2;
+            ctx.stroke();
+            ctx.strokeStyle = "rgba(255,255,255,0.95)";
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+          }
+        }
+      });
+    });
+    ctx.lineCap = "butt";
+  }
 
   // The hinges last and on top: these are the weld lines, and they are the thing to look at.
   if (plan.hinges) {

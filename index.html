@@ -670,6 +670,9 @@
       </div>
       <div class="basegrid-actions">
         <button id="baseGridBestBtn" class="btn btn--ghost" type="button">Find the best direction</button>
+        <!-- "Find the best direction" overwrites the direction box, and until this existed there was
+             no way back to what was there before except knowing that blank means auto. -->
+        <button id="baseGridBearingUndoBtn" class="btn btn--ghost" type="button" hidden>Undo — back to auto</button>
         <button id="baseGridExportBtn" class="btn btn--ghost" type="button">Export panel layout (DXF)</button>
       </div>
       <p class="generator__hint">
