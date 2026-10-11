@@ -77,8 +77,10 @@ if ("serviceWorker" in navigator) {
   updateThemeIcons();
 
   document.getElementById("themeToggle").addEventListener("click", () => {
-    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    const current = document.documentElement.getAttribute("data-theme") || (prefersDark ? "dark" : "light");
+    // Light is the default now whatever the OS prefers, so an unset data-theme means light. While
+    // this still read the OS, the toggle on a dark-preferring machine thought it was already dark
+    // and its first click switched light->light: nothing happened, and you had to press it twice.
+    const current = document.documentElement.getAttribute("data-theme") || "light";
     const next = current === "dark" ? "light" : "dark";
     document.documentElement.setAttribute("data-theme", next);
     localStorage.setItem("geogrid-theme", next);
@@ -92,8 +94,10 @@ if ("serviceWorker" in navigator) {
   });
 
   function updateThemeIcons() {
-    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    const current = document.documentElement.getAttribute("data-theme") || (prefersDark ? "dark" : "light");
+    // Light is the default now whatever the OS prefers, so an unset data-theme means light. While
+    // this still read the OS, the toggle on a dark-preferring machine thought it was already dark
+    // and its first click switched light->light: nothing happened, and you had to press it twice.
+    const current = document.documentElement.getAttribute("data-theme") || "light";
     // Plain `.hidden = ...` doesn't reliably reflect to the `hidden` attribute on an <svg> root
     // element the way it does on ordinary HTML elements — toggleAttribute sets the attribute
     // itself, so the global [hidden]{display:none} rule actually matches.
@@ -5207,8 +5211,13 @@ function renderProductUsage(results, rolls, productSpecs) {
   const totalArea = Array.from(areaByProduct.values()).reduce((s, v) => s + v, 0);
 
   const usedProducts = products.filter((p) => (areaByProduct.get(p.id) || 0) > 1e-9);
+  // The whole block stands down, heading and all, until there is usage to show. Left in place it
+  // reserved about 130px of nothing in the tallest panel on the page, which is most of what made
+  // the first screen read as empty.
+  const block = list.closest(".product-usage");
+  if (block) block.hidden = !usedProducts.length;
   if (!usedProducts.length) {
-    list.innerHTML = `<p class="empty-state">No lifts yet — usage appears once you add some.</p>`;
+    list.innerHTML = "";
     return;
   }
   list.innerHTML = usedProducts
