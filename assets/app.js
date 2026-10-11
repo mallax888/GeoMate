@@ -5579,7 +5579,7 @@ const TABS = {
  * has its own upload with the product picker and centrelines beside it, and for the empty state,
  * which is already showing the same call to action a few centimetres below it — two identical green
  * buttons on one screen is not two ways in, it is a mistake. */
-// Cut plan leads: it is where the extents, the surfaces and the centrelines are loaded, and where
+// Upload model leads: it is where the extents, the surfaces and the centrelines are loaded, and where
 // a dropped drawing lands. Opening anywhere else would open behind the front door.
 let currentTab = "cutplan";
 
