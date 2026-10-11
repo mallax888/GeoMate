@@ -276,7 +276,10 @@
 
   <section class="panel panel--lifts" aria-labelledby="liftsHeading">
     <div class="panel__headrow">
-      <h2 id="liftsHeading" class="panel__heading">Lifts</h2>
+      <!-- The heading is read out but not drawn. "Lifts" stopped being true once the Landfill liner
+           moved in here, and it was spending about 60px of a tab strip that has none to spare — but
+           a panel with no name at all is worse for anyone using a screen reader. -->
+      <h2 id="liftsHeading" class="panel__heading sr-only">Lifts, surfaces and output</h2>
       <div class="tabs-wrap">
       <div class="tabs" role="tablist" aria-label="Lift view">
         <button type="button" class="tab is-active" id="tabCutPlan" role="tab" aria-selected="true">
