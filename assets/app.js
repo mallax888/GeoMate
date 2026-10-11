@@ -9184,6 +9184,19 @@ function makeTinIndex(triangles, cellSize) {
     bounds: { minX, minY, maxX, maxY },
     /** Height of the surface at (x, y), or null where the surface does not reach. */
     zAt(x, y) {
+      const f = this.faceAt(x, y);
+      return f ? f.z : null;
+    },
+    /**
+     * The ground at (x, y): its height, the triangle it belongs to, and which way that triangle
+     * falls. A roll being walked down the hill needs the direction as much as the height, and
+     * looking the triangle up twice to get both is the slow half of tracing a run.
+     *
+     * fall is the steepest descent in PLAN, unit length; grade is how steep that is. On ground flat
+     * enough that there is no meaningful steepest direction, fall is null and the caller carries on
+     * the way it was already going — a roll does not stop dead because the base levelled out.
+     */
+    faceAt(x, y) {
       const list = buckets.get(at(Math.floor(x / cell), Math.floor(y / cell)));
       if (!list) return null;
       for (const i of list) {
@@ -9194,7 +9207,22 @@ function makeTinIndex(triangles, cellSize) {
         const l1 = ((b.y - c.y) * (x - c.x) + (c.x - b.x) * (y - c.y)) / den;
         const l2 = ((c.y - a.y) * (x - c.x) + (a.x - c.x) * (y - c.y)) / den;
         const l3 = 1 - l1 - l2;
-        if (l1 >= -1e-9 && l2 >= -1e-9 && l3 >= -1e-9) return l1 * a.z + l2 * b.z + l3 * c.z;
+        if (l1 >= -1e-9 && l2 >= -1e-9 && l3 >= -1e-9) {
+          const ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z;
+          const vx = c.x - a.x, vy = c.y - a.y, vz = c.z - a.z;
+          let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+          const nl = Math.hypot(nx, ny, nz) || 1;
+          nx /= nl; ny /= nl; nz /= nl;
+          if (nz < 0) { nx = -nx; ny = -ny; nz = -nz; }
+          const h = Math.hypot(nx, ny);
+          return {
+            z: l1 * a.z + l2 * b.z + l3 * c.z,
+            tri: i,
+            normal: { x: nx, y: ny, z: nz },
+            grade: nz > 1e-9 ? h / nz : Infinity,
+            fall: h > 1e-6 ? { x: nx / h, y: ny / h } : null,
+          };
+        }
       }
       return null;
     },
@@ -10205,6 +10233,114 @@ function computeCellGridPlan(triangles, rollWidth, minOverlap, baseBearing, opti
  * Found as the edges that are on the boundary of TWO different zones. An edge on the boundary of
  * only one is the outside of the cell, where there is nothing to weld to.
  */
+/* ===============================================================================================
+   RUNNING A ROLL DOWN THE HILL
+   ===============================================================================================
+
+   "Generally the guys position the roll on the top of the slope and run it down — then they will
+   make a decision on site as to cut or keep rolling. They normally cut at the end of the design or
+   a large change in direction, so as not to waste the grid."
+
+   That is a different thing from what the app did, which was to chop the surface into flat facets,
+   give each facet one averaged direction, lay parallel rolls inside it and cut at every facet
+   boundary. It produced rolls running across a curved batter instead of fanning down it, a base
+   planned as its own separate job, and welds at toes nobody welds at.
+
+   A roll is now traced, not tiled. It starts on high ground and walks the steepest descent until
+   one of four things stops it. Everything else — footprints, gaps, weld, schedule — is built from
+   the runs this produces.
+   ============================================================================================= */
+
+/** How far apart two directions are, in degrees, ignoring which way round they point. */
+function dirTurnDeg(a, b) {
+  const dot = Math.max(-1, Math.min(1, a.x * b.x + a.y * b.y));
+  return (Math.acos(dot) * 180) / Math.PI;
+}
+
+const ROLL_TRACE_STEP_M = 1.0;
+/* How far the ground's own fall can swing away from the way the roll is already pointing before it
+ * stops. Carrying on past that means running a roll diagonally across the next batter, which is
+ * what the blue weld lines in the user's drawing exist to avoid — where two batters face different
+ * ways, the runs from each side butt up and are welded along the line between them. Not offered as
+ * a setting: "a large change in direction" is a judgement call, and every run reports where and why
+ * it stopped so the judgement stays with the foreman. */
+const ROLL_TURN_LIMIT_DEG = 35;
+/* ...and the test only applies to ground steep enough for "diagonally" to mean anything. Same
+ * threshold the zoning uses to tell a batter from a base. This matters more than it sounds: at the
+ * toe of a batter the base beyond often rises gently AWAY from the run, so its fall points back the
+ * way the roll came — a 180 degree turn, on ground you can lay a roll across in any direction at
+ * all. Testing it would stop every single run at the first toe, which is precisely the behaviour
+ * being removed. On a 2% floor the roll carries straight on. */
+const ROLL_FLAT_GRADE = 0.12;
+
+/**
+ * One roll, from where it is laid to where it stops.
+ *
+ * Stops, and this is the whole of the rule:
+ *   "ridge"   it reached a convex break. The grid tents over a crest and lifts off the ground, so
+ *             it cannot carry on — cut and weld to the strip coming up the other side.
+ *   "turn"    the ground ahead falls a different way. Straight on would mean running diagonally
+ *             across the next batter.
+ *   "edge"    it ran off the design.
+ *   "length"  it used up the roll.
+ *
+ * It does NOT stop at a hollow. Running onto the base at the toe of a batter, the grid lies down
+ * into the break and keeps going, which is what "it carries on across the base" means and is worth
+ * a great deal of weld that was being charged for.
+ *
+ * Flat ground does not stop it either: where the base is level enough to have no steepest
+ * direction, the run holds the bearing it arrived on rather than stalling.
+ */
+function traceRoll(tin, start, dir0, opts) {
+  const o = opts || {};
+  const step = o.step || ROLL_TRACE_STEP_M;
+  const maxLen = o.rollLength > 0 ? o.rollLength : Infinity;
+  const turnLimit = o.turnLimit ?? ROLL_TURN_LIMIT_DEG;
+  const isRidgeAt = o.isRidgeAt || (() => false);
+
+  const first = tin.faceAt(start.x, start.y);
+  if (!first) return null;
+  let dir = dir0 || first.fall;
+  if (!dir) return null;
+
+  const path = [{ x: start.x, y: start.y, z: first.z }];
+  let draped = 0;
+  let stoppedBy = "edge";
+  let p = { x: start.x, y: start.y, z: first.z };
+
+  for (let guard = 0; guard < 20000; guard++) {
+    const nx = p.x + dir.x * step, ny = p.y + dir.y * step;
+    const f = tin.faceAt(nx, ny);
+    if (!f) { stoppedBy = "edge"; break; }
+
+    // A ridge between here and there ends the run at the break, not past it.
+    if (isRidgeAt(p, { x: nx, y: ny })) { stoppedBy = "ridge"; break; }
+
+    // Flat ground has no opinion on direction; only a real batter can be run across diagonally.
+    const steep = f.grade >= (o.flatGrade ?? ROLL_FLAT_GRADE);
+    if (steep && f.fall && dirTurnDeg(dir, f.fall) > turnLimit) { stoppedBy = "turn"; break; }
+
+    const seg = Math.hypot(nx - p.x, ny - p.y, f.z - p.z);
+    if (draped + seg > maxLen) { stoppedBy = "length"; break; }
+
+    draped += seg;
+    p = { x: nx, y: ny, z: f.z };
+    path.push(p);
+    // Ease onto the new fall line instead of snapping to it, so a run crossing a triangle seam
+    // does not kink. A roll is stiff; it does not change direction in one metre. And it only
+    // steers to ground that HAS a direction — a flat base must not drag the run sideways.
+    if (steep && f.fall) dir = normalise2({ x: dir.x * 0.65 + f.fall.x * 0.35, y: dir.y * 0.65 + f.fall.y * 0.35 }) || dir;
+  }
+
+  if (path.length < 2) return null;
+  return { path, draped, stoppedBy, start: path[0], end: path[path.length - 1] };
+}
+
+function normalise2(v) {
+  const h = Math.hypot(v.x, v.y);
+  return h > 1e-9 ? { x: v.x / h, y: v.y / h } : null;
+}
+
 function cellHingeLines(zones) {
   const keyOf = (p) => `${p.x.toFixed(4)},${p.y.toFixed(4)}`;
   const points = new Map();
