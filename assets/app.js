@@ -7797,6 +7797,13 @@ function cutPlanLifts(results) {
 function writeCutPlanGeometry(doc, lifts, rollLookup) {
   const layerFor = (kind, rlLabel, color) =>
     doc.layer(`${kind}_RL_${rlLabel.replace(/[^A-Za-z0-9_.-]+/g, "_")}`, color);
+  // A strip can be cut from two rolls ("3,4"), so it gets a tag on each of their layers.
+  const rollLayerFor = (rollStr) =>
+    String(rollStr)
+      .split(",")
+      .map((n) => n.trim())
+      .filter(Boolean)
+      .map((n) => doc.layer(`ROLL_${String(n).padStart(2, "0")}`, DXF_LAYER_COLORS[(Number(n) || 0) % DXF_LAYER_COLORS.length]));
 
   lifts.forEach(({ r, rl, rlLabel }, liftIdx) => {
     const color = DXF_LAYER_COLORS[liftIdx % DXF_LAYER_COLORS.length];
@@ -7819,18 +7826,26 @@ function writeCutPlanGeometry(doc, lifts, rollLookup) {
 
       const mid = { x: (q.centerNear.x + q.farCenter.x) / 2, y: (q.centerNear.y + q.farCenter.y) / 2, z: rl };
       // stripRollNumbersFor hands back an already-joined string ("3" or "3,4"), not a list.
-      const roll = rollNums && rollNums[i] ? ` R${rollNums[i]}` : "";
+      const roll = rollNums && rollNums[i] ? rollNums[i] : "";
       // Rotated to read along the strip rather than across it, and kept the right way up: past
       // vertical a label reads upside down, so it is flipped back through 180°.
       let rot = (Math.atan2(q.dir.y, q.dir.x) * 180) / Math.PI;
       if (rot > 90 || rot <= -90) rot += 180;
-      doc.text(
-        textLayer,
-        mid,
-        `${i + 1}  ${q.length.toFixed(2)}m${roll}`,
-        Math.max(0.12, Math.min(0.45, q.width * 0.22)),
-        rot
-      );
+      const height = Math.max(0.12, Math.min(0.45, q.width * 0.22));
+      doc.text(textLayer, mid, `${i + 1}  ${q.length.toFixed(2)}m`, height, rot);
+      /* AND THE ROLL NUMBER ON A LAYER OF ITS OWN, one per roll.
+       *
+       * "An export of all the grids and the layers and roll numbers — we don't need the tables."
+       * A roll tag on ROLL_07 means freezing everything else shows you precisely which pieces come
+       * off roll 7 and where they lie, which is the roll schedule, on the drawing, in place. The
+       * cut length stays with the strip number on TEXT_RL_x so a single lift still plots complete
+       * without every roll layer switched on. Geometry is not duplicated — only the tag moves.
+       */
+      if (roll) {
+        rollLayerFor(roll).forEach((layer) => {
+          doc.text(layer, { x: mid.x, y: mid.y, z: rl }, `R${roll}`, height, rot);
+        });
+      }
     });
   });
 }
@@ -8448,7 +8463,8 @@ document.getElementById("exportBtn").addEventListener("click", () => {
         window.__geogridResults || [],
         buildRollLookup(window.__geogridRolls || []),
         baseGridSurface,
-        baseGridPlanResult
+        baseGridPlanResult,
+        parseFloat((baseGridInputs.rollLength || {}).value) || 0
       );
       if (!built) {
         // Say which of the three reasons it is. "Nothing happened" on a button is the least useful
@@ -9427,23 +9443,35 @@ function computeBaseGridPanels(triangles, poly, rollWidth, minOverlap, bearingDe
  */
 function packPanelsIntoRolls(lengths, rollLength) {
   if (!(rollLength > 0)) return null;
-  const overlong = lengths.filter((L) => L > rollLength + 1e-9);
-  const fits = lengths.filter((L) => L <= rollLength + 1e-9).sort((a, b) => b - a);
+  // Indices travel with the lengths, so the answer is not just "how many rolls" but "which panel
+  // comes off which roll" — which is what has to reach the drawing if the schedule table is to
+  // stop being the only place that knows.
+  const items = lengths.map((len, i) => ({ len, i }));
+  const overlong = items.filter((p) => p.len > rollLength + 1e-9);
+  const fits = items.filter((p) => p.len <= rollLength + 1e-9).sort((a, b) => b.len - a.len);
   const rolls = [];
-  fits.forEach((L) => {
-    const roll = rolls.find((r) => r.left >= L - 1e-9);
+  fits.forEach((p) => {
+    const roll = rolls.find((r) => r.left >= p.len - 1e-9);
     if (roll) {
-      roll.left -= L;
-      roll.pieces.push(L);
+      roll.left -= p.len;
+      roll.pieces.push(p.len);
+      roll.panels.push(p.i);
     } else {
-      rolls.push({ left: rollLength - L, pieces: [L] });
+      rolls.push({ left: rollLength - p.len, pieces: [p.len], panels: [p.i] });
     }
   });
+  // A panel longer than a roll gets a roll of its own and still cannot be delivered in one piece;
+  // it is numbered anyway so the drawing can say which one it is.
+  const rollOf = new Array(lengths.length).fill(0);
+  rolls.forEach((r, ri) => r.panels.forEach((i) => { rollOf[i] = ri + 1; }));
+  overlong.forEach((p, k) => { rollOf[p.i] = rolls.length + k + 1; });
   return {
     rolls: rolls.length + overlong.length,
     packed: rolls,
-    overlong,
+    overlong: overlong.map((p) => p.len),
     offcut: rolls.reduce((s, r) => s + r.left, 0),
+    /** 1-based roll number for each panel, in the order the panels were handed in. */
+    rollOf,
   };
 }
 
@@ -9784,8 +9812,16 @@ Object.values(baseGridInputs).forEach((el) => {
  *   PANEL_CL      each run's centreline, draped over the surface — the line to set out from
  *   PANEL_TEXT    panel number and its length over the ground
  */
-function writeLinerGeometry(doc, surface, plan) {
+function writeLinerGeometry(doc, surface, plan, rollLength) {
   const poly3d = (layer, pts, closed) => doc.polyline(layer, pts, { closed });
+
+  /* The liner's panels never carried a roll number into CAD at all — the only place that knew
+   * which panel came off which roll was the schedule table. Same packing the stats use, so the
+   * drawing and the table cannot disagree, and the same ROLL_nn layers the cut plan writes. */
+  const allPanels = plan.zones.flatMap((z) => z.plan.panels);
+  const packing = rollLength > 0 ? packPanelsIntoRolls(allPanels.map((q) => q.draped), rollLength) : null;
+  const rollIndexOf = new Map();
+  if (packing) allPanels.forEach((q, i) => rollIndexOf.set(q, packing.rollOf[i]));
 
   const tin = makeTinIndex(surface.triangles);
 
@@ -9853,21 +9889,26 @@ function writeLinerGeometry(doc, surface, plan) {
       : { x: p.start.x, y: p.start.y, z: z.plane ? z.plane.zAt(p.start.x, p.start.y) : 0 };
     let rot = (Math.atan2(z.plan.dir.y, z.plan.dir.x) * 180) / Math.PI;
     if (rot > 90 || rot <= -90) rot += 180;
-    doc.text(
-      PANEL_TEXT,
-      mid,
-      `${p.n}  ${p.draped.toFixed(1)}m`,
-      Math.max(0.3, Math.min(1.5, plan.rollWidth * 0.18)),
-      rot
-    );
+    const size = Math.max(0.3, Math.min(1.5, plan.rollWidth * 0.18));
+    doc.text(PANEL_TEXT, mid, `${p.n}  ${p.draped.toFixed(1)}m`, size, rot);
+    /* LINER_ROLL_nn, not ROLL_nn. The cut plan and the liner are two separate schedules, each
+     * numbering its own rolls from 1, and in the combined file sharing a namespace put cut-plan
+     * roll 7 and liner roll 7 on one layer — 11 pieces that are nine wall strips and two cell
+     * panels, off different product at different widths. Isolating that layer would have told
+     * somebody to go and find one roll. */
+    const rn = rollIndexOf.get(p);
+    if (rn) {
+      doc.text(doc.layer(`LINER_ROLL_${String(rn).padStart(2, "0")}`, DXF_LAYER_COLORS[rn % DXF_LAYER_COLORS.length]),
+               mid, `R${rn}`, size, rot);
+    }
   });
   });
 }
 
-function buildBaseGridDxf(surface, plan) {
+function buildBaseGridDxf(surface, plan, rollLength) {
   if (!surface || !plan) return null;
   const doc = dxfDoc();
-  writeLinerGeometry(doc, surface, plan);
+  writeLinerGeometry(doc, surface, plan, rollLength);
   return doc.toText();
 }
 
@@ -9890,14 +9931,14 @@ function buildBaseGridDxf(surface, plan) {
  * survey position at all — a face length and an embedment is not a location — so they are counted as
  * skipped rather than invented.
  */
-function buildEverythingDxf(results, rollLookup, surface, plan) {
+function buildEverythingDxf(results, rollLookup, surface, plan, linerRollLength) {
   const doc = dxfDoc();
   const lifts = cutPlanLifts(results || []);
   if (lifts.length) writeCutPlanGeometry(doc, lifts, rollLookup);
   const afterCutPlan = doc.bounds();
 
   const hasLiner = !!(surface && plan);
-  if (hasLiner) writeLinerGeometry(doc, surface, plan);
+  if (hasLiner) writeLinerGeometry(doc, surface, plan, linerRollLength);
 
   if (doc.isEmpty) return null;
 
@@ -9948,7 +9989,7 @@ document.getElementById("baseGridExportBtn").addEventListener("click", () => {
     baseGridStatus("Upload the cell surface first — there is no layout to export yet.", "error");
     return;
   }
-  const dxf = buildBaseGridDxf(baseGridSurface, baseGridPlanResult);
+  const dxf = buildBaseGridDxf(baseGridSurface, baseGridPlanResult, parseFloat(baseGridInputs.rollLength.value) || 0);
   if (!dxf) return;
   downloadFile(`${fileStem("geomate")}_base_geogrid.dxf`, dxf, "application/dxf");
   baseGridStatus(
