@@ -1121,6 +1121,8 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
 .sequence-card__diagram { width: 100%; height: 40px; display: block; margin-top: 0.6rem; }
 
 /* ---------- Cut plan ---------- */
+/* First thing in the panel, so no top margin pushing it away from the tabs it sits under. */
+.cutplan-intro__heading { margin-top: 0; }
 .cutplan-intro p {
   font-size: 0.82rem;
   color: var(--ink-muted);
