@@ -10208,40 +10208,93 @@ function computeCellGridPlan(triangles, rollWidth, minOverlap, baseBearing, opti
 function cellHingeLines(zones) {
   const keyOf = (p) => `${p.x.toFixed(4)},${p.y.toFixed(4)}`;
   const points = new Map();
-  // For each zone, the edges used exactly once by its own triangles — its own outline.
+  // For each zone, the edges used exactly once by its own triangles — its own outline. The third
+  // corner of the triangle that owns the edge is kept too: it is a point known to be inside that
+  // zone and right next to this edge, which is what the ridge/hollow test needs.
   const owners = new Map();
   zones.forEach((zone, zi) => {
     const counts = new Map();
+    const opposite = new Map();
     zone.triangles.forEach((tri) => {
       for (let k = 0; k < 3; k++) {
-        const p = tri[k], q = tri[(k + 1) % 3];
+        const p = tri[k], q = tri[(k + 1) % 3], o = tri[(k + 2) % 3];
         const kp = keyOf(p), kq = keyOf(q);
         if (kp === kq) continue;
         points.set(kp, p);
         points.set(kq, q);
         const ek = kp < kq ? `${kp}|${kq}` : `${kq}|${kp}`;
         counts.set(ek, (counts.get(ek) || 0) + 1);
+        opposite.set(ek, o);
       }
     });
     counts.forEach((n, ek) => {
       if (n !== 1) return;
       if (!owners.has(ek)) owners.set(ek, []);
-      owners.get(ek).push(zi);
+      owners.get(ek).push({ zi, opp: opposite.get(ek) });
     });
   });
 
   const segments = [];
-  let length = 0;
-  owners.forEach((zoneList, ek) => {
-    if (zoneList.length < 2) return; // the outside of the cell: nothing on the far side
+  let length = 0, ridgeLength = 0, hollowLength = 0;
+  owners.forEach((list, ek) => {
+    if (list.length < 2) return; // the outside of the cell: nothing on the far side
     const [a, b] = ek.split("|").map((k) => points.get(k));
     if (!a || !b) return;
-    segments.push({ a, b, zones: zoneList.slice(0, 2) });
+    const [A, B] = list;
+    segments.push({
+      a,
+      b,
+      zones: [A.zi, B.zi],
+      kind: breakKind(zones[A.zi], zones[B.zi], A.opp, B.opp),
+    });
     // Measured over the ground, like everything else here.
-    length += Math.hypot(b.x - a.x, b.y - a.y, (b.z || 0) - (a.z || 0));
+    const len = Math.hypot(b.x - a.x, b.y - a.y, (b.z || 0) - (a.z || 0));
+    length += len;
+    const kind = segments[segments.length - 1].kind;
+    if (kind === "ridge") ridgeLength += len;
+    else if (kind === "hollow") hollowLength += len;
   });
 
-  return { segments, length };
+  return { segments, length, ridgeLength, hollowLength };
+}
+
+/**
+ * WHICH WAY DOES THE GROUND BREAK HERE — and therefore, does a roll stop?
+ *
+ * The user's rule, in their words: the guys put the roll on the top of the slope, run it down, and
+ * cut at the end of the design or at a large change in direction, so as not to waste grid. Asked
+ * whether that means cutting at the toe, the answer was no — it carries on across the base. Asked
+ * what a large change is, the answer was that it is judged on site.
+ *
+ * Those two are not in conflict once you look at which way the break goes:
+ *
+ *   HOLLOW (concave, a toe)  the ground turns UP ahead of the roll. The grid lies down into it and
+ *                            keeps going. No cut, no weld.
+ *   RIDGE  (convex, a crest) the ground turns DOWN away from the roll. The grid tents over the top
+ *                            and lifts off the ground, so it cannot carry on: cut, and weld to the
+ *                            strip coming up the other side.
+ *
+ * The test is local and needs no tolerance on angle, which is the point — the foreman's judgement
+ * is about how big the change is, and this is only about its sign. Take the corner of zone B's own
+ * triangle just across the edge, and ask where zone A's plane would have put it. Below A's plane
+ * means the ground fell away: a ridge. Above means it turned up: a hollow. Checked from both sides
+ * and only believed when they agree, so a sliver triangle with a noisy normal reads as "flat"
+ * rather than inventing a weld.
+ */
+function breakKind(zoneA, zoneB, oppA, oppB) {
+  if (!zoneA || !zoneB || !zoneA.plane || !zoneB.plane || !oppA || !oppB) return "flat";
+  // Scaled to the step being taken, so a 200 m cell and a 2 m detail both get a sane threshold.
+  const reach = Math.max(
+    Math.hypot(oppB.x - zoneA.plane.origin.x, oppB.y - zoneA.plane.origin.y),
+    Math.hypot(oppA.x - zoneB.plane.origin.x, oppA.y - zoneB.plane.origin.y),
+    1
+  );
+  const tol = Math.max(0.01, reach * 0.002);
+  const fromA = (oppB.z || 0) - zoneA.plane.zAt(oppB.x, oppB.y);
+  const fromB = (oppA.z || 0) - zoneB.plane.zAt(oppA.x, oppA.y);
+  if (fromA < -tol && fromB < -tol) return "ridge";
+  if (fromA > tol && fromB > tol) return "hollow";
+  return "flat";
 }
 
 /* --- The cell in 3D ---------------------------------------------------------------------------
