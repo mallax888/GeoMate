@@ -9867,6 +9867,160 @@ function renderPanelEditor() {
   }
 }
 
+/** LINEs and open polylines in model space — on this job, the individual sheets. */
+function dxfOpenPaths(text) {
+  const out = [];
+  dxfEntityRecords(text).forEach((rec) => {
+    if (rec.section !== "ENTITIES" || rec.block) return;
+    const num = (code) => rec.codes.filter((c) => c.code === code).map((c) => parseFloat(c.value));
+    if (rec.type === "LINE") {
+      const x1 = num(10)[0], y1 = num(20)[0], x2 = num(11)[0], y2 = num(21)[0];
+      if ([x1, y1, x2, y2].every(Number.isFinite)) out.push([{ x: x1, y: y1 }, { x: x2, y: y2 }]);
+      return;
+    }
+    if (rec.type !== "LWPOLYLINE" && rec.type !== "POLYLINE" && rec.type !== "_POLYLINE") return;
+    const flags = num(70)[0] || 0;
+    if (flags & 1) return;                       // closed: that is a boundary, not a sheet
+    const xs = num(10), ys = num(20);
+    const pts = [];
+    for (let i = 0; i < Math.min(xs.length, ys.length); i++) {
+      if (Number.isFinite(xs[i]) && Number.isFinite(ys[i])) pts.push({ x: xs[i], y: ys[i] });
+    }
+    if (pts.length >= 2) out.push(pts);
+  });
+  return out;
+}
+
+/**
+ * READ THE PANELLING OUT OF CAD INSTEAD OF REDRAWING IT.
+ *
+ * The layout usually exists already — the user's own LINER_LAYOUT.dxf had the four panel
+ * boundaries as closed polylines and every 7 m sheet as a line inside them. A closed polyline is
+ * a panel boundary, so it becomes a weld line; the open lines inside one are its sheets, and their
+ * dominant direction is the way the rolls run there.
+ *
+ * DOMINANT, not longest. Taking the longest line in each panel picked up a boundary or a stray and
+ * put two of four panels 90 degrees out. Directions are binned in 5 degree steps and weighted by
+ * length, so the run of 26 parallel sheets decides it and one odd line cannot.
+ *
+ * A panel whose direction rests on too little evidence is imported with NO bearing rather than a
+ * guessed one: it falls back to the ground's own fall and the arrow is there to be corrected. On
+ * this file exactly one panel was in that position, and inventing a bearing for it is what put the
+ * top-left corner 90 degrees out.
+ */
+function importPanelLayoutDxf(text) {
+  /* The panels come from the boundary reader, which returns closed loops only and does NOT repeat
+   * the first point at the end — testing "is the last point the first point" said none of them
+   * were closed and read the whole file as nothing. Everything it returns is a panel.
+   *
+   * The sheets are not boundaries, so that reader never sees them. They are read straight off the
+   * entities: LINEs and open polylines, which is what a sheet is drawn as. */
+  const closed = (parseDXFPolygons(text) || [])
+    .map((poly) => poly.points || poly)
+    .filter((p) => p && p.length >= 3);
+  const open = dxfOpenPaths(text);
+  if (!closed.length) return { panels: 0, lines: open.length, noPanels: true };
+
+  const inside = (poly, q) => {
+    let hit = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const a = poly[i], b = poly[j];
+      if ((a.y > q.y) !== (b.y > q.y) && q.x < ((b.x - a.x) * (q.y - a.y)) / (b.y - a.y) + a.x) hit = !hit;
+    }
+    return hit;
+  };
+  const along = (line, f) => {
+    let tot = 0;
+    for (let i = 0; i + 1 < line.length; i++) tot += Math.hypot(line[i + 1].x - line[i].x, line[i + 1].y - line[i].y);
+    let want = f * tot, acc = 0;
+    for (let i = 0; i + 1 < line.length; i++) {
+      const seg = Math.hypot(line[i + 1].x - line[i].x, line[i + 1].y - line[i].y);
+      if (acc + seg >= want) {
+        const t = seg > 0 ? (want - acc) / seg : 0;
+        return { x: line[i].x + (line[i + 1].x - line[i].x) * t, y: line[i].y + (line[i + 1].y - line[i].y) * t };
+      }
+      acc += seg;
+    }
+    return line[line.length - 1];
+  };
+  const lengthOf = (line) => {
+    let t = 0;
+    for (let i = 0; i + 1 < line.length; i++) t += Math.hypot(line[i + 1].x - line[i].x, line[i + 1].y - line[i].y);
+    return t;
+  };
+
+  const weldLines = closed.map((poly) => poly.concat([poly[0]]));
+  const panels = [];
+  let unsure = 0;
+  closed.forEach((poly) => {
+    // A line belongs to the panel it spends most of its length inside.
+    const mine = open.filter((line) => {
+      let hits = 0;
+      for (let k = 0; k < 9; k++) if (inside(poly, along(line, (k + 0.5) / 9))) hits++;
+      return hits > 4;
+    });
+    const bins = new Map();
+    mine.forEach((line) => {
+      const L = lengthOf(line);
+      const a = line[0], b = line[line.length - 1];
+      const br = (((Math.atan2(b.x - a.x, b.y - a.y) * 180) / Math.PI) % 180 + 180) % 180;
+      const key = Math.round(br / 5) * 5;
+      bins.set(key, (bins.get(key) || 0) + L);
+    });
+    let dom = null, best = 0, total = 0;
+    bins.forEach((L, k) => { total += L; if (L > best) { best = L; dom = k; } });
+
+    let cx = 0, cy = 0;
+    poly.forEach((q) => { cx += q.x; cy += q.y; });
+    cx /= poly.length; cy /= poly.length;
+    if (!inside(poly, { x: cx, y: cy }) && mine.length) {
+      const m = along(mine[0], 0.5);
+      cx = m.x; cy = m.y;
+    }
+    // Two sheets agreeing, and most of the length in one direction, or it is not evidence.
+    const confident = mine.length >= 2 && best / Math.max(total, 1e-9) > 0.5;
+    if (!confident) unsure++;
+    panels.push(confident ? { seed: { x: cx, y: cy }, bearing: dom } : { seed: { x: cx, y: cy } });
+  });
+  return { weldLines, panels, lines: open.length, sheets: open.length, unsure };
+}
+
+{
+  const input = document.getElementById("panelImportInput");
+  if (input) {
+    input.addEventListener("change", async (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = "";
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const got = importPanelLayoutDxf(text);
+        if (!got || got.noPanels || !got.panels || !got.panels.length) {
+          panelEditorHint(
+            "No closed polylines in that DXF, so there are no panel boundaries to read. The panels have to be closed shapes; open lines on their own are read as sheets.",
+            "error"
+          );
+          return;
+        }
+        panelEditor.weldLines = got.weldLines;
+        panelEditor.panels = got.panels;
+        panelEditorSave();
+        panelEditorArm("idle");
+        panelEditorHint(
+          `Read ${got.panels.length} panel${got.panels.length === 1 ? "" : "s"} and ${got.sheets} sheet lines from ${file.name}. ` +
+            (got.unsure
+              ? `${got.unsure} panel${got.unsure === 1 ? " has" : "s have"} too few sheets to tell which way the rolls run — ${got.unsure === 1 ? "its arrow is" : "their arrows are"} the ground's own fall for now, so check ${got.unsure === 1 ? "it" : "them"} and set ${got.unsure === 1 ? "it" : "them"} with Add a panel.`
+              : "Every panel's direction came from its own sheets."),
+          got.unsure ? "warn" : "ok"
+        );
+        renderPanelEditor();
+      } catch (err) {
+        panelEditorHint("Couldn't read that file: " + (err && err.message ? err.message : "unknown error"), "error");
+      }
+    });
+  }
+}
+
 {
   const svg = document.getElementById("panelPlan");
   if (svg) {

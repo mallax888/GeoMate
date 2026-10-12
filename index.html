@@ -717,6 +717,11 @@
           <button id="panelSeedBtn" class="btn btn--ghost" type="button">Add a panel</button>
           <button id="panelUndoBtn" class="btn btn--ghost" type="button">Undo</button>
           <button id="panelClearBtn" class="btn btn--ghost btn--danger" type="button">Clear all</button>
+          <!-- The panelling usually already exists in CAD. Reading it beats redrawing it. -->
+          <label class="btn btn--ghost btn--upload">
+            Import layout DXF
+            <input type="file" id="panelImportInput" accept=".dxf" hidden />
+          </label>
         </div>
         <p id="panelEditorHint" class="cutplan-status"></p>
         <svg id="panelPlan" class="basegrid-plan panel-editor" aria-label="Draw the weld lines and the roll direction for each panel"></svg>
