@@ -2170,3 +2170,18 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
 @media (max-width: 1100px) {
   .tabs__spacer { display: none; }
 }
+
+/* ---------- Panel editor ---------- */
+.panel-editor__bar { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: var(--sp-2) 0; }
+.panel-editor__bar .btn.is-armed { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+/* Crosshair while armed: the pointer is a drawing tool here, not a selector. */
+.panel-editor.is-drawing { cursor: crosshair; }
+.panel-editor .pe-ground { fill: var(--surface-2); stroke: var(--ink); stroke-width: 1.2; }
+.panel-editor .pe-run { stroke: #d32f2f; stroke-width: 1.4; fill: none; stroke-linecap: round; }
+.panel-editor .pe-offcut { fill: #d32f2f; fill-opacity: 0.35; stroke: none; }
+.panel-editor .pe-bare { fill: #953a2f; fill-opacity: 0.55; stroke: none; }
+.panel-editor .pe-weld { stroke: #1565c0; stroke-width: 3.2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.panel-editor .pe-weld-draft { stroke: #1565c0; stroke-width: 2; stroke-dasharray: 6 5; fill: none; }
+.panel-editor .pe-seed { fill: var(--accent); stroke: var(--surface); stroke-width: 1.5; }
+.panel-editor .pe-arrow { stroke: var(--accent-strong); stroke-width: 2.4; fill: none; marker-end: url(#peArrow); }
+.panel-editor .pe-vertex { fill: #1565c0; stroke: var(--surface); stroke-width: 1.2; }

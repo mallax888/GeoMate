@@ -707,7 +707,20 @@
         </div>
         <p id="baseGridDrapeNote" class="liner-corner-note"></p>
 
-        <svg id="baseGridPlan" class="basegrid-plan" role="img" aria-label="Panel layout over the cell"></svg>
+        <svg id="baseGridPlan" class="basegrid-plan" role="img" aria-label="Zones over the cell"></svg>
+
+        <!-- The panelling is the installer's judgement, not something to infer from the surface —
+             see computePanelPlan. They draw the weld lines and the roll direction here. -->
+        <h3 class="panel__subheading">Panel layout — you draw it</h3>
+        <div class="panel-editor__bar">
+          <button id="panelWeldBtn" class="btn btn--ghost" type="button">Draw a weld line</button>
+          <button id="panelSeedBtn" class="btn btn--ghost" type="button">Add a panel</button>
+          <button id="panelUndoBtn" class="btn btn--ghost" type="button">Undo</button>
+          <button id="panelClearBtn" class="btn btn--ghost btn--danger" type="button">Clear all</button>
+        </div>
+        <p id="panelEditorHint" class="cutplan-status"></p>
+        <svg id="panelPlan" class="basegrid-plan panel-editor" aria-label="Draw the weld lines and the roll direction for each panel"></svg>
+        <p id="panelPlanStats" class="export-note"></p>
 
         <div class="basegrid-3d">
           <div class="basegrid-3d__head">

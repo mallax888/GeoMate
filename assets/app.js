@@ -9672,10 +9672,254 @@ function renderBaseGrid() {
   }
 
   renderBaseGridPlan(plan);
+  // The editor reads the same surface and the same roll spec, so it redraws whenever they do.
+  renderPanelEditor();
   renderCellView3D(plan);
 }
 
 /** The cell in plan with every panel on it, zone by zone — the picture the installer marks up. */
+/* ===============================================================================================
+   THE PANEL EDITOR
+   ===============================================================================================
+   Draw the weld lines, drop a panel inside each region and point it the way the rolls run. The
+   engine (computePanelPlan) does the rest. Kept entirely separate from the zone plan above it: that
+   drawing shows what the GROUND is doing, this one shows what the INSTALLER has decided, and
+   conflating the two is how five attempts at inferring the second from the first went wrong.
+   ============================================================================================= */
+const panelEditor = {
+  weldLines: [],      // each a list of survey points
+  panels: [],         // { seed:{x,y}, bearing|null }
+  mode: "idle",       // idle | weld | seed | aim
+  draft: null,        // the line being drawn, or the seed waiting for a direction
+  hover: null,
+  view: null,
+  plan: null,
+};
+
+function panelEditorSave() {
+  try {
+    localStorage.setItem("geomate-panels", JSON.stringify({ weldLines: panelEditor.weldLines, panels: panelEditor.panels }));
+  } catch { /* a full quota must not take the editor down */ }
+}
+function panelEditorLoad() {
+  try {
+    const raw = JSON.parse(localStorage.getItem("geomate-panels") || "null");
+    if (raw && Array.isArray(raw.weldLines)) {
+      panelEditor.weldLines = raw.weldLines;
+      panelEditor.panels = Array.isArray(raw.panels) ? raw.panels : [];
+    }
+  } catch { /* ignore a corrupt entry rather than refusing to start */ }
+}
+
+function panelEditorHint(text, kind) {
+  const el = document.getElementById("panelEditorHint");
+  if (!el) return;
+  el.textContent = text || "";
+  el.className = `cutplan-status${kind ? ` is-${kind}` : ""}`;
+}
+
+/** Pointer position in survey coordinates. */
+function panelEditorAt(evt) {
+  const v = panelEditor.view;
+  const svg = document.getElementById("panelPlan");
+  if (!v || !svg) return null;
+  const r = svg.getBoundingClientRect();
+  // The SVG is scaled to its box, so go through the viewBox rather than assuming 1:1.
+  const px = ((evt.clientX - r.left) / r.width) * v.W;
+  const py = ((evt.clientY - r.top) / r.height) * v.H;
+  return { x: v.minX + (px - v.pad) / v.scale, y: v.minY + (v.H - v.pad - py) / v.scale };
+}
+
+function panelEditorArm(mode) {
+  panelEditor.mode = mode;
+  panelEditor.draft = null;
+  const weld = document.getElementById("panelWeldBtn");
+  const seed = document.getElementById("panelSeedBtn");
+  if (weld) { weld.classList.toggle("is-armed", mode === "weld"); weld.textContent = mode === "weld" ? "Finish the line" : "Draw a weld line"; }
+  if (seed) seed.classList.toggle("is-armed", mode === "seed" || mode === "aim");
+  const svg = document.getElementById("panelPlan");
+  if (svg) svg.classList.toggle("is-drawing", mode !== "idle");
+  if (mode === "weld") panelEditorHint("Click along the line they weld on. Click Finish, or press Enter, when the line is done — Escape throws it away.");
+  else if (mode === "seed") panelEditorHint("Click inside a panel — anywhere in it.");
+  else if (mode === "aim") panelEditorHint("Now click the way the rolls run in that panel: from the trench, down the slope.");
+  else panelEditorHint("");
+  renderPanelEditor();
+}
+
+function panelEditorCommitLine() {
+  if (panelEditor.draft && panelEditor.draft.length >= 2) {
+    panelEditor.weldLines.push(panelEditor.draft);
+    panelEditorSave();
+  }
+  panelEditorArm("idle");
+  renderPanelEditor();
+}
+
+function panelEditorUndo() {
+  if (panelEditor.draft && panelEditor.draft.length) panelEditor.draft.pop();
+  else if (panelEditor.panels.length) panelEditor.panels.pop();
+  else if (panelEditor.weldLines.length) panelEditor.weldLines.pop();
+  panelEditorSave();
+  renderPanelEditor();
+}
+
+/** Recompute and redraw. The engine is the only thing that decides anything; this just draws it. */
+function renderPanelEditor() {
+  const svg = document.getElementById("panelPlan");
+  const statsEl = document.getElementById("panelPlanStats");
+  if (!svg) return;
+  if (!baseGridSurface) {
+    svg.innerHTML = "";
+    svg.removeAttribute("viewBox");
+    if (statsEl) statsEl.textContent = "";
+    return;
+  }
+  const outline = baseGridSurface.outline;
+  const xs = outline.map((p) => p.x), ys = outline.map((p) => p.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const pad = 16, W = 900;
+  const scale = (W - pad * 2) / Math.max(maxX - minX, 1e-6);
+  const H = Math.max(200, (maxY - minY) * scale + pad * 2);
+  panelEditor.view = { minX, minY, scale, pad, W, H };
+  const tx = (x) => pad + (x - minX) * scale;
+  const ty = (y) => H - pad - (y - minY) * scale;
+  const pts = (list) => list.map((c) => `${tx(c.x).toFixed(1)},${ty(c.y).toFixed(1)}`).join(" ");
+
+  const plan = computePanelPlan(baseGridSurface, panelEditor.weldLines, panelEditor.panels, {
+    rollWidth: parseFloat(baseGridInputs.rollWidth.value) || 7,
+    minOverlap: (parseFloat(baseGridInputs.overlap.value) || 0) / 1000,
+    rollLength: parseFloat(baseGridInputs.rollLength.value) || 0,
+  });
+  panelEditor.plan = plan;
+
+  let g = `<defs><marker id="peArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--accent-strong)"/></marker></defs>`;
+  g += `<polygon points="${pts(outline)}" class="pe-ground" />`;
+
+  if (plan) {
+    // Ground inside no panel at all, drawn so it cannot be missed.
+    const R = plan.raster;
+    const covered = new Uint8Array(R.gw * R.gh);
+    const half = plan.rollWidth / 2;
+    const mark = (r) => r.path.forEach((q) => {
+      for (let j = R.jOf(q.y - half); j <= R.jOf(q.y + half); j++)
+        for (let i = R.iOf(q.x - half); i <= R.iOf(q.x + half); i++) {
+          if (i < 0 || j < 0 || i >= R.gw || j >= R.gh) continue;
+          if (Math.hypot(R.xOf(i) - q.x, R.yOf(j) - q.y) <= half) covered[j * R.gw + i] = 1;
+        }
+    });
+    plan.panels.forEach((pan) => pan.runs.forEach(mark));
+    plan.infill.forEach(mark);
+    let bare = "";
+    for (let c = 0; c < R.ground.length; c++) {
+      if (!R.ground[c] || covered[c]) continue;
+      const i = c % R.gw, j = (c - i) / R.gw;
+      bare += `<rect x="${(tx(R.xOf(i)) - 1.2).toFixed(1)}" y="${(ty(R.yOf(j)) - 1.2).toFixed(1)}" width="2.4" height="2.4" class="pe-bare"/>`;
+    }
+    g += bare;
+    plan.panels.forEach((pan) => pan.runs.forEach((r) => { g += `<polyline points="${pts(r.path)}" class="pe-run"/>`; }));
+    plan.infill.forEach((r) => { g += `<polyline points="${pts(r.path)}" class="pe-run"/>`; });
+  }
+
+  panelEditor.weldLines.forEach((line) => { g += `<polyline points="${pts(line)}" class="pe-weld"/>`; });
+  if (panelEditor.draft && panelEditor.mode === "weld") {
+    const d = panelEditor.hover ? panelEditor.draft.concat([panelEditor.hover]) : panelEditor.draft;
+    if (d.length >= 2) g += `<polyline points="${pts(d)}" class="pe-weld-draft"/>`;
+    panelEditor.draft.forEach((q) => { g += `<circle cx="${tx(q.x).toFixed(1)}" cy="${ty(q.y).toFixed(1)}" r="3" class="pe-vertex"/>`; });
+  }
+
+  const arrowFor = (seed, bearing) => {
+    const rad = (bearing * Math.PI) / 180;
+    const d = { x: Math.sin(rad), y: Math.cos(rad) };
+    const L = 22 / scale;
+    return `<line x1="${tx(seed.x).toFixed(1)}" y1="${ty(seed.y).toFixed(1)}" x2="${tx(seed.x + d.x * L).toFixed(1)}" y2="${ty(seed.y + d.y * L).toFixed(1)}" class="pe-arrow"/>`;
+  };
+  (plan ? plan.panels : panelEditor.panels).forEach((pan) => {
+    const seed = pan.seed;
+    g += `<circle cx="${tx(seed.x).toFixed(1)}" cy="${ty(seed.y).toFixed(1)}" r="4.5" class="pe-seed"/>`;
+    if (Number.isFinite(pan.bearing)) g += arrowFor(seed, pan.bearing);
+  });
+  if (panelEditor.mode === "aim" && panelEditor.draft && panelEditor.hover) {
+    const a = panelEditor.draft, b = panelEditor.hover;
+    const bearing = ((Math.atan2(b.x - a.x, b.y - a.y) * 180) / Math.PI + 360) % 360;
+    g += `<circle cx="${tx(a.x).toFixed(1)}" cy="${ty(a.y).toFixed(1)}" r="4.5" class="pe-seed"/>` + arrowFor(a, bearing);
+  }
+
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.innerHTML = g;
+
+  if (statsEl) {
+    if (!plan || !panelEditor.panels.length) {
+      statsEl.className = "export-note";
+      statsEl.textContent = "No panels yet. Draw the weld lines, then drop a panel in each region and point it the way the rolls run.";
+    } else {
+      const bare = plan.unpanelledArea;
+      statsEl.className = bare > 1 ? "export-note is-error" : "export-note";
+      statsEl.innerHTML =
+        `${plan.panels.length} panel${plan.panels.length === 1 ? "" : "s"}, ${plan.runs} runs, ` +
+        `<strong>${fmt.int(plan.material)} m²</strong> of grid over ${fmt.int(plan.surfaceArea3D)} m² of ground. ` +
+        `Weld: ${fmt.int(plan.weldAtLines)} m on your lines plus ${fmt.int(plan.seam)} m of lap. ` +
+        (plan.offcutPieces ? `${plan.offcutPieces} offcut pieces (${fmt.int(plan.offcutArea)} m²). ` : "") +
+        (bare > 1
+          ? `<strong>${fmt.int(bare)} m² is inside no panel</strong> — shown in red. A liner cannot have gaps: add a panel there, or move a weld line.`
+          : "Nothing bare.");
+    }
+  }
+}
+
+{
+  const svg = document.getElementById("panelPlan");
+  if (svg) {
+    svg.addEventListener("click", (e) => {
+      const at = panelEditorAt(e);
+      if (!at || !baseGridSurface) return;
+      if (panelEditor.mode === "weld") {
+        if (!panelEditor.draft) panelEditor.draft = [];
+        panelEditor.draft.push(at);
+        renderPanelEditor();
+      } else if (panelEditor.mode === "seed") {
+        // Arm FIRST: arming clears the draft, so setting the seed before it threw the seed away
+        // and the next click had nothing to aim from.
+        panelEditorArm("aim");
+        panelEditor.draft = at;
+        renderPanelEditor();
+      } else if (panelEditor.mode === "aim") {
+        if (!panelEditor.draft) { panelEditorArm("seed"); return; }
+        const a = panelEditor.draft;
+        const bearing = ((Math.atan2(at.x - a.x, at.y - a.y) * 180) / Math.PI + 360) % 360;
+        panelEditor.panels.push({ seed: a, bearing });
+        panelEditorSave();
+        // Straight back to placing another, because a cell has several and clicking the button
+        // again between each one is a tax on the common case.
+        panelEditorArm("seed");
+      }
+    });
+    svg.addEventListener("mousemove", (e) => {
+      if (panelEditor.mode !== "weld" && panelEditor.mode !== "aim") return;
+      panelEditor.hover = panelEditorAt(e);
+      renderPanelEditor();
+    });
+    svg.addEventListener("dblclick", (e) => { e.preventDefault(); if (panelEditor.mode === "weld") panelEditorCommitLine(); });
+  }
+  const on = (id, fn) => { const b = document.getElementById(id); if (b) b.addEventListener("click", fn); };
+  on("panelWeldBtn", () => (panelEditor.mode === "weld" ? panelEditorCommitLine() : panelEditorArm("weld")));
+  on("panelSeedBtn", () => panelEditorArm(panelEditor.mode === "seed" || panelEditor.mode === "aim" ? "idle" : "seed"));
+  on("panelUndoBtn", panelEditorUndo);
+  on("panelClearBtn", () => {
+    if (!window.confirm("Clear every weld line and panel you have drawn?")) return;
+    panelEditor.weldLines = [];
+    panelEditor.panels = [];
+    panelEditorSave();
+    panelEditorArm("idle");
+  });
+  document.addEventListener("keydown", (e) => {
+    if (panelEditor.mode === "idle") return;
+    if (e.key === "Enter" && panelEditor.mode === "weld") { e.preventDefault(); panelEditorCommitLine(); }
+    if (e.key === "Escape") { e.preventDefault(); panelEditorArm("idle"); }
+  });
+  panelEditorLoad();
+}
+
 function renderBaseGridPlan(plan) {
   const svg = document.getElementById("baseGridPlan");
   if (!svg || !baseGridSurface) return;
