@@ -6816,6 +6816,10 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
     // than continuing the alternating green/clay run, which would hide it among its neighbours.
     const isStitchStrip = !!(cutPlan.stripIsStitch || [])[i];
     const color = isStitchStrip ? "var(--stitch)" : i % 2 === 0 ? "var(--accent)" : "var(--clay)";
+    /* The outline goes with the fill. It used to be hard-coded green on a stitch's patches and on a
+     * stitch strip's own edge, which put a green line round a purple piece — the one piece on the
+     * drawing whose whole job is to not look like its neighbours. */
+    const edge = isStitchStrip ? "var(--stitch)" : i % 2 === 0 ? "var(--accent-strong)" : "var(--clay)";
 
     // A strip is a straight square cut off a roll — it can never actually bend to trace a curved or
     // notched boundary, so the rectangle draws full and undistorted (rule one isn't "reshape the
@@ -6835,7 +6839,7 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
     stripFull.setAttribute("points", stripPtsFull.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "));
     stripFull.setAttribute("fill", color);
     stripFull.setAttribute("fill-opacity", "0.18");
-    stripFull.setAttribute("stroke", i % 2 === 0 ? "var(--accent-strong)" : "var(--clay)");
+    stripFull.setAttribute("stroke", edge);
     stripFull.setAttribute("stroke-width", "1");
     stripFull.setAttribute("stroke-dasharray", "2,2");
     svg.appendChild(stripFull);
@@ -6851,7 +6855,7 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
       // renderCutPlanSvgCornered — so there's only ever one segment's worth of strips to colour here.
       stripShape.setAttribute("fill", color);
       stripShape.setAttribute("fill-opacity", "0.75");
-      stripShape.setAttribute("stroke", i % 2 === 0 ? "var(--accent-strong)" : "var(--clay)");
+      stripShape.setAttribute("stroke", edge);
       stripShape.setAttribute("stroke-width", "1");
       svg.appendChild(stripShape);
     }
@@ -6872,7 +6876,7 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
       patchFull.setAttribute("points", patchPtsFull.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "));
       patchFull.setAttribute("fill", color);
       patchFull.setAttribute("fill-opacity", "0.12");
-      patchFull.setAttribute("stroke", "var(--accent-strong)");
+      patchFull.setAttribute("stroke", edge);
       patchFull.setAttribute("stroke-width", "1");
       patchFull.setAttribute("stroke-dasharray", "2,2");
       svg.appendChild(patchFull);
@@ -6884,7 +6888,7 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
         stitchShape.setAttribute("points", patchPts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "));
         stitchShape.setAttribute("fill", color);
         stitchShape.setAttribute("fill-opacity", "0.4");
-        stitchShape.setAttribute("stroke", "var(--accent-strong)");
+        stitchShape.setAttribute("stroke", edge);
         stitchShape.setAttribute("stroke-width", "1.5");
         stitchShape.setAttribute("stroke-dasharray", "3,2");
         svg.appendChild(stitchShape);
@@ -7058,7 +7062,10 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
     // than continuing the alternating green/clay run, which would hide it among its neighbours.
     const isStitchStrip = !!(cutPlan.stripIsStitch || [])[i];
     const color = isStitchStrip ? "var(--stitch)" : i % 2 === 0 ? "var(--accent)" : "var(--clay)";
-    const colorStrong = i % 2 === 0 ? "var(--accent-strong)" : "var(--clay)";
+    /* The outline goes with the fill. A stitch piece was getting the alternating run's green edge
+     * around its purple body, and its patches a green edge regardless — a green line round the one
+     * piece on the drawing whose whole job is to not look like the strips either side of it. */
+    const colorStrong = isStitchStrip ? "var(--stitch)" : i % 2 === 0 ? "var(--accent-strong)" : "var(--clay)";
 
     // A strip is a straight square cut off a roll — it can never actually bend to trace a curved or
     // notched boundary, so the rectangle itself always draws full and undistorted (rule one isn't
@@ -7112,7 +7119,7 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
       patchFull.setAttribute("points", patchPtsFull.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "));
       patchFull.setAttribute("fill", color);
       patchFull.setAttribute("fill-opacity", "0.12");
-      patchFull.setAttribute("stroke", "var(--accent-strong)");
+      patchFull.setAttribute("stroke", colorStrong);
       patchFull.setAttribute("stroke-width", "1");
       patchFull.setAttribute("stroke-dasharray", "2,2");
       svg.appendChild(patchFull);
@@ -7124,7 +7131,7 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
         stitchShape.setAttribute("points", patchPts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "));
         stitchShape.setAttribute("fill", color);
         stitchShape.setAttribute("fill-opacity", "0.4");
-        stitchShape.setAttribute("stroke", "var(--accent-strong)");
+        stitchShape.setAttribute("stroke", colorStrong);
         stitchShape.setAttribute("stroke-width", "1.5");
         stitchShape.setAttribute("stroke-dasharray", "3,2");
         svg.appendChild(stitchShape);
