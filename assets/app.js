@@ -10512,6 +10512,467 @@ const cellView3D = {
   panY: 0,
 };
 
+
+/* ===============================================================================================
+   PANELS THE INSTALLER DRAWS
+   ===============================================================================================
+
+   Five attempts at inferring the panel layout from the surface, five wrong answers, and the reason
+   is not that the geometry was hard. The surface says where the slopes are. It does not say how a
+   gang divides a cell, and that is a judgement — which crest they start from, where they accept a
+   weld, which corners they would rather fill with offcut than engineer around. The right place for
+   a judgement is an input.
+
+   So the installer draws the weld lines and says which way the rolls run in each piece, once, and
+   everything downstream is arithmetic: coverage, draped lengths, roll counts, weld metres, the
+   schedule and the CAD export. That is the division of labour this should have had from the start,
+   and it generalises to the next cell instead of fitting this one.
+
+   HOW A REGION IS WORKED OUT. Not by cutting polygons — planar subdivision of hand-drawn lines
+   against a surveyed outline is a festival of degenerate cases, and a liner cannot afford one. The
+   cell is rasterised, the weld lines are burnt into it as barriers, and a region is whatever a
+   flood fill reaches from the point the user clicked. Robust against lines that overshoot, stop
+   short, cross each other or double back, all of which a hand-drawn line does.
+   ============================================================================================= */
+
+const PANEL_RASTER_M = 0.75;
+
+/** The cell as a grid: which squares are ground, with the weld lines burnt in as barriers. */
+function rasterCell(tin, weldLines, cellSize) {
+  const B = tin.bounds;
+  const cell = cellSize || PANEL_RASTER_M;
+  const gw = Math.ceil((B.maxX - B.minX) / cell) + 2;
+  const gh = Math.ceil((B.maxY - B.minY) / cell) + 2;
+  const ground = new Uint8Array(gw * gh);
+  const wall = new Uint8Array(gw * gh);
+  const xOf = (i) => B.minX + (i - 0.5) * cell;
+  const yOf = (j) => B.minY + (j - 0.5) * cell;
+  const iOf = (x) => Math.floor((x - B.minX) / cell) + 1;
+  const jOf = (y) => Math.floor((y - B.minY) / cell) + 1;
+
+  let groundCells = 0;
+  for (let j = 0; j < gh; j++) {
+    for (let i = 0; i < gw; i++) {
+      if (tin.zAt(xOf(i), yOf(j)) !== null) { ground[j * gw + i] = 1; groundCells++; }
+    }
+  }
+  // A barrier has to be continuous or the flood leaks straight through it, so each line is walked
+  // at a step well under the cell size and the squares it passes through are marked.
+  (weldLines || []).forEach((line) => {
+    for (let k = 0; k + 1 < line.length; k++) {
+      const a = line[k], b = line[k + 1];
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      const n = Math.max(1, Math.ceil(len / (cell * 0.4)));
+      for (let m = 0; m <= n; m++) {
+        const f = m / n;
+        const i = iOf(a.x + (b.x - a.x) * f), j = jOf(a.y + (b.y - a.y) * f);
+        if (i >= 0 && j >= 0 && i < gw && j < gh) wall[j * gw + i] = 1;
+      }
+    }
+  });
+  return { gw, gh, cell, ground, wall, groundCells, xOf, yOf, iOf, jOf, bounds: B };
+}
+
+/** Everything reachable from a point without crossing a weld line or leaving the ground. */
+function floodRegion(R, seed, claimed) {
+  const i0 = R.iOf(seed.x), j0 = R.jOf(seed.y);
+  if (i0 < 0 || j0 < 0 || i0 >= R.gw || j0 >= R.gh) return null;
+  const start = j0 * R.gw + i0;
+  if (!R.ground[start] || R.wall[start] || (claimed && claimed[start])) return null;
+  const cells = new Set([start]);
+  const stack = [start];
+  while (stack.length) {
+    const c = stack.pop();
+    const i = c % R.gw, j = (c - i) / R.gw;
+    const step = (ni, nj) => {
+      if (ni < 0 || nj < 0 || ni >= R.gw || nj >= R.gh) return;
+      const nc = nj * R.gw + ni;
+      if (cells.has(nc) || !R.ground[nc] || R.wall[nc]) return;
+      if (claimed && claimed[nc]) return;
+      cells.add(nc);
+      stack.push(nc);
+    };
+    step(i + 1, j); step(i - 1, j); step(i, j + 1); step(i, j - 1);
+  }
+  return cells;
+}
+
+/**
+ * One run, laid straight. No steering, no fall-line following: it holds its bearing and stops at
+ * the edge of its own panel, which is either a weld line the installer drew or the edge of the
+ * cell. Draped length is measured over the ground, so a run down a batter counts what it really is
+ * rather than what it measures on the drawing.
+ */
+function layStraightRun(tin, inPanel, start, dir, rollLength, step) {
+  const ds = step || 0.5;
+  const maxLen = rollLength > 0 ? rollLength : Infinity;
+  const z0 = tin.zAt(start.x, start.y);
+  if (z0 === null || !inPanel(start.x, start.y)) return null;
+  const path = [{ x: start.x, y: start.y, z: z0 }];
+  let draped = 0;
+  let p = path[0];
+  let stoppedBy = "panel";
+  for (let guard = 0; guard < 20000; guard++) {
+    const nx = p.x + dir.x * ds, ny = p.y + dir.y * ds;
+    if (!inPanel(nx, ny)) { stoppedBy = "panel"; break; }
+    const z = tin.zAt(nx, ny);
+    if (z === null) { stoppedBy = "edge"; break; }
+    const seg = Math.hypot(nx - p.x, ny - p.y, z - p.z);
+    if (draped + seg > maxLen) { stoppedBy = "length"; break; }
+    draped += seg;
+    p = { x: nx, y: ny, z };
+    path.push(p);
+  }
+  if (draped < 0.5) return null;
+  return { path, draped, stoppedBy, plan: Math.hypot(p.x - path[0].x, p.y - path[0].y) };
+}
+
+/**
+ * Lay one panel: parallel runs at a pitch across it, every one starting at its up-slope end.
+ *
+ * The spacing is measured ACROSS the run, never along the panel's edge. Those look equivalent and
+ * are not — wherever the edge is oblique to the run the gap between runs opens to pitch/cos, which
+ * on a liner is a hole rather than a tolerance.
+ */
+function layPanel(tin, R, cells, dir, rollWidth, minOverlap, rollLength) {
+  const pitch = Math.max(0.25, rollWidth - minOverlap);
+  const perp = { x: -dir.y, y: dir.x };
+  const inPanel = (x, y) => {
+    const i = R.iOf(x), j = R.jOf(y);
+    return i >= 0 && j >= 0 && i < R.gw && j < R.gh && cells.has(j * R.gw + i);
+  };
+  let tmin = Infinity, tmax = -Infinity;
+  const pts = [];
+  cells.forEach((c) => {
+    const i = c % R.gw, j = (c - i) / R.gw;
+    const x = R.xOf(i), y = R.yOf(j);
+    pts.push({ x, y });
+    const t = x * perp.x + y * perp.y;
+    tmin = Math.min(tmin, t); tmax = Math.max(tmax, t);
+  });
+  const runs = [];
+  /* The last run has to reach the far edge. Stepping tmin -> tmax at a pitch leaves a remainder
+   * strip up to one pitch wide at the end, and on a liner a strip is a hole — it was the 1.4% of
+   * this cell still showing bare after everything else was right. One extra line is added hard
+   * against the far edge whenever the remainder is big enough to matter. */
+  const ts = [];
+  for (let t = tmin + pitch / 2; t <= tmax + 1e-9; t += pitch) ts.push(t);
+  if (!ts.length) ts.push((tmin + tmax) / 2);
+  if (tmax - ts[ts.length - 1] > pitch * 0.15) ts.push(tmax - pitch * 0.35);
+  for (const t of ts) {
+    // Start at the up-slope end of this line across the panel: smallest projection along dir,
+    // because dir points the way the roll travels.
+    /* A PANEL IS NOT A RECTANGLE, SO ONE LINE ACROSS IT CAN ENTER IT MORE THAN ONCE.
+     * Taking only the most up-slope point and laying a single chain from it left every re-entry
+     * uncovered — 38% of this cell, once coverage was being measured from the rolls instead of
+     * from what a panel laid claim to. The line is cut into the spans where it is actually inside
+     * the panel, and each span starts its own roll. */
+    const along = [];
+    pts.forEach((q) => {
+      if (Math.abs(q.x * perp.x + q.y * perp.y - t) > R.cell * 0.75) return;
+      along.push({ d: q.x * dir.x + q.y * dir.y, x: q.x, y: q.y });
+    });
+    if (!along.length) continue;
+    along.sort((u, v) => u.d - v.d);
+    /* KEEP THE REAL SQUARE, do not rebuild a point from (t, d).
+     * t is the centre of the band being scanned, not the square's own offset across, so a point
+     * reconstructed from it sits up to half a cell away from any ground — frequently outside the
+     * panel, where layStraightRun refuses to start and the run is silently never laid. That alone
+     * was 15 runs instead of 34 and 56% of the cell reported bare. */
+    const spanStarts = [along[0]];
+    for (let k = 1; k < along.length; k++) {
+      if (along[k].d - along[k - 1].d > R.cell * 1.8) spanStarts.push(along[k]);
+    }
+    for (const best of spanStarts) {
+    /* ONE LINE ACROSS THE PANEL MAY TAKE MORE THAN ONE ROLL.
+     * A run that reaches the end of a 100 m roll does not mean the ground below it goes uncovered
+     * — it means they cut, lap, and carry on with the next roll. Without this the far end of every
+     * long panel was simply bare, and because coverage was being measured the wrong way (below)
+     * nothing said so. */
+    // Start ON the first square of the span, not a nudge before it — a nudge backwards is outside
+    // the panel, layStraightRun refuses to begin there, and the run is silently never laid.
+    let from = { x: best.x, y: best.y };
+    for (let piece = 0; piece < 40; piece++) {
+      const r = layStraightRun(tin, inPanel, from, dir, rollLength);
+      if (!r) break;
+      r.continued = piece > 0;
+      runs.push(r);
+      if (r.stoppedBy !== "length") break;
+      // Next roll starts one lap back up, so the joint is a weldable overlap and not a butt.
+      const e = r.path[r.path.length - 1];
+      from = { x: e.x - dir.x * minOverlap, y: e.y - dir.y * minOverlap };
+    }
+    }
+  }
+  return runs;
+}
+
+/**
+ * The whole cell, panelled the way the installer drew it.
+ *
+ * `panels` is what the editor produces: a seed point inside each region and the bearing the rolls
+ * run on in it. A region with no bearing given runs down its own steepest fall, which is the right
+ * default on a batter and the only sensible guess anywhere.
+ *
+ * Anything still bare at the end is REPORTED, loudly, and never quietly patched — "liners should
+ * have no gaps as the point is to keep the dirty water from escaping into nature", so a gap is a
+ * result the user has to see, not something for the app to paper over.
+ */
+function computePanelPlan(surface, weldLines, panels, opts) {
+  const o = opts || {};
+  const rollWidth = o.rollWidth > 0 ? o.rollWidth : 7;
+  const minOverlap = o.minOverlap >= 0 ? o.minOverlap : 0.3;
+  const rollLength = o.rollLength > 0 ? o.rollLength : 0;
+  if (!surface || !surface.triangles || !surface.triangles.length) return null;
+
+  const tin = makeTinIndex(surface.triangles);
+  const R = rasterCell(tin, weldLines, o.cellSize);
+  const claimed = new Uint8Array(R.gw * R.gh);
+  const out = [];
+
+  (panels || []).forEach((panel, idx) => {
+    const cells = floodRegion(R, panel.seed, claimed);
+    if (!cells || !cells.size) { out.push({ ...panel, index: idx, empty: true, runs: [], areaPlan: 0 }); return; }
+    cells.forEach((c) => { claimed[c] = 1; });
+
+    let dir = null;
+    if (Number.isFinite(panel.bearing)) {
+      const rad = (panel.bearing * Math.PI) / 180;
+      dir = { x: Math.sin(rad), y: Math.cos(rad) };
+    } else {
+      /* NO BEARING GIVEN, so guess — but guess honestly.
+       *
+       * Averaging the fall across the region is right on a batter, where every triangle falls the
+       * same way, and meaningless in a bowl, where they cancel. Averaged over this whole cell it
+       * produced a bearing nothing actually falls along, 15 runs instead of 34, and 56% of the
+       * ground bare. So the average is used only when the ground AGREES about it: the mean fall
+       * vector keeps its length when the falls point the same way and collapses toward zero when
+       * they do not. Below that, fall back to the region's long axis, which is what you would do
+       * by eye on flattish ground — run the long way and cut fewer pieces. */
+      let fx = 0, fy = 0, n = 0;
+      cells.forEach((c) => {
+        const i = c % R.gw, j = (c - i) / R.gw;
+        const f = tin.faceAt(R.xOf(i), R.yOf(j));
+        if (f && f.fall) { fx += f.fall.x; fy += f.fall.y; n++; }
+      });
+      const agreement = n > 0 ? Math.hypot(fx, fy) / n : 0;
+      if (agreement > 0.55) {
+        dir = normalise2({ x: fx, y: fy }) || { x: 0, y: 1 };
+      } else {
+        // Long axis by second moment — runs go ALONG it, so the fewest and longest pieces.
+        let cx = 0, cy = 0;
+        cells.forEach((c) => { const i = c % R.gw, j = (c - i) / R.gw; cx += R.xOf(i); cy += R.yOf(j); });
+        cx /= cells.size; cy /= cells.size;
+        let sxx = 0, syy = 0, sxy = 0;
+        cells.forEach((c) => {
+          const i = c % R.gw, j = (c - i) / R.gw;
+          const dx = R.xOf(i) - cx, dy = R.yOf(j) - cy;
+          sxx += dx * dx; syy += dy * dy; sxy += dx * dy;
+        });
+        const theta = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+        dir = { x: Math.cos(theta), y: Math.sin(theta) };
+        // Point it downhill where there is any fall at all, so a run still starts at the top.
+        if (fx * dir.x + fy * dir.y < 0) dir = { x: -dir.x, y: -dir.y };
+      }
+    }
+
+    const runs = layPanel(tin, R, cells, dir, rollWidth, minOverlap, rollLength);
+    const draped = runs.reduce((s, r) => s + r.draped, 0);
+    // n runs side by side lap n-1 times, each lap as long as the shorter of the pair.
+    let seam = 0;
+    for (let k = 0; k + 1 < runs.length; k++) seam += Math.min(runs[k].draped, runs[k + 1].draped);
+    out.push({
+      ...panel,
+      index: idx,
+      runs,
+      dir,
+      bearing: ((Math.atan2(dir.x, dir.y) * 180) / Math.PI + 360) % 360,
+      areaPlan: cells.size * R.cell * R.cell,
+      draped,
+      material: draped * rollWidth,
+      seam,
+    });
+  });
+
+  /* WHAT IS ACTUALLY UNDER GRID — not what a panel laid claim to.
+   *
+   * This was measuring `claimed`, which the flood fill sets for every square inside a region. That
+   * says a panel is responsible for the ground; it says nothing about whether a roll reached it.
+   * It reported 0% bare on 10,593 m2 of grid over 17,301 m2 of ground, which for a liner is the
+   * worst answer a program can give: it certifies as sealed something that is open. Coverage is
+   * now stamped from the roll swaths themselves, and measured over the GROUND rather than the
+   * drawing, because on a batter those differ by exactly the amount that matters. */
+  const half = rollWidth / 2;
+  const covered = new Uint8Array(R.gw * R.gh);
+
+  /* CLOSE WHAT IS LEFT, AND SAY HOW MUCH IT WAS.
+   *
+   * Parallel runs at a pitch leave slivers: a fringe round the perimeter, and small holes inside
+   * where a line across the panel split into spans too short to lay. On this cell that was 124 m2
+   * of fringe and 116 m2 of genuine interior hole. A gang closes those with offcuts and so does
+   * this — but the count and area are reported, never folded into the main figures, because a
+   * layout that is a quarter patches is a layout nobody would build and the user has to be able
+   * to see that happening. */
+  const stamp = (r) => r.path.forEach((q) => {
+    for (let j = R.jOf(q.y - half); j <= R.jOf(q.y + half); j++) {
+      for (let i = R.iOf(q.x - half); i <= R.iOf(q.x + half); i++) {
+        if (i < 0 || j < 0 || i >= R.gw || j >= R.gh) continue;
+        if (Math.hypot(R.xOf(i) - q.x, R.yOf(j) - q.y) <= half) covered[j * R.gw + i] = 1;
+      }
+    }
+  });
+  /* ONLY SLIVERS. An infill piece closes a gap the pitch left behind; it is not a way of covering
+   * ground nobody panelled. Letting it loose produced 78 pieces and 53,410 m2 of grid over a
+   * 17,301 m2 cell, and — far worse — it quietly covered a whole region the user had not seeded,
+   * so the app stopped telling them about the thing they most need to know. A patch bigger than
+   * this is a hole in the PANELLING and gets reported as bare, loudly, for the user to fix by
+   * drawing another panel. */
+  // The panels go down FIRST. Looking for gaps before the runs are stamped means the whole cell
+  // reads as bare, the first "patch" is everything, and the infill pass does nothing at all.
+  out.forEach((pan) => pan.runs.forEach(stamp));
+
+  const infill = [];
+  const offcuts = [];
+  let unpanelledArea = 0;
+  /* Swept more than once, because closing a gap opens smaller ones: an infill run stamps its own
+   * swath and leaves its own fringe. One pass left 0.02% of the cell bare, which is three square
+   * metres and still three square metres of liner that is not there. */
+  for (let sweep = 0; sweep < 6; sweep++) {
+  let closedAny = false;
+  unpanelledArea = 0;
+  const visited = new Uint8Array(R.gw * R.gh);
+  for (let c0 = 0; c0 < R.ground.length; c0++) {
+    if (!R.ground[c0] || covered[c0] || visited[c0]) continue;
+    // Flood this bare patch.
+    const patch = [];
+    const stack = [c0];
+    visited[c0] = 1;
+    while (stack.length) {
+      const c = stack.pop();
+      patch.push(c);
+      const i = c % R.gw, j = (c - i) / R.gw;
+      [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([di, dj]) => {
+        const ni = i + di, nj = j + dj;
+        if (ni < 0 || nj < 0 || ni >= R.gw || nj >= R.gh) return;
+        const nc = nj * R.gw + ni;
+        if (visited[nc] || !R.ground[nc] || covered[nc]) return;
+        visited[nc] = 1;
+        stack.push(nc);
+      });
+    }
+    /* IS THIS A SLIVER OR A HOLE? Judge it by THICKNESS, not area.
+     * The fringe left round the edge of a panelled cell is one connected ring — 124 m2 on this
+     * cell — so any area threshold calls it a hole and reports the user's panelling as wrong when
+     * it is fine. What separates the two is how wide the patch is: a strip half a roll across is
+     * an offcut however far it runs, and anything thicker than a roll is ground nobody panelled.
+     * Thickness comes from eroding the patch inward and seeing how many layers it survives. */
+    const patchArea = patch.length * R.cell * R.cell;
+    const inSet = new Set(patch);
+    const depth = new Map();
+    let frontier = patch.filter((c) => {
+      const i = c % R.gw, j = (c - i) / R.gw;
+      return [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([di, dj]) => {
+        const ni = i + di, nj = j + dj;
+        return ni < 0 || nj < 0 || ni >= R.gw || nj >= R.gh || !inSet.has(nj * R.gw + ni);
+      });
+    });
+    frontier.forEach((c) => depth.set(c, 1));
+    let layer = 1;
+    while (frontier.length && layer < 200) {
+      const next = [];
+      frontier.forEach((c) => {
+        const i = c % R.gw, j = (c - i) / R.gw;
+        [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([di, dj]) => {
+          const ni = i + di, nj = j + dj;
+          if (ni < 0 || nj < 0 || ni >= R.gw || nj >= R.gh) return;
+          const nc = nj * R.gw + ni;
+          if (!inSet.has(nc) || depth.has(nc)) return;
+          depth.set(nc, layer + 1);
+          next.push(nc);
+        });
+      });
+      frontier = next;
+      layer++;
+    }
+    let maxDepth = 0;
+    depth.forEach((d) => { if (d > maxDepth) maxDepth = d; });
+    const thicknessM = maxDepth * 2 * R.cell;      // eroded from both sides
+    if (thicknessM > rollWidth) { unpanelledArea += patchArea; continue; }
+    const inPatch = new Set(patch);
+    const insidePatch = (x, y) => {
+      const i = R.iOf(x), j = R.jOf(y);
+      return i >= 0 && j >= 0 && i < R.gw && j < R.gh && inPatch.has(j * R.gw + i);
+    };
+    const owner = out.find((pan) => pan.dir && pan.runs.length);
+    const dir = owner ? owner.dir : { x: 0, y: 1 };
+    const pieces = layPanel(tin, R, inPatch, dir, rollWidth, minOverlap, rollLength);
+    if (pieces.length) { pieces.forEach((pc) => { infill.push(pc); stamp(pc); }); closedAny = true; }
+    else {
+      /* Narrower than a roll, so it is not a run at all — it is an offcut, cut to shape and
+       * welded in, exactly as on site. Counted and measured as a piece of grid rather than
+       * quietly marked covered, because a layout needing dozens of them is telling the user their
+       * panelling is wrong. */
+      let area3D = 0;
+      patch.forEach((c) => {
+        covered[c] = 1;
+        const i = c % R.gw, j = (c - i) / R.gw;
+        const f = tin.faceAt(R.xOf(i), R.yOf(j));
+        area3D += R.cell * R.cell * (f && f.normal && f.normal.z > 1e-6 ? 1 / f.normal.z : 1);
+      });
+      offcuts.push({ areaPlan: patchArea, area3D, cells: patch.length });
+      closedAny = true;
+    }
+  }
+  if (!closedAny) break;
+  }
+  let bareCells = 0, bareArea3D = 0, groundArea3D = 0;
+  for (let c = 0; c < R.ground.length; c++) {
+    if (!R.ground[c]) continue;
+    const i = c % R.gw, j = (c - i) / R.gw;
+    const f = tin.faceAt(R.xOf(i), R.yOf(j));
+    // A square of plan is this much ground once the slope is allowed for.
+    const a3 = R.cell * R.cell * (f && f.normal && f.normal.z > 1e-6 ? 1 / f.normal.z : 1);
+    groundArea3D += a3;
+    if (!covered[c]) { bareCells++; bareArea3D += a3; }
+  }
+
+  const infillDraped = infill.reduce((s, r) => s + r.draped, 0);
+  const draped = out.reduce((s, p) => s + (p.draped || 0), 0) + infillDraped;
+  const offcutArea = offcuts.reduce((t, o) => t + o.area3D, 0);
+  const weldAtLines = (weldLines || []).reduce((s, line) => {
+    let L = 0;
+    for (let k = 0; k + 1 < line.length; k++) L += Math.hypot(line[k + 1].x - line[k].x, line[k + 1].y - line[k].y);
+    return s + L;
+  }, 0);
+
+  return {
+    panels: out,
+    rollWidth,
+    minOverlap,
+    rollLength,
+    runs: out.reduce((s, p) => s + p.runs.length, 0) + infill.length,
+    infill,
+    infillRuns: infill.length,
+    infillMaterial: infillDraped * rollWidth,
+    offcuts,
+    offcutPieces: offcuts.length,
+    offcutArea: offcuts.reduce((t, o) => t + o.area3D, 0),
+    draped,
+    material: draped * rollWidth + offcutArea,
+    seam: out.reduce((s, p) => s + (p.seam || 0), 0),
+    weldAtLines,
+    totalWeld: weldAtLines + out.reduce((s, p) => s + (p.seam || 0), 0),
+    surfaceArea3D: groundArea3D,
+    bareArea3D,
+    barePct: groundArea3D > 0 ? (100 * bareArea3D) / groundArea3D : 0,
+    bareCells,
+    /* Ground inside no panel at all — the user has to draw another panel or move a weld line.
+     * Kept apart from the sliver infill so the two can never be confused. */
+    unpanelledArea,
+    raster: R,
+  };
+}
+
 /* Matches .basegrid-zone--N in the stylesheet: the same zone is the same colour in the plan, in the
  * 3D view and in the schedule, so they read as one drawing rather than three. */
 const CELL_ZONE_COLORS = ["#2f7d4f", "#b4690e", "#3b6ea5", "#8a4f9e", "#12796b", "#9c4221"];
