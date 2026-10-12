@@ -9867,6 +9867,14 @@ function renderPanelEditor() {
   }
 }
 
+/** Height on the loaded cell surface, with the index built once. */
+let _tinForZ = null, _tinForZSource = null;
+function makeTinIndexCachedZ(x, y) {
+  if (!baseGridSurface) return null;
+  if (_tinForZSource !== baseGridSurface) { _tinForZ = makeTinIndex(baseGridSurface.triangles); _tinForZSource = baseGridSurface; }
+  return _tinForZ.zAt(x, y);
+}
+
 /** LINEs and open polylines in model space — on this job, the individual sheets. */
 function dxfOpenPaths(text) {
   const out = [];
@@ -9950,39 +9958,70 @@ function importPanelLayoutDxf(text) {
   };
 
   const weldLines = closed.map((poly) => poly.concat([poly[0]]));
-  const panels = [];
-  let unsure = 0;
-  closed.forEach((poly) => {
-    // A line belongs to the panel it spends most of its length inside.
-    const mine = open.filter((line) => {
-      let hits = 0;
-      for (let k = 0; k < 9; k++) if (inside(poly, along(line, (k + 0.5) / 9))) hits++;
-      return hits > 4;
-    });
-    const bins = new Map();
-    mine.forEach((line) => {
-      const L = lengthOf(line);
-      const a = line[0], b = line[line.length - 1];
-      const br = (((Math.atan2(b.x - a.x, b.y - a.y) * 180) / Math.PI) % 180 + 180) % 180;
-      const key = Math.round(br / 5) * 5;
-      bins.set(key, (bins.get(key) || 0) + L);
-    });
-    let dom = null, best = 0, total = 0;
-    bins.forEach((L, k) => { total += L; if (L > best) { best = L; dom = k; } });
 
-    let cx = 0, cy = 0;
-    poly.forEach((q) => { cx += q.x; cy += q.y; });
-    cx /= poly.length; cy /= poly.length;
-    if (!inside(poly, { x: cx, y: cy }) && mine.length) {
-      const m = along(mine[0], 0.5);
-      cx = m.x; cy = m.y;
-    }
-    // Two sheets agreeing, and most of the length in one direction, or it is not evidence.
-    const confident = mine.length >= 2 && best / Math.max(total, 1e-9) > 0.5;
-    if (!confident) unsure++;
-    panels.push(confident ? { seed: { x: cx, y: cy }, bearing: dom } : { seed: { x: cx, y: cy } });
-  });
-  return { weldLines, panels, lines: open.length, sheets: open.length, unsure };
+  /* PANELS COME FROM THE SHEETS, NOT FROM THE CLOSED SHAPES.
+   *
+   * Reading one panel per closed polygon threw away the minority direction inside each of them —
+   * on the user's file that was 262 m of sheets at 90 degrees inside a polygon whose dominant
+   * direction was 150, and it drew a whole arm of the cell running the wrong way. The panelling
+   * is finer than the shapes they happened to close, and the boundaries between those finer
+   * panels are not drawn anywhere.
+   *
+   * So the sheets are grouped by the direction they run, and each group is a panel. Ground is
+   * then assigned to whichever group's sheets are nearest (see computePanelPlan), which needs no
+   * boundary to be drawn and cannot contradict the drawing it was read from. */
+  const lengthOfLine = (line) => {
+    let t = 0;
+    for (let i = 0; i + 1 < line.length; i++) t += Math.hypot(line[i + 1].x - line[i].x, line[i + 1].y - line[i].y);
+    return t;
+  };
+  const bearingOf = (line) => {
+    const a = line[0], b = line[line.length - 1];
+    return ((((Math.atan2(b.x - a.x, b.y - a.y) * 180) / Math.PI) % 180) + 180) % 180;
+  };
+  // Only real sheets vote. A 2 m scrap of a line says nothing about which way a panel runs.
+  const sheets = open.filter((line) => lengthOfLine(line) >= 5);
+  const groups = [];
+  const TOL = 22;
+  sheets
+    .slice()
+    .sort((a, b) => lengthOfLine(b) - lengthOfLine(a))
+    .forEach((line) => {
+      const br = bearingOf(line);
+      const near = groups.find((gp) => {
+        const d = Math.abs(((gp.bearing - br + 90 + 180) % 180) - 90);
+        return d < TOL;
+      });
+      if (near) {
+        const w = near.length + lengthOfLine(line);
+        near.bearing = (near.bearing * near.length + br * lengthOfLine(line)) / w;
+        near.length = w;
+        near.sheets.push(line);
+      } else groups.push({ bearing: br, length: lengthOfLine(line), sheets: [line] });
+    });
+
+  const panels = groups
+    .filter((gp) => gp.sheets.length >= 2)
+    .map((gp) => {
+      let cx = 0, cy = 0, n = 0;
+      gp.sheets.forEach((line) => line.forEach((q) => { cx += q.x; cy += q.y; n++; }));
+      /* Pointed DOWNHILL. A bearing read off a line is only an axis — the line does not say which
+       * end is the top — and a run laid uphill starts at the toe, which is not how any of this
+       * works. The sheets' own ends settle it: whichever end sits lower is the way they run. */
+      let drop = 0;
+      gp.sheets.forEach((line) => {
+        const a = line[0], b = line[line.length - 1];
+        const za = baseGridSurface ? makeTinIndexCachedZ(a.x, a.y) : null;
+        const zb = baseGridSurface ? makeTinIndexCachedZ(b.x, b.y) : null;
+        if (za !== null && zb !== null) drop += zb - za;
+      });
+      const axis = gp.bearing;
+      const bearing = drop <= 0 ? axis : (axis + 180) % 360;
+      return { seed: { x: cx / n, y: cy / n }, bearing, sheets: gp.sheets, sheetCount: gp.sheets.length };
+    });
+
+  const unsure = groups.length - panels.length;
+  return { weldLines, panels, lines: open.length, sheets: sheets.length, unsure };
 }
 
 {
@@ -11128,8 +11167,54 @@ function computePanelPlan(surface, weldLines, panels, opts) {
   const claimed = new Uint8Array(R.gw * R.gh);
   const out = [];
 
+  /* TWO WAYS A REGION CAN BE DECIDED.
+   *
+   * Drawn by hand, the weld lines are the boundaries and a flood fill finds the region.
+   *
+   * Imported from CAD, often there ARE no drawn boundaries: the user's own layout had four closed
+   * polylines, but each held sheets running two different ways — 262 m at 90 degrees and 348 m at
+   * 150 degrees inside one of them. Read as one panel per polygon, the minority direction is
+   * silently discarded and a whole arm of the cell comes out diagonal. The sheets are the real
+   * evidence of where the panels are, so when they are supplied each square of ground simply
+   * belongs to the panel whose sheet is nearest to it. No boundary has to be drawn, and the
+   * partition cannot disagree with the drawing it came from. */
+  const bySheets = (panels || []).some((q) => q && q.sheets && q.sheets.length);
+  let nearestPanel = null;
+  if (bySheets) {
+    const dist2ToSeg = (px, py, a, b) => {
+      const vx = b.x - a.x, vy = b.y - a.y;
+      const L2 = vx * vx + vy * vy;
+      let t = L2 > 0 ? ((px - a.x) * vx + (py - a.y) * vy) / L2 : 0;
+      t = Math.max(0, Math.min(1, t));
+      const dx = px - (a.x + vx * t), dy = py - (a.y + vy * t);
+      return dx * dx + dy * dy;
+    };
+    nearestPanel = (x, y) => {
+      let best = -1, bestD = Infinity;
+      (panels || []).forEach((pan, pi) => {
+        (pan.sheets || []).forEach((line) => {
+          for (let k = 0; k + 1 < line.length; k++) {
+            const d = dist2ToSeg(x, y, line[k], line[k + 1]);
+            if (d < bestD) { bestD = d; best = pi; }
+          }
+        });
+      });
+      return best;
+    };
+  }
+
   (panels || []).forEach((panel, idx) => {
-    const cells = floodRegion(R, panel.seed, claimed);
+    let cells;
+    if (bySheets) {
+      cells = new Set();
+      for (let c = 0; c < R.ground.length; c++) {
+        if (!R.ground[c] || claimed[c]) continue;
+        const i = c % R.gw, j = (c - i) / R.gw;
+        if (nearestPanel(R.xOf(i), R.yOf(j)) === idx) cells.add(c);
+      }
+    } else {
+      cells = floodRegion(R, panel.seed, claimed);
+    }
     if (!cells || !cells.size) { out.push({ ...panel, index: idx, empty: true, runs: [], areaPlan: 0 }); return; }
     cells.forEach((c) => { claimed[c] = 1; });
 
