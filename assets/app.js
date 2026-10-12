@@ -9507,6 +9507,9 @@ const baseGridInputs = {
  * of triangles and would blow the storage quota that every saved project shares. Re-upload after a
  * reload — the status line says so rather than leaving an empty tab looking broken. */
 let baseGridSurface = null;
+// The zones read off the surface, kept so the drawn layout can be swapped in and out without
+// re-reading the TIN; and the plan of record — whichever of the two is driving the numbers.
+let baseGridZonePlan = null;
 let baseGridPlanResult = null;
 
 function baseGridStatus(message, kind) {
@@ -9579,6 +9582,7 @@ function renderBaseGrid() {
   if (!baseGridSurface) {
     empty.hidden = false;
     results.hidden = true;
+    baseGridZonePlan = null;
     baseGridPlanResult = null;
     return;
   }
@@ -9592,13 +9596,59 @@ function renderBaseGrid() {
 
   // Zone by zone: each batter down its own fall line, the base in the direction asked for. The
   // bearing input now sets the BASE only — a batter's direction is decided by the ground.
-  const plan = computeCellGridPlan(baseGridSurface.triangles, w, oMin, bearing);
-  baseGridPlanResult = plan;
-  empty.hidden = !!plan;
-  results.hidden = !plan;
-  if (!plan) {
+  const zonePlan = computeCellGridPlan(baseGridSurface.triangles, w, oMin, bearing);
+  baseGridZonePlan = zonePlan;
+  empty.hidden = !!zonePlan;
+  results.hidden = !zonePlan;
+  if (!zonePlan) {
+    baseGridPlanResult = null;
     baseGridStatus("Check the roll width and overlap — the overlap has to be less than the roll.", "error");
     return;
+  }
+
+  // The zone drawing is the reference: it says what the ground is doing, nothing more.
+  renderBaseGridPlan(zonePlan);
+  // The editor recomputes the drawn layout off the same surface and roll spec, and finishes by
+  // refreshing everything downstream — see refreshLinerOutputs.
+  renderPanelEditor();
+}
+
+/**
+ * EVERYTHING DOWNSTREAM OF A PLAN: the stats, the note, the schedule, the 3D view and the plan the
+ * DXF export writes.
+ *
+ * Which plan? The drawn one, whenever the user has drawn or imported panels — the panelling is the
+ * installer's decision and it beats anything inferred from the surface. Otherwise the zones. One
+ * place decides, so the four consumers can never disagree with each other again.
+ */
+function refreshLinerOutputs() {
+  const zonePlan = baseGridZonePlan;
+  if (!baseGridSurface || !zonePlan) return;
+  const rollLength = parseFloat(baseGridInputs.rollLength.value) || 0;
+
+  const drawn = panelEditor.panels.length && panelEditor.plan
+    ? panelPlanAsLinerPlan(panelEditor.plan, baseGridSurface)
+    : null;
+  const plan = drawn || zonePlan;
+  baseGridPlanResult = plan;
+
+  const label = (id, text) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  };
+  label("baseGridStatPlanLabel", drawn ? "Panels drawn" : "Zones");
+  label("baseGridStatPanelsLabel", drawn ? "Rolls laid" : "Panels");
+  label("baseGridStatHingeLabel", drawn ? "Weld on your lines" : "Weld at grade changes");
+
+  const source = document.getElementById("baseGridPlanSource");
+  if (source) {
+    source.className = "cutplan-status is-ok";
+    source.innerHTML = drawn
+      ? `These numbers are off <strong>the layout you drew</strong> below — ${panelEditor.panels.length} panel${panelEditor.panels.length === 1 ? "" : "s"}` +
+        `, ${panelEditor.weldLines.length} weld line${panelEditor.weldLines.length === 1 ? "" : "s"}, ${plan.panels.length} rolls laid. ` +
+        `The zone drawing below is only there to show what the ground is doing.`
+      : `These numbers are off <strong>the zones GeoMate read from the surface</strong>. Draw the weld lines and point the rolls ` +
+        `in the panel layout below — or import the layout from CAD — and the stats, the schedule, the 3D view and the CAD export all follow that instead.`;
   }
 
   const set = (id, value, unit) => {
@@ -9606,7 +9656,10 @@ function renderBaseGrid() {
     if (el) el.innerHTML = unit ? `${value}<small> ${unit}</small>` : value;
   };
   set("baseGridStatSurface", fmt.int(plan.surface), "m²");
-  set("baseGridStatPlan", String(plan.zones.length));
+  // The infill strips ride in a zone of their own so they reach the schedule and the export, but
+  // they are not a panel anybody drew, so they are not counted as one.
+  const drawnPanels = plan.zones.filter((z) => z.kind !== "infill").length;
+  set("baseGridStatPlan", String(drawnPanels));
   set("baseGridStatPanels", String(plan.panels.length));
   set("baseGridStatRun", fmt.int(plan.totalDraped), "m");
   set("baseGridStatMaterial", fmt.int(plan.material), "m²");
@@ -9623,18 +9676,34 @@ function renderBaseGrid() {
   if (note) {
     const extra = ((plan.totalDraped / plan.totalPlan - 1) * 100).toFixed(1);
     const short = ((1 - plan.covered / plan.surface) * 100).toFixed(1);
+    const piece = drawn ? "roll" : "panel";
     note.innerHTML =
-      `Panels run <strong>${extra}% longer over the ground</strong> than they measure on the plan — that is the difference ` +
+      `${drawn ? "Rolls" : "Panels"} run <strong>${extra}% longer over the ground</strong> than they measure on the plan — that is the difference ` +
       `between ${fmt.int(plan.totalPlan)} m and ${fmt.int(plan.totalDraped)} m of run, and it is material you would not have ordered off a drawing. ` +
-      `At ${(plan.minOverlap * 1000).toFixed(0)} mm laps the runs cover ${fmt.int(plan.covered)} m² against ${fmt.int(plan.surface)} m² of surface, ` +
-      `so about ${short}% of the lap is being spent on cross-fall.` +
-      ` Panels stop at every change of grade and are welded to the strip on the next plane: ` +
-      `<strong>${fmt.int(plan.hingeWeld)} m of weld at grade changes</strong> plus ${fmt.int(plan.panelSeam)} m of panel seam.` +
+      /* A drawn plan is measured against the thing that matters on a liner: is any ground bare. The
+       * lap figure below it is the zone plan's own question — how much of the lap the cross-fall
+       * eats — and on a drawn plan coverage is stamped from the roll swaths, so it would only ever
+       * read 100% and 0.0%, which says nothing. */
+      (drawn
+        ? plan.surface - plan.covered > 1
+          ? `The runs cover ${fmt.int(plan.covered)} m² of the ${fmt.int(plan.surface)} m² surface at ${(plan.minOverlap * 1000).toFixed(0)} mm laps — ` +
+            `<strong>${fmt.int(plan.surface - plan.covered)} m² is bare</strong>, and a liner with a gap in it is not a liner.`
+          : `Every square metre of the ${fmt.int(plan.surface)} m² surface has a roll on it at ${(plan.minOverlap * 1000).toFixed(0)} mm laps — nothing bare.`
+        : `At ${(plan.minOverlap * 1000).toFixed(0)} mm laps the runs cover ${fmt.int(plan.covered)} m² against ${fmt.int(plan.surface)} m² of surface, ` +
+          `so about ${short}% of the lap is being spent on cross-fall.`) +
+      (drawn
+        ? ` The rolls are cut and welded on the lines you drew: <strong>${fmt.int(plan.hingeWeld)} m of weld on those lines</strong> ` +
+          `plus ${fmt.int(plan.panelSeam)} m of seam between neighbouring rolls.`
+        : ` Panels stop at every change of grade and are welded to the strip on the next plane: ` +
+          `<strong>${fmt.int(plan.hingeWeld)} m of weld at grade changes</strong> plus ${fmt.int(plan.panelSeam)} m of panel seam.`) +
+      (drawn && plan.unpanelledArea > 1
+        ? ` <strong>${fmt.int(plan.unpanelledArea)} m² of the cell is inside no panel</strong> — drop a panel in that region, or move a weld line.`
+        : "") +
       (packing
-        ? ` Each panel has to come off one roll, so ${plan.panels.length} panels pack into <strong>${packing.rolls} rolls</strong> of ${rollLength} m` +
+        ? ` Each ${piece} has to come off one roll, so ${plan.panels.length} ${piece}s pack into <strong>${packing.rolls} rolls</strong> of ${rollLength} m` +
           ` — ${fmt.int(packing.rolls * rollLength * plan.rollWidth)} m² bought against ${fmt.int(plan.material)} m² laid` +
           (packing.overlong.length
-            ? `. <strong>${packing.overlong.length} panel${packing.overlong.length === 1 ? " is" : "s are"} longer than a ${rollLength} m roll</strong> and cannot be delivered in one piece — lengthen the roll or plan a joint.`
+            ? `. <strong>${packing.overlong.length} ${piece}${packing.overlong.length === 1 ? " is" : "s are"} longer than a ${rollLength} m roll</strong> and cannot be delivered in one piece — lengthen the roll or plan a joint.`
             : ".")
         : "") +
       ` Anchor trenches, tie-ins and the folds at the toe are not modelled.`;
@@ -9647,10 +9716,10 @@ function renderBaseGrid() {
     tbody.innerHTML = plan.zones
       .map((z) => {
         const head = `<tr class="basegrid-zonerow"><td colspan="5">
-            <strong>Zone ${z.index} — ${z.kind}</strong>
+            <strong>${z.label || `Zone ${z.index} — ${z.kind}`}</strong>
             · ${fmt.int(z.area)} m² · ${(z.grade * 100).toFixed(0)}% grade
             · rolls run ${z.bearing.toFixed(0)}°${z.slope ? " (down the fall line)" : ""}
-            · ${z.plan.panels.length} panel${z.plan.panels.length === 1 ? "" : "s"}
+            · ${z.plan.panels.length} ${drawn ? "roll" : "panel"}${z.plan.panels.length === 1 ? "" : "s"}
           </td></tr>`;
         const rows = z.plan.panels
           .map((p) => {
@@ -9671,13 +9740,192 @@ function renderBaseGrid() {
       .join("");
   }
 
-  renderBaseGridPlan(plan);
-  // The editor reads the same surface and the same roll spec, so it redraws whenever they do.
-  renderPanelEditor();
   renderCellView3D(plan);
 }
 
 /** The cell in plan with every panel on it, zone by zone — the picture the installer marks up. */
+/**
+ * THE DRAWN LAYOUT, IN THE SHAPE THE REST OF THE TAB ALREADY SPEAKS.
+ *
+ * The stats, the schedule, the 3D view and the DXF all consume the zone-based plan from
+ * computeCellGridPlan. Rather than teach four consumers a second language, the drawn plan is
+ * translated into that one: each panel becomes a "zone", each run becomes a "panel", and the weld
+ * lines the user drew become the hinges. One source of truth changes; nothing downstream does.
+ *
+ * The run footprints are built here because the drawn plan only carries centrelines, and the 3D
+ * view and the DXF both want the ribbon. Each is the path offset half a roll either side, with
+ * every point's height read off the surface, so a panel on a batter lies on the batter.
+ */
+function panelPlanAsLinerPlan(pp, surface) {
+  if (!pp || !surface) return null;
+  const tin = makeTinIndex(surface.triangles);
+  const R = pp.raster;
+  const half = pp.rollWidth / 2;
+
+  const ribbon = (path) => {
+    const left = [], right = [];
+    for (let i = 0; i < path.length; i++) {
+      const a = path[Math.max(0, i - 1)], b = path[Math.min(path.length - 1, i + 1)];
+      const d = normalise2({ x: b.x - a.x, y: b.y - a.y }) || { x: 1, y: 0 };
+      const n = { x: -d.y, y: d.x };
+      const L = { x: path[i].x + n.x * half, y: path[i].y + n.y * half };
+      const Rt = { x: path[i].x - n.x * half, y: path[i].y - n.y * half };
+      const zl = tin.zAt(L.x, L.y), zr = tin.zAt(Rt.x, Rt.y);
+      // Off the edge of the cell a roll overhangs; hold the centreline's height rather than
+      // dropping the corner to RL 0, which is what used to make panels look like they float.
+      left.push({ x: L.x, y: L.y, z: zl !== null ? zl : path[i].z });
+      right.push({ x: Rt.x, y: Rt.y, z: zr !== null ? zr : path[i].z });
+    }
+    return left.concat(right.reverse());
+  };
+
+  // Which panel owns each triangle? By its centre, through the same raster the plan was built on.
+  const ownerOf = (tri) => {
+    const cx = (tri[0].x + tri[1].x + tri[2].x) / 3, cy = (tri[0].y + tri[1].y + tri[2].y) / 3;
+    const i = R.iOf(cx), j = R.jOf(cy);
+    if (i < 0 || j < 0 || i >= R.gw || j >= R.gh) return -1;
+    const c = j * R.gw + i;
+    for (let k = 0; k < pp.panels.length; k++) if (pp.panels[k].cells && pp.panels[k].cells.has(c)) return k;
+    return -1;
+  };
+  const trisOf = pp.panels.map(() => []);
+  const spare = [];
+  surface.triangles.forEach((t) => {
+    const k = ownerOf(t);
+    (k >= 0 ? trisOf[k] : spare).push(t);
+  });
+
+  /* AREA AND GRADE COME OFF THE RASTER, NOT OFF WHOLE TRIANGLES.
+   *
+   * A design TIN is not a fine mesh. This cell is 280 triangles over 17,300 m² — 60 m² each, about
+   * 11 m across — so a triangle straddles a weld line and belongs to one panel only by where its
+   * centre happened to land. Measured that way, panel 4 (240 m² of ground, three rolls) came out as
+   * one triangle and 14 m², and panel 1 was credited with 700 m² that is not its. The raster is
+   * 0.75 m and every cell belongs to exactly one panel, so each cell contributes its plan area
+   * divided by the cosine of the slope under it — the panel's real area over the ground. */
+  const cellArea = R.cell * R.cell;
+  const metrics = pp.panels.map((pan) => {
+    let nx = 0, ny = 0, nz = 0, area = 0;
+    (pan.cells || new Set()).forEach((c) => {
+      const i = c % R.gw, j = (c - i) / R.gw;
+      const f = tin.faceAt(R.xOf(i), R.yOf(j));
+      if (!f) { area += cellArea; return; }   // off the TIN: take it flat rather than skip it
+      area += cellArea / Math.max(f.normal.z, 1e-6);
+      nx += f.normal.x; ny += f.normal.y; nz += f.normal.z;
+    });
+    return { area, nx, ny, nz };
+  });
+
+  let n = 0;
+  const zones = pp.panels.map((pan, zi) => {
+    const tris = trisOf[zi];
+    const m = metrics[zi];
+    const h = Math.hypot(m.nx, m.ny), grade = m.nz > 1e-9 ? h / m.nz : 0;
+    const area = m.area;
+    const panels = pan.runs.map((r) => ({
+      n: ++n,
+      draped: r.draped,
+      plan: r.plan,
+      path: r.path,
+      footprint: ribbon(r.path),
+      start: r.path[0],
+      stoppedBy: r.stoppedBy,
+    }));
+    return {
+      index: zi + 1,
+      label: `Panel ${zi + 1} — ${grade >= ROLL_FLAT_GRADE ? "batter" : "base"}`,
+      kind: grade >= ROLL_FLAT_GRADE ? "batter" : "base",
+      slope: grade >= ROLL_FLAT_GRADE,
+      grade,
+      area: area || pan.areaPlan,
+      bearing: pan.bearing || 0,
+      triangles: tris,
+      outline: surfaceOutline(tris)[0] || [],
+      plane: null,
+      plan: { dir: pan.dir || { x: 0, y: 1 }, panels },
+    };
+  });
+
+  /* The strips that fill what a full-width run could not reach — the wedge at the end of a panel,
+   * the bit against a weld line. They are real pieces that have to be cut and welded in, so they go
+   * in the schedule under their own heading rather than into a footnote. Their "area" is the ground
+   * they cover, not a region of the cell, which is why it is measured off their own length. */
+  if (pp.infill.length) {
+    const panels = pp.infill.map((r) => ({
+      n: ++n, draped: r.draped, plan: r.plan, path: r.path, footprint: ribbon(r.path), start: r.path[0],
+    }));
+    zones.push({
+      index: zones.length + 1,
+      label: `Infill strips — ${panels.length} piece${panels.length === 1 ? "" : "s"} cut in against the runs`,
+      kind: "infill", slope: false, grade: 0,
+      area: panels.reduce((t, q) => t + q.plan, 0) * pp.rollWidth,
+      bearing: 0, triangles: spare, outline: [], plane: null,
+      plan: { dir: { x: 0, y: 1 }, panels },
+    });
+  }
+
+  const allPanels = zones.flatMap((z) => z.plan.panels);
+  const totalDraped = allPanels.reduce((t, q) => t + q.draped, 0);
+  const totalPlan = allPanels.reduce((t, q) => t + q.plan, 0);
+  /* The weld lines the user drew, carried over so the 3D view and the DXF draw them.
+   *
+   * Their heights need care. An imported layout traces the panel boundaries, and a boundary runs
+   * along the edge of the cell — where a vertex lands a few millimetres outside the TIN and has no
+   * height at all. Taking RL 0 for those put two weld lines hundreds of metres below the cell,
+   * hanging off the bottom of the 3D view. So walk along the line until the ground is found, and
+   * only fall back to a neighbour's level when the whole line is off the surface. */
+  const lineLevels = (line) => {
+    const zs = line.map((q) => tin.zAt(q.x, q.y));
+    zs.forEach((z, i) => {
+      if (z !== null) return;
+      for (const j of [i + 1, i - 1]) {
+        const to = line[j];
+        if (!to) continue;
+        const from = line[i];
+        const len = Math.hypot(to.x - from.x, to.y - from.y);
+        const steps = Math.min(24, Math.ceil(len / 0.25));
+        for (let s = 1; s <= steps; s++) {
+          const f = (s * 0.25) / Math.max(len, 1e-6);
+          if (f > 1) break;
+          const hit = tin.zAt(from.x + (to.x - from.x) * f, from.y + (to.y - from.y) * f);
+          if (hit !== null) { zs[i] = hit; return; }
+        }
+      }
+    });
+    const known = zs.filter((z) => z !== null);
+    if (!known.length) return null;                 // the whole line is off the surface: no level
+    let last = known[0];
+    return zs.map((z) => (z !== null ? (last = z) : last));
+  };
+  const segments = [];
+  (pp.weldLinesUsed || []).forEach((line) => {
+    const zs = lineLevels(line);
+    if (!zs) return;
+    for (let i = 0; i + 1 < line.length; i++) {
+      segments.push({ a: { ...line[i], z: zs[i] }, b: { ...line[i + 1], z: zs[i + 1] }, kind: "weld" });
+    }
+  });
+  return {
+    fromEditor: true,
+    zones,
+    panels: allPanels,
+    hinges: { segments, length: pp.weldAtLines },
+    rollWidth: pp.rollWidth,
+    minOverlap: pp.minOverlap,
+    surface: pp.surfaceArea3D,
+    covered: pp.surfaceArea3D - pp.bareArea3D,
+    material: pp.material,
+    totalDraped,
+    totalPlan,
+    hingeWeld: pp.weldAtLines,
+    panelSeam: pp.seam,
+    totalWeld: pp.totalWeld,
+    offcutPieces: pp.offcutPieces,
+    offcutArea: pp.offcutArea,
+    unpanelledArea: pp.unpanelledArea,
+  };
+}
+
 /* ===============================================================================================
    THE PANEL EDITOR
    ===============================================================================================
@@ -9865,6 +10113,10 @@ function renderPanelEditor() {
           : "Nothing bare.");
     }
   }
+
+  // Drawing is the only thing that can change the layout, so this is the one place the stats, the
+  // schedule, the 3D view and the CAD export need to be told about it.
+  refreshLinerOutputs();
 }
 
 /** Height on the loaded cell surface, with the index built once. */
@@ -10284,7 +10536,10 @@ function writeLinerGeometry(doc, surface, plan, rollLength) {
       // of the cell. Inside the facet the two agree — that is what makes it a facet — and outside
       // it the plane carries on at the right grade instead of running level at a stale height.
       const z = tin.zAt(x, y);
-      pts.push({ x, y, z: z !== null ? z : plane ? plane.zAt(x, y) : 0 });
+      // Off the cell with no facet plane to follow — a drawn panel has none — hold the height the
+      // two ends already carry, which is the centreline's. Dropping to RL 0 made panels float.
+      const held = (from.z || 0) + ((to.z !== undefined ? to.z : from.z || 0) - (from.z || 0)) * f;
+      pts.push({ x, y, z: z !== null ? z : plane ? plane.zAt(x, y) : held });
     }
     return pts;
   };
@@ -10323,7 +10578,7 @@ function writeLinerGeometry(doc, surface, plan, rollLength) {
 
     const mid = p.path.length
       ? p.path[Math.floor(p.path.length / 2)]
-      : { x: p.start.x, y: p.start.y, z: z.plane ? z.plane.zAt(p.start.x, p.start.y) : 0 };
+      : { x: p.start.x, y: p.start.y, z: p.start.z !== undefined ? p.start.z : z.plane ? z.plane.zAt(p.start.x, p.start.y) : 0 };
     let rot = (Math.atan2(z.plan.dir.y, z.plan.dir.x) * 180) / Math.PI;
     if (rot > 90 || rot <= -90) rot += 180;
     const size = Math.max(0.3, Math.min(1.5, plan.rollWidth * 0.18));
@@ -10429,8 +10684,12 @@ document.getElementById("baseGridExportBtn").addEventListener("click", () => {
   const dxf = buildBaseGridDxf(baseGridSurface, baseGridPlanResult, parseFloat(baseGridInputs.rollLength.value) || 0);
   if (!dxf) return;
   downloadFile(`${fileStem("geomate")}_base_geogrid.dxf`, dxf, "application/dxf");
+  const p = baseGridPlanResult;
   baseGridStatus(
-    `Exported ${baseGridPlanResult.panels.length} panels across ${baseGridPlanResult.zones.length} zones, draped on the surface. Opens in Civil 3D — Save As there for a DWG.`,
+    (p.fromEditor
+      ? `Exported your drawn layout — ${p.panels.length} rolls across ${p.zones.filter((z) => z.kind !== "infill").length} panels, on your weld lines`
+      : `Exported ${p.panels.length} panels across ${p.zones.length} zones`) +
+      `, draped on the surface. Opens in Civil 3D — Save As there for a DWG.`,
     "ok"
   );
 });
@@ -11267,6 +11526,7 @@ function computePanelPlan(surface, weldLines, panels, opts) {
     out.push({
       ...panel,
       index: idx,
+      cells,
       runs,
       dir,
       bearing: ((Math.atan2(dir.x, dir.y) * 180) / Math.PI + 360) % 360,
@@ -11449,6 +11709,7 @@ function computePanelPlan(surface, weldLines, panels, opts) {
     bareArea3D,
     barePct: groundArea3D > 0 ? (100 * bareArea3D) / groundArea3D : 0,
     bareCells,
+    weldLinesUsed: weldLines || [],
     /* Ground inside no panel at all — the user has to draw another panel or move a weld line.
      * Kept apart from the sliver infill so the two can never be confused. */
     unpanelledArea,
@@ -11605,12 +11866,38 @@ function renderCellView3D(plan) {
       return v === 0 ? -1 : v / 20 - 1;
     };
 
+    /* WHOSE GROUND IS THIS? For zones read off the surface, a panel lies on its own plane, so the
+     * test is "does the buffer show my zone". A DRAWN panel cannot be tested that way: the zones are
+     * then the panels the installer drew, and a 60 m² triangle straddling a weld line is tinted for
+     * one of them while the neighbour's rolls run across it. Tested against its own zone, most of
+     * the drawn rolls vanished. So ask the ground instead: the triangle under this point, and the
+     * zone that triangle was tinted as. Where they agree, nothing nearer is in the way. */
+    const groundTin = plan.fromEditor ? makeTinIndex(baseGridSurface.triangles) : null;
+    const zoneUnder = (q, zi) => {
+      if (!groundTin) return zi;
+      const f = groundTin.faceAt(q.x, q.y);
+      if (!f) return zi;
+      const found = zoneOfTri.get(baseGridSurface.triangles[f.tri]);
+      return found === undefined ? zi : found;
+    };
+
     // Short enough that a strip follows the ground it crosses, long enough not to flood the loop.
     const STEP_M = 2;
     ctx.lineCap = "round";
     plan.zones.forEach((z, zi) => {
-      // Each zone is one plane, so a point on it sits exactly — no sampling of the TIN needed.
-      const lift = (q) => ({ x: q.x, y: q.y, z: (z.plane ? z.plane.zAt(q.x, q.y) : 0) + 0.05 });
+      /* A zone read off the surface is one plane, so a point on it sits exactly. A panel the user
+       * drew has no plane — its footprint carries the heights it was built with, read off the TIN —
+       * so the point's own level wins wherever it has one. */
+      const lift = (q) => ({
+        x: q.x,
+        y: q.y,
+        z: (Number.isFinite(q.z) ? q.z : z.plane ? z.plane.zAt(q.x, q.y) : 0) + 0.05,
+      });
+      const mix = (a, c, t) => ({
+        x: a.x + (c.x - a.x) * t,
+        y: a.y + (c.y - a.y) * t,
+        z: Number.isFinite(a.z) && Number.isFinite(c.z) ? a.z + (c.z - a.z) * t : undefined,
+      });
       z.plan.panels.forEach((q) => {
         const f = q.footprint;
         if (!f || f.length < 3) return;
@@ -11619,9 +11906,9 @@ function renderCellView3D(plan) {
           const steps = Math.max(1, Math.ceil(Math.hypot(c.x - a.x, c.y - a.y) / STEP_M));
           for (let s = 0; s < steps; s++) {
             const t0 = s / steps, t1 = (s + 1) / steps;
-            const p0 = px(lift({ x: a.x + (c.x - a.x) * t0, y: a.y + (c.y - a.y) * t0 }));
-            const p1 = px(lift({ x: a.x + (c.x - a.x) * t1, y: a.y + (c.y - a.y) * t1 }));
-            if (zoneAt((p0.x + p1.x) / 2, (p0.y + p1.y) / 2) !== zi) continue;
+            const p0 = px(lift(mix(a, c, t0)));
+            const p1 = px(lift(mix(a, c, t1)));
+            if (zoneAt((p0.x + p1.x) / 2, (p0.y + p1.y) / 2) !== zoneUnder(mix(a, c, (t0 + t1) / 2), zi)) continue;
             // A dark line under a light one, so a strip reads on the orange batter and the pale
             // base alike. One white hairline was legible on about half the zones and no more.
             ctx.beginPath();

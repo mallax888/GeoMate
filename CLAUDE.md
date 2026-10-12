@@ -266,6 +266,38 @@ These come from the user directly. Violating them makes output wrong on site.
    read at all.
    The zoning is INFERRED from the surface. A toe line or zone divisions from
    the designer beat it and should be preferred whenever they are supplied.
+   **And when the installer has drawn the panelling, THAT is the plan of
+   record.** Five attempts at inferring the panelling from the surface were all
+   wrong, and the user said why: *"your red lines are still all over the show"*
+   — where a roll is cut and where it carries on is judged on site, not by
+   angle. So the panel editor (draw the weld lines, drop a panel, point it) and
+   the layout importer are the input, `computePanelPlan` is the engine, and
+   `panelPlanAsLinerPlan` translates its answer into the shape the zone plan
+   already speaks: a drawn panel becomes a "zone", a run becomes a "panel", the
+   drawn weld lines become the hinges. That adapter exists so there is ONE
+   source of truth, not four: `refreshLinerOutputs` picks the drawn plan when
+   one exists and the stats, the schedule, the 3D view and both CAD exports all
+   follow it. The zone drawing stays on the page, under "what the ground is
+   doing", as the reference it always was. Three things bit while wiring it:
+   - **Do not measure a drawn panel by the triangles it owns.** A design TIN is
+     not a fine mesh — this cell is 280 triangles over 17,300 m², about 11 m
+     across each — so a triangle straddles a weld line and lands in a panel by
+     where its centre happened to fall. Measured that way, a 240 m² panel with
+     three rolls on it came out as one triangle and 14 m², and its neighbour was
+     credited with 700 m² that was not its. The 0.75 m raster the engine already
+     builds has every cell in exactly one panel: area is the cell area over the
+     cosine of the slope under it, and it adds up to the surface exactly.
+   - **The 3D view's hidden-line test had to change with it.** It asks the
+     offscreen zone-id buffer "is my own zone the ground you can see here",
+     which is right for facets — a panel lies on its own plane — and wrong for
+     drawn panels, because a 60 m² triangle tinted for one panel has the
+     neighbour's rolls running across it. Tested against its own zone, most of
+     the drawn rolls disappeared. It now asks the ground: the triangle under the
+     point, and the zone that triangle was tinted as.
+   - **An imported weld line runs along the edge of the cell**, so its vertices
+     can land a few millimetres outside the TIN with no height at all. Taking
+     RL 0 for those hung two weld lines 250 m below the job, trailing off the
+     bottom of the 3D view. Walk along the line until the ground is found.
 13. **What leaves the app is set out from.** The PDF is a picture of the plan;
    the **cut plan DXF** (`buildCutPlanDxf`, the button under the roll schedule)
    is the plan itself — every strip a closed polyline in the survey coordinates
