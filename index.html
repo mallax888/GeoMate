@@ -313,9 +313,11 @@
       </div>
       </div>
       <div class="panel__headactions">
+        <!-- Says WHICH DXF. On the output tabs this is the only upload on screen, and "Upload DXF"
+             beside a tab full of liner panels read as "upload anything that is a DXF". -->
         <button id="headerUploadBtn" class="btn btn--ghost btn--icon" type="button" title="Load a lift extents DXF from CAD">
           <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 10.5V2.2M5 5.2 8 2.2l3 3"/><path d="M2.5 10.5v2.3c0 .6.5 1 1 1h9c.6 0 1-.4 1-1v-2.3"/></svg>
-          Upload DXF
+          Upload lift extents
         </button>
         <button id="addLiftBtn" class="btn btn--ghost" type="button">+ Add lift</button>
       </div>
@@ -340,7 +342,8 @@
           <tbody id="liftTableBody"></tbody>
         </table>
       </div>
-      <p class="empty-state__alt">
+      <!-- Hidden as soon as the table has rows — see computeAndRender. -->
+      <p id="takeoffEmptyHint" class="empty-state__alt">
         <span>No drawing yet?</span>
         <button id="loadSampleBtn" class="btn btn--link" type="button">Load the sample project</button>
         <span class="empty-state__sep"></span>
@@ -367,10 +370,16 @@
            carries the same upload in its own card, so the page opened with two green buttons asking
            for the same file — a waste of a button, and the panel it framed is still the drop target
            whether or not anything is drawn around it. -->
-      <div class="cutplan-intro">
-        <!-- Every other panel on this screen says what it is; these three cards just appeared out of
-             nowhere. This is the tab the app opens on, so the first thing read is now what to do. -->
-        <h3 class="panel__subheading cutplan-intro__heading">Load your lifts from CAD</h3>
+      <!-- Every other panel on this screen says what it is; these three cards just appeared out of
+           nowhere. This is the tab the app opens on, so the first thing read is now what to do.
+           It FOLDS once the lifts are in: three cards of instructions are what you need before the
+           first upload and dead weight after it, and they were pushing the cut plan itself — the
+           reason the page exists — most of a screen down. renderCutPlan closes it and writes what
+           was loaded into the summary; it opens again the moment there is nothing loaded. -->
+      <details class="cutplan-intro loadblock" id="cutPlanLoadBlock" open>
+        <summary class="panel__subheading cutplan-intro__heading loadblock__summary">
+          <span id="cutPlanLoadTitle">Load your lifts from CAD</span>
+        </summary>
         <div class="cutplan-methods">
           <div class="cutplan-method">
             <h3 class="cutplan-method__title">
@@ -507,7 +516,7 @@
           </div>
           </div>
         </div>
-      </div>
+      </details>
       <div class="cutplan-list-head">
         <p id="cutPlanEmpty" class="empty-state"><svg class="empty-state__icon" viewBox="0 0 16 16" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 13 8 3l6 10z"/><path d="M2 9.2h12" stroke-dasharray="1.6 1.8"/></svg><br>No extents loaded yet — upload a DXF to see per-strip cut lengths.</p>
         <button id="printCutPlanBtn" class="btn btn--ghost" type="button" hidden>Print / save PDF (one page per lift)</button>
@@ -639,9 +648,11 @@
           plane and stops at a change of grade, and the weld at each of those changes is measured
           with it.
         </p>
-        <button id="baseGridResetBtn" class="btn btn--ghost" type="button">Reset</button>
       </div>
 
+      <!-- Reset sits with the uploads rather than on a line of its own: the intro beside it is help
+           text and is off by default, so that line held one small button and two centimetres of
+           nothing at the top of the tab. -->
       <div class="basegrid-upload">
         <label class="btn btn--primary btn--upload">
           Upload cell surface (DXF 3DFACE)
@@ -651,10 +662,11 @@
           LandXML surface instead
           <input type="file" id="baseGridXmlInput" accept=".xml,.landxml" hidden />
         </label>
+        <button id="baseGridResetBtn" class="btn btn--ghost basegrid-upload__reset" type="button">Reset</button>
         <p id="baseGridStatus" class="cutplan-status"></p>
         <!-- The same DXF button takes the geomembrane extents: when a file has no triangles in it,
              the outlines are read instead and the cell is built from them. See surfaceFromOutlines. -->
-        <p class="cutplan-status">No surface? Put the <strong>geomembrane extents</strong> through the same DXF button — closed outlines
+        <p id="baseGridExtentsHint" class="cutplan-status">No surface? Put the <strong>geomembrane extents</strong> through the same DXF button — closed outlines
           drawn on the ground, and GeoMate builds the cell from them. The levels on your outlines are
           exact; the levels between them are interpolated, and it says so on every number that uses them.</p>
       </div>
@@ -762,21 +774,26 @@
           <p class="generator__hint">Drag to turn it, scroll to zoom. Each zone keeps the colour it has in the plan above, so the batters and the base are the same pieces in both.</p>
         </div>
 
-        <h3 class="panel__subheading">Panel schedule</h3>
-        <div class="table-scroll">
-          <table id="baseGridTable" class="lift-table basegrid-table">
-            <thead>
-              <tr>
-                <th scope="col">Panel</th>
-                <th scope="col">Length over ground</th>
-                <th scope="col">Length on plan</th>
-                <th scope="col">Extra</th>
-                <th scope="col">Rolls</th>
-              </tr>
-            </thead>
-            <tbody id="baseGridTableBody"></tbody>
-          </table>
-        </div>
+        <!-- One row per roll: on a drawn layout that is over a hundred of them, and it ran off the
+             bottom of the page under everything else on the tab. Folded, with the count on the
+             summary — see refreshLinerOutputs. -->
+        <details class="tool loadblock" id="baseGridScheduleBlock">
+          <summary class="panel__subheading loadblock__summary">Panel schedule<span id="baseGridScheduleCount" class="tool__count"></span></summary>
+          <div class="table-scroll">
+            <table id="baseGridTable" class="lift-table basegrid-table">
+              <thead>
+                <tr>
+                  <th scope="col">Panel</th>
+                  <th scope="col">Length over ground</th>
+                  <th scope="col">Length on plan</th>
+                  <th scope="col">Extra</th>
+                  <th scope="col">Rolls</th>
+                </tr>
+              </thead>
+              <tbody id="baseGridTableBody"></tbody>
+            </table>
+          </div>
+        </details>
       </div>
 
       </div>
@@ -921,16 +938,22 @@
       </div>
     </div>
 
-    <h3 class="panel__subheading">Strips by cut length</h3>
-    <div class="table-scroll">
-      <table class="roll-table" id="rollTable">
-        <thead>
-          <tr><th scope="col">Length</th><th scope="col">Strips</th></tr>
-        </thead>
-        <tbody id="rollTableBody"></tbody>
-      </table>
-    </div>
-    <p class="roll-table-note">Rolls to order are packed across all strip lengths together (cut multiple lengths from one 50 m roll where they fit), not one-for-one per length above.</p>
+    <!-- A list of every distinct cut length is reference, not an answer: on a real job it runs to
+         forty-odd rows and pushed the export buttons — the things anybody actually came here to
+         press — most of a screen below the fold. It opens on a click and says how long it is
+         first. See renderRollTable, which keeps the count in the summary. -->
+    <details class="tool roll-table-disclosure" id="rollTableBlock">
+      <summary class="tool__summary">Strips by cut length<span id="rollTableCount" class="tool__count"></span></summary>
+      <div class="table-scroll">
+        <table class="roll-table" id="rollTable">
+          <thead>
+            <tr><th scope="col">Length</th><th scope="col">Strips</th></tr>
+          </thead>
+          <tbody id="rollTableBody"></tbody>
+        </table>
+      </div>
+      <p class="roll-table-note">Rolls to order are packed across all strip lengths together (cut multiple lengths from one 50 m roll where they fit), not one-for-one per length above.</p>
+    </details>
 
     <button id="exportBtn" class="btn btn--primary btn--block" type="button">Export CSV</button>
     <button id="exportFullPdfBtn" class="btn btn--ghost btn--block" type="button">Export full PDF (all sheets + 3D view)</button>

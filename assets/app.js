@@ -4587,6 +4587,11 @@ function computeAndRender() {
     // told, since neither a scroll nor a resize happened.
     if (tableWrap.updateScrollFade) tableWrap.updateScrollFade();
   }
+  /* "No drawing yet? Load the sample project…" goes with the empty table it belongs to. It was
+   * static markup that nothing ever toggled, so it sat under three loaded lifts offering to load a
+   * sample over the top of them. */
+  const takeoffHint = document.getElementById("takeoffEmptyHint");
+  if (takeoffHint) takeoffHint.hidden = rows.length > 0;
   updateHeaderUpload();
   // Collected alongside validateRows() below — these catch bad values on a single row's own inputs
   // (negative face length/embedment), which validateRows can't see because a row that fails to
@@ -5136,6 +5141,11 @@ function renderSummary(results, productSpecs, rollGroupSize, installRate, baseLe
       tr.innerHTML = `<td>${fmt.m(len)} m</td><td>${fmt.int(count)}</td>`;
       rollTableBody.appendChild(tr);
     });
+  // The disclosure says how much is behind it, so nobody has to open it to find out.
+  const rollTableCount = document.getElementById("rollTableCount");
+  if (rollTableCount) {
+    rollTableCount.textContent = buckets.size ? `${buckets.size} length${buckets.size === 1 ? "" : "s"}` : "";
+  }
 
   // Pack every strip/stitch onto numbered rolls (see Roll schedule tab) — the same packing drives
   // both this summary and that tab, so they always agree. Pooled across every lift by default (fewest
@@ -5595,9 +5605,12 @@ let currentTab = "cutplan";
 function updateHeaderUpload() {
   const btn = document.getElementById("headerUploadBtn");
   if (!btn) return;
-  // Cut plan carries its own uploads — so the header button is for every OTHER tab, where going back
-  // to CAD would otherwise mean hunting for the right one.
-  btn.hidden = currentTab === "cutplan";
+  /* Cut plan carries its own uploads — so the header button is for every OTHER tab, where going
+   * back to CAD would otherwise mean hunting for the right one. The LINER carries its own as well,
+   * and there the two sat a centimetre apart meaning different things: this one loads lift extents
+   * for the wall, the one under it loads the cell surface. Two upload buttons that take different
+   * files is not two ways in. */
+  btn.hidden = currentTab === "cutplan" || currentTab === "liner";
 }
 
 /* Opens the file picker and NOTHING else. This used to switch to Cut plan first, so that the
@@ -6278,10 +6291,55 @@ cutPlanList.addEventListener("change", (e) => {
   computeAndRender();
 });
 
+/**
+ * The "load your lifts from CAD" block, folded once there is something loaded.
+ *
+ * Three cards of instructions are exactly what is needed before the first upload and dead weight
+ * after it — they were pushing the cut plan itself, the reason the page exists, most of a screen
+ * down. Closed, the summary says what is in the job instead, so folding it costs no information.
+ *
+ * It only ever folds it ONCE per load: after that the state is the user's, because somebody who
+ * opened it to add a second product should not have it shut under them on the next keystroke
+ * (this runs on every recompute).
+ */
+let loadBlockFolded = false;
+function updateLoadBlock(extentsResults) {
+  const block = document.getElementById("cutPlanLoadBlock");
+  const title = document.getElementById("cutPlanLoadTitle");
+  if (!block || !title) return;
+  const n = extentsResults.length;
+  if (!n) {
+    title.textContent = "Load your lifts from CAD";
+    block.open = true;
+    loadBlockFolded = false;
+    return;
+  }
+  const rls = extentsResults.map((r) => parseFloat(r.rl)).filter(Number.isFinite).sort((a, b) => a - b);
+  const strips = extentsResults.reduce((t, r) => t + (r.cutPlan.cutLengths || []).length, 0);
+  title.innerHTML =
+    `<em>${n}</em> lift${n === 1 ? "" : "s"}` +
+    (rls.length ? `, RL <em>${rls[0].toFixed(2)}–${rls[rls.length - 1].toFixed(2)}</em>` : "") +
+    `, <em>${strips}</em> strip${strips === 1 ? "" : "s"} — load another file`;
+  /* NEVER fold a problem out of sight. The status lines that say what a file actually did — "read
+   * from blocks", "snapped a 4 mm gap", "that file has no closed polyline" — live inside the cards,
+   * so folding on a bad or unusual read would hide the one sentence the user needs. A clean load
+   * folds; anything flagged stays open until it is dealt with. */
+  const flagged = block.querySelector(".cutplan-status.is-error, .cutplan-status.is-warn");
+  if (flagged && (flagged.textContent || "").trim()) {
+    block.open = true;
+    return;
+  }
+  if (!loadBlockFolded) {
+    block.open = false;
+    loadBlockFolded = true;
+  }
+}
+
 function renderCutPlan(results) {
   const extentsResults = results.filter((r) => r.mode === "extents" && r.cutPlan);
   cutPlanEmpty.hidden = extentsResults.length > 0;
   document.getElementById("printCutPlanBtn").hidden = extentsResults.length === 0;
+  updateLoadBlock(extentsResults);
   cutPlanList.innerHTML = "";
   window.__geogridCutPlanResults = extentsResults;
   // Rebuilt fresh every render, not preserved across calls — the swap-face/back handler below only
@@ -7990,10 +8048,40 @@ function render3D(results) {
     const w = ctx.measureText(`RL ${lift.rlLabel}`).width;
     return { left: anchorX - 6 - w, right: anchorX - 6, top: anchorY - 15, bottom: anchorY - 2 };
   });
+
+  /* MOVE THEM APART BEFORE GIVING UP ON THEM.
+   *
+   * Lifts in a stack are a few hundred millimetres apart, and at a shallow pitch that is a few
+   * pixels — so "RL 60.00", "RL 60.60" and "RL 61.20" were drawn one on top of another and none of
+   * the three could be read. The rule underneath used to be the only answer: enough collisions and
+   * every resting label disappears, leaving nothing until you hover.
+   *
+   * A label does not have to sit exactly on its corner to belong to it, so each one is nudged UP
+   * until it is clear of the ones already placed (upwards, because a label sits above its own
+   * corner already, and because the stack grows upwards). Only then, if they still cannot be
+   * separated, does the all-or-nothing rule take over.
+   */
+  const LABEL_H = 13;
+  const order = labelBoxes.map((box, i) => ({ i, box })).sort((a, b) => b.box.top - a.box.top);
+  const placedBoxes = [];
+  const shiftY = new Array(labelBoxes.length).fill(0);
+  order.forEach(({ i, box }) => {
+    let top = box.top;
+    for (let guard = 0; guard < 40; guard++) {
+      const clash = placedBoxes.find(
+        (p) => box.left < p.right && box.right > p.left && top < p.bottom && top + LABEL_H > p.top
+      );
+      if (!clash) break;
+      top = clash.top - LABEL_H - 2;
+    }
+    shiftY[i] = top - box.top;
+    placedBoxes.push({ left: box.left, right: box.right, top, bottom: top + LABEL_H });
+  });
+
   let overlaps = 0;
-  for (let i = 0; i < labelBoxes.length && overlaps <= 2; i++) {
-    for (let j = i + 1; j < labelBoxes.length; j++) {
-      const a = labelBoxes[i], b = labelBoxes[j];
+  for (let i = 0; i < placedBoxes.length && overlaps <= 2; i++) {
+    for (let j = i + 1; j < placedBoxes.length; j++) {
+      const a = placedBoxes[i], b = placedBoxes[j];
       if (a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top) overlaps++;
     }
   }
@@ -8004,17 +8092,29 @@ function render3D(results) {
   // lift you're on, its label should be the one thing you don't have to hunt for, so it's pinned to
   // a fixed spot (top-left) instead of wherever that lift's corner happens to have landed, and drawn
   // as a solid badge instead of small text — same treatment as the shape's own solid highlight fill.
-  const drawLabel = (lift, anchorX, anchorY, dim) => {
+  const drawLabel = (lift, anchorX, anchorY, dim, shift) => {
+    const dy = shift || 0;
     ctx.font = "11px " + monoFont;
+    // Moved off its corner to clear a neighbour, it gets a hairline back to the corner it names —
+    // a label floating over a stack of lifts otherwise belongs to whichever one you guess.
+    if (Math.abs(dy) > 3) {
+      ctx.strokeStyle = lift.installed ? good : inkMuted;
+      ctx.globalAlpha = dim ? 0.2 : 0.5;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(anchorX - 4, anchorY - 4);
+      ctx.lineTo(anchorX - 4, anchorY - 4 + dy);
+      ctx.stroke();
+    }
     ctx.globalAlpha = dim ? 0.4 : 1;
     ctx.fillStyle = lift.installed ? good : ink;
-    ctx.fillText(`RL ${lift.rlLabel}`, anchorX - 6, anchorY - 6);
+    ctx.fillText(`RL ${lift.rlLabel}`, anchorX - 6, anchorY - 6 + dy);
     ctx.globalAlpha = 1;
   };
   if (showPermanentLabels) {
-    anchors.forEach(({ lift, anchorX, anchorY }) => {
+    anchors.forEach(({ lift, anchorX, anchorY }, i) => {
       const isHovered = spotlit && lift.rl === view3DHoveredRL;
-      if (!isHovered) drawLabel(lift, anchorX, anchorY, spotlit);
+      if (!isHovered) drawLabel(lift, anchorX, anchorY, spotlit, shiftY[i]);
     });
   }
   if (spotlit) {
@@ -9550,6 +9650,9 @@ function loadBaseGridSurface(triangles, label, built) {
   // `built` marks a surface interpolated from an extents drawing rather than surveyed. It stays on
   // the surface object because the difference has to be visible wherever the levels are used.
   baseGridSurface = { triangles, outline, label, fromOutline: built || null };
+  // The "no surface? use the extents" offer has done its job once there is a surface.
+  const extentsHint = document.getElementById("baseGridExtentsHint");
+  if (extentsHint) extentsHint.hidden = true;
   const area = surfaceArea3D(triangles);
   const plan = Math.abs(signedArea(outline));
   baseGridStatus(
@@ -9754,6 +9857,9 @@ function refreshLinerOutputs() {
         : "") +
       ` Anchor trenches, tie-ins and the folds at the toe are not modelled.`;
   }
+
+  const count = document.getElementById("baseGridScheduleCount");
+  if (count) count.textContent = `${plan.panels.length} ${drawn ? "roll" : "panel"}${plan.panels.length === 1 ? "" : "s"}`;
 
   const tbody = document.getElementById("baseGridTableBody");
   if (tbody) {
@@ -10720,6 +10826,20 @@ function insidePoint(poly) {
     if (e.key === "Escape") { e.preventDefault(); panelEditorArm("idle"); }
   });
   panelEditorLoad();
+  /* THE LAYOUT SURVIVES A RELOAD; THE SURFACE CANNOT.
+   *
+   * A cell TIN is megabytes of triangles and would blow the storage quota every saved project
+   * shares, so it stays in memory only. The weld lines and panels are small and ARE saved — which
+   * left the tab looking untouched after a reload while holding somebody's drawn layout, with
+   * nothing on screen to say so. Say it, on the tab they would be looking at. */
+  if (!baseGridSurface && (panelEditor.panels.length || panelEditor.weldLines.length)) {
+    baseGridStatus(
+      `Your drawn layout is still here — ${panelEditor.panels.length} panel${panelEditor.panels.length === 1 ? "" : "s"} and ` +
+        `${panelEditor.weldLines.length} weld line${panelEditor.weldLines.length === 1 ? "" : "s"}. The surface itself is too big to keep between visits, ` +
+        `so upload it again and the layout comes straight back on top of it.`,
+      "warn"
+    );
+  }
 }
 
 function renderBaseGridPlan(plan) {

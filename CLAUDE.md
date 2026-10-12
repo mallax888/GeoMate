@@ -511,6 +511,31 @@ export, and state persistence.
 
 ## Conventions
 
+- **What you had to read to get here folds away once you are here.** The three
+  "load your lifts from CAD" cards are exactly right before the first upload and
+  dead weight after it — they were pushing the cut plan itself, the reason the
+  page exists, most of a screen down. Same for the sidebar's forty-row "strips by
+  cut length" table, which sat between the numbers and the export buttons, and
+  the liner's panel schedule, a hundred-odd rows on a drawn layout. All three are
+  `<details>` now, with the count or the summary of what is inside written on the
+  handle, so folding costs no information. Two rules learned doing it: fold it
+  ONCE (this runs on every keystroke — somebody who opened it to add a second
+  product must not have it shut under them), and **never fold a problem out of
+  sight** — the upload status lines live inside those cards, so a read that was
+  flagged (`is-error`/`is-warn`) keeps the block open.
+- **An empty state has to know when it is no longer empty.** "No drawing yet?
+  Load the sample project" was static markup that nothing ever toggled, so it sat
+  under three loaded lifts offering to replace them.
+- **One upload button per screen, and it says which file it takes.** The header's
+  generic "Upload DXF" sat a centimetre above the liner's own "Upload cell
+  surface" meaning something else entirely (lift extents). It is hidden on the
+  tabs that carry their own uploads, and it names what it loads everywhere else.
+- **Labels that collide get moved, not hidden.** Lifts in a stack are a few
+  hundred millimetres apart, which at a shallow pitch is a few pixels, so the
+  3D view's RL labels drew on top of each other. They are nudged clear of one
+  another with a hairline back to the corner each one names; the old
+  all-or-nothing "too many collisions, show none" rule is the last resort behind
+  that, not the first answer.
 - **Bump `CACHE_NAME` in `sw.js` on every deploy that touches
   `index.html`/`app.js`/`style.css`.** `activate()` drops every other cache,
   which is what clears anything an older worker left.
