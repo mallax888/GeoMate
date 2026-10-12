@@ -1237,6 +1237,8 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
 .cutplan-status { font-size: var(--fs-sm); color: var(--ink-muted); }
 .cutplan-status.is-error { color: var(--critical); }
 .cutplan-status.is-ok { color: var(--good); }
+/* It worked, but on an assumption the user has to know about — levels interpolated from extents. */
+.cutplan-status.is-warn { color: var(--warn); }
 
 /* Wall-or-floor asked at upload time. Sits between the two uploads it can follow, and only takes up
    room while it is actually asking something. */

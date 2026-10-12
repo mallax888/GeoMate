@@ -298,6 +298,43 @@ These come from the user directly. Violating them makes output wrong on site.
      can land a few millimetres outside the TIN with no height at all. Taking
      RL 0 for those hung two weld lines 250 m below the job, trailing off the
      bottom of the 3D view. Walk along the line until the ground is found.
+   **The extents are a second way in, and a geomembrane usually arrives that
+   way.** *"Can I not upload an extents in DXF for the geomembrane"* — not until
+   now, and refusing it was refusing the drawing the user has (rule 11 again).
+   A DXF with no 3DFACE in it is read a second time as OUTLINES, and the cell is
+   built from them: every path densified (a few metres apart) so the breaks
+   survive, Delaunay over the lot in LOCAL coordinates (at 407,000/854,000 the
+   circumcircle test is all round-off), then the hull cut back to the ground that
+   was actually drawn — a triangle survives only if its centre is inside one of
+   the closed outlines, or a concave cell gets its bays bridged over.
+   Measured against the surveyed TIN of the same cell, their GEOMEMBRANE.dxf
+   (four closed 3D polylines that tile the cell, 692 points) builds 926 triangles
+   in under a second: plan area 16,632 m² against 16,635, surface 17,279 against
+   17,300, levels a **median 0.11 m and a 99th percentile 0.56 m** off the real
+   surface. Good enough to lay out, not good enough to pass off as a survey — so
+   `baseGridSurface.fromOutline` is set, the upload says what it did, and a
+   standing line above the stats says the levels between the outlines are
+   interpolated. An outline with no levels is treated as flat and says so.
+   Three things that file broke on the way through:
+   - `dxfOpenPaths` read codes 10/20 off the POLYLINE record. A HEAVY polyline
+     keeps its coordinates in the VERTEX records that follow it, so a file drawn
+     with 3D polylines — which is what a draped line IS — came back with no open
+     paths at all, and the layout import then reported "no closed polylines" over
+     a file holding four of them.
+   - **"Open lines are sheets" needs a quorum.** Three stray lines in an extents
+     drawing grouped into one direction and laid the whole cell one way as a
+     single panel — a confident answer built on nothing. Sheeting is many
+     near-parallel lines: six of them, with a run of at least three, or the lines
+     are left alone and the closed regions speak instead (one panel each, pointed
+     down its own ground, which is what that file deserves).
+   - **The sheet grouping was order-dependent.** A line joined the FIRST group
+     within 22°, not the nearest, and group bearings drift as lines join them, so
+     one panel of 14 sheets split into 10 at 100° and 4 at 91° with a 476 m² gap
+     between the two sets of rolls. Nearest group now, then a merge pass.
+   And one trap it exposed: under "ground belongs to the nearest sheet", a panel
+   the user DROPS has no sheets and could never claim a square of anything, so
+   after an import the one move available for closing a gap did nothing. Its seed
+   now stands in as a sheet of no length.
 13. **What leaves the app is set out from.** The PDF is a picture of the plan;
    the **cut plan DXF** (`buildCutPlanDxf`, the button under the roll schedule)
    is the plan itself — every strip a closed polyline in the survey coordinates

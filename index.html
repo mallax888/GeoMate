@@ -652,6 +652,11 @@
           <input type="file" id="baseGridXmlInput" accept=".xml,.landxml" hidden />
         </label>
         <p id="baseGridStatus" class="cutplan-status"></p>
+        <!-- The same DXF button takes the geomembrane extents: when a file has no triangles in it,
+             the outlines are read instead and the cell is built from them. See surfaceFromOutlines. -->
+        <p class="cutplan-status">No surface? Put the <strong>geomembrane extents</strong> through the same DXF button — closed outlines
+          drawn on the ground, and GeoMate builds the cell from them. The levels on your outlines are
+          exact; the levels between them are interpolated, and it says so on every number that uses them.</p>
       </div>
 
       <div class="liner-inputs liner-inputs--specs">
@@ -690,9 +695,11 @@
         lines. Direction barely changes how much material you need, but it can halve the number of runs.
       </p>
 
-      <p id="baseGridEmpty" class="empty-state"><svg class="empty-state__icon" viewBox="0 0 16 16" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 11.5 6 4.5l4 4 4.5-6"/><path d="M1.5 14.2h13"/></svg><br>Upload the cell's surface — the triangulated base and batters straight out of Civil 3D — to lay the rolls over it.</p>
+      <p id="baseGridEmpty" class="empty-state"><svg class="empty-state__icon" viewBox="0 0 16 16" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 11.5 6 4.5l4 4 4.5-6"/><path d="M1.5 14.2h13"/></svg><br>Upload the cell's surface — the triangulated base and batters straight out of Civil 3D — to lay the rolls over it. The geomembrane extents work too.</p>
 
       <div id="baseGridResults" hidden>
+        <!-- Set in refreshLinerOutputs: where this cell's levels came from, when they were not surveyed. -->
+        <p id="baseGridSurfaceNote" class="cutplan-status is-warn" hidden></p>
         <div class="stat-grid liner-stat-grid">
           <div class="stat"><span class="stat__label">Surface area</span><span class="stat__value" id="baseGridStatSurface">0<small> m²</small></span></div>
           <div class="stat"><span class="stat__label" id="baseGridStatPlanLabel">Zones</span><span class="stat__value" id="baseGridStatPlan">0</span></div>

@@ -5900,7 +5900,10 @@ function explainNoSurface(text, wanted) {
     const polylines = count(/[\r\n]\s*(?:LW)?POLYLINE\s*[\r\n]/g);
     const faces = count(/[\r\n]\s*3DFACE\s*[\r\n]/g);
     if (!faces && polylines) {
-      return `That DXF has ${polylines} polyline${polylines === 1 ? "" : "s"} but no 3DFACE triangles. This wants the triangulated SURFACE — in Civil 3D, export the surface as a mesh (3DFACE) or use LandXML — not the boundary or the lift extents.`;
+      /* By the time this is reached the extents route has already been tried and failed, so the
+       * problem is not "we only take surfaces" any more — it is that nothing in the file CLOSES. */
+      return `That DXF has ${polylines} polyline${polylines === 1 ? "" : "s"} but no 3DFACE triangles, and none of them close into a region GeoMate can fill. ` +
+        `Either export the triangulated SURFACE (a mesh of 3DFACEs, or LandXML), or close the geomembrane extents into one or more closed polylines and re-export.`;
     }
     return "No 3DFACE triangles in that file. This wants a triangulated surface exported as a mesh, not a 2D drawing.";
   }
@@ -9530,19 +9533,30 @@ function resetBaseGridInputs() {
   showBearingUndo(false);
 }
 
-function loadBaseGridSurface(triangles, label) {
+function loadBaseGridSurface(triangles, label, built) {
   const loops = surfaceOutline(triangles);
   if (!loops.length) {
     baseGridStatus("That surface has no outline GeoMate can follow — its triangles do not join up into a closed edge.", "error");
     return false;
   }
   const outline = loops[0];
-  baseGridSurface = { triangles, outline, label };
+  // `built` marks a surface interpolated from an extents drawing rather than surveyed. It stays on
+  // the surface object because the difference has to be visible wherever the levels are used.
+  baseGridSurface = { triangles, outline, label, fromOutline: built || null };
   const area = surfaceArea3D(triangles);
   const plan = Math.abs(signedArea(outline));
   baseGridStatus(
-    `${label}: ${triangles.length.toLocaleString()} triangles, ${fmt.int(plan)} m² on plan, ${fmt.int(area)} m² over the ground (+${((area / plan - 1) * 100).toFixed(1)}%).`,
-    "ok"
+    (built
+      ? `${label}: no triangles in that file, so GeoMate read the extents instead — ` +
+        `${built.rings} closed outline${built.rings === 1 ? "" : "s"}` +
+        (built.openPaths ? ` and ${built.openPaths} line${built.openPaths === 1 ? "" : "s"}` : "") +
+        `, ${built.points.toLocaleString()} points at ${built.step.toFixed(1)} m, built into ${triangles.length.toLocaleString()} triangles` +
+        (built.flat
+          ? `. That outline carries no levels, so the cell is treated as FLAT: lengths are plan lengths and there are no grade changes. `
+          : `, RL ${built.zMin.toFixed(1)}–${built.zMax.toFixed(1)}. Levels on the outlines are yours; levels INSIDE are interpolated. `) +
+        `${fmt.int(plan)} m² on plan, ${fmt.int(area)} m² over the ground (+${((area / plan - 1) * 100).toFixed(1)}%).`
+      : `${label}: ${triangles.length.toLocaleString()} triangles, ${fmt.int(plan)} m² on plan, ${fmt.int(area)} m² over the ground (+${((area / plan - 1) * 100).toFixed(1)}%).`),
+    built ? "warn" : "ok"
   );
   renderBaseGrid();
   return true;
@@ -9559,6 +9573,15 @@ function wireBaseGridUpload(inputId, parseFn, wanted) {
       const text = await file.text();
       const triangles = parseFn(text);
       if (!triangles.length) {
+        /* SECOND READING: the extents, not the surface. A geomembrane is often issued as its
+         * outlines — closed 3D polylines on the ground — and that drawing describes the cell well
+         * enough to lay it out. Only reached when there is no surface in the file, so there is
+         * nothing to confuse it with. See surfaceFromOutlines. */
+        const built = wanted === "dxf" ? surfaceFromOutlines(dxfPaths3D(text)) : null;
+        if (built) {
+          loadBaseGridSurface(built.triangles, file.name, built);
+          return;
+        }
         baseGridStatus(explainNoSurface(text, wanted), "error");
         return;
       }
@@ -9639,6 +9662,22 @@ function refreshLinerOutputs() {
   label("baseGridStatPlanLabel", drawn ? "Panels drawn" : "Zones");
   label("baseGridStatPanelsLabel", drawn ? "Rolls laid" : "Panels");
   label("baseGridStatHingeLabel", drawn ? "Weld on your lines" : "Weld at grade changes");
+
+  /* A surface built from an extents drawing is right on its outlines and a guess in between, and
+   * every number on this tab leans on the levels. It says so, every time, not just on upload. */
+  const built = baseGridSurface.fromOutline;
+  const provenance = document.getElementById("baseGridSurfaceNote");
+  if (provenance) {
+    provenance.hidden = !built;
+    if (built) {
+      provenance.className = "cutplan-status is-warn";
+      provenance.innerHTML = built.flat
+        ? `This cell was built from an extents DXF with <strong>no levels on it</strong>, so it is being treated as flat ground: ` +
+          `lengths are plan lengths, there is no drape and no weld at a change of grade. Upload the surface (3DFACE or LandXML) for the real numbers.`
+        : `This cell was built from an extents DXF, not a survey surface — <strong>the levels on your outlines are exact, the levels between them are interpolated</strong>. ` +
+          `Areas and drape are as good as that interpolation. Upload the surface (3DFACE or LandXML) if you have one.`;
+    }
+  }
 
   const source = document.getElementById("baseGridPlanSource");
   if (source) {
@@ -9779,14 +9818,38 @@ function panelPlanAsLinerPlan(pp, surface) {
     return left.concat(right.reverse());
   };
 
-  // Which panel owns each triangle? By its centre, through the same raster the plan was built on.
+  /* WHO OWNS EACH CELL OF GROUND.
+   *
+   * Straight from the panels' own cells, with one correction: the weld lines are burnt into the
+   * raster as barriers, so the strip of cells each line runs through is claimed by nobody. That is
+   * right for laying out — a run must not cross a weld line — and wrong for measuring, because the
+   * ground under a weld line is lined like any other. Left alone, the panels in the schedule added
+   * up to about 3% less than the surface they cover. The barrier is a cell wide, so a couple of
+   * rounds of handing an unclaimed cell to a neighbouring panel closes it exactly.
+   */
+  const owner = new Int32Array(R.gw * R.gh).fill(-1);
+  pp.panels.forEach((pan, k) => (pan.cells || new Set()).forEach((c) => { owner[c] = k; }));
+  for (let round = 0; round < 4; round++) {
+    const was = owner.slice();
+    let changed = 0;
+    for (let c = 0; c < owner.length; c++) {
+      if (owner[c] >= 0 || !R.ground[c]) continue;
+      const i = c % R.gw, j = (c - i) / R.gw;
+      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const ni = i + di, nj = j + dj;
+        if (ni < 0 || nj < 0 || ni >= R.gw || nj >= R.gh) continue;
+        const k = was[nj * R.gw + ni];
+        if (k >= 0) { owner[c] = k; changed++; break; }
+      }
+    }
+    if (!changed) break;
+  }
+
   const ownerOf = (tri) => {
     const cx = (tri[0].x + tri[1].x + tri[2].x) / 3, cy = (tri[0].y + tri[1].y + tri[2].y) / 3;
     const i = R.iOf(cx), j = R.jOf(cy);
     if (i < 0 || j < 0 || i >= R.gw || j >= R.gh) return -1;
-    const c = j * R.gw + i;
-    for (let k = 0; k < pp.panels.length; k++) if (pp.panels[k].cells && pp.panels[k].cells.has(c)) return k;
-    return -1;
+    return owner[j * R.gw + i];
   };
   const trisOf = pp.panels.map(() => []);
   const spare = [];
@@ -9804,17 +9867,16 @@ function panelPlanAsLinerPlan(pp, surface) {
    * 0.75 m and every cell belongs to exactly one panel, so each cell contributes its plan area
    * divided by the cosine of the slope under it — the panel's real area over the ground. */
   const cellArea = R.cell * R.cell;
-  const metrics = pp.panels.map((pan) => {
-    let nx = 0, ny = 0, nz = 0, area = 0;
-    (pan.cells || new Set()).forEach((c) => {
-      const i = c % R.gw, j = (c - i) / R.gw;
-      const f = tin.faceAt(R.xOf(i), R.yOf(j));
-      if (!f) { area += cellArea; return; }   // off the TIN: take it flat rather than skip it
-      area += cellArea / Math.max(f.normal.z, 1e-6);
-      nx += f.normal.x; ny += f.normal.y; nz += f.normal.z;
-    });
-    return { area, nx, ny, nz };
-  });
+  const metrics = pp.panels.map(() => ({ area: 0, nx: 0, ny: 0, nz: 0 }));
+  for (let c = 0; c < owner.length; c++) {
+    const k = owner[c];
+    if (k < 0 || !metrics[k]) continue;
+    const i = c % R.gw, j = (c - i) / R.gw;
+    const f = tin.faceAt(R.xOf(i), R.yOf(j));
+    if (!f) { metrics[k].area += cellArea; continue; }   // off the TIN: take it flat, not skip it
+    metrics[k].area += cellArea / Math.max(f.normal.z, 1e-6);
+    metrics[k].nx += f.normal.x; metrics[k].ny += f.normal.y; metrics[k].nz += f.normal.z;
+  }
 
   let n = 0;
   const zones = pp.panels.map((pan, zi) => {
@@ -10127,28 +10189,217 @@ function makeTinIndexCachedZ(x, y) {
   return _tinForZ.zAt(x, y);
 }
 
-/** LINEs and open polylines in model space — on this job, the individual sheets. */
-function dxfOpenPaths(text) {
+/* ===============================================================================================
+   A SURFACE FROM THE EXTENTS, WHEN THERE IS NO SURFACE
+   ===============================================================================================
+   The liner tab wants a triangulated surface, because everything it does depends on levels: the
+   drape, the fall line, the weld at a change of grade, the 3D view. But a geomembrane is often
+   issued as its EXTENTS — closed 3D polylines following the ground round the edge of each region —
+   and refusing that file is refusing the drawing the user actually has (see rule 11).
+
+   So when a DXF holds no triangles, the outlines are read instead and a surface is built from them.
+   The levels on the outline are the designer's; the levels INSIDE are interpolated, and the app
+   says so everywhere they are used rather than passing a guess off as a survey.
+
+   How it is built, and why:
+   - Every path is densified first. Triangulating the corner points alone lets a triangle span from
+     one side of a crest to the other and flatten it; dropping points along each line every few
+     metres makes the triangulation follow the lines closely enough that the breaks survive. It is
+     the cheap stand-in for a constrained triangulation and it is what survey packages do.
+   - Delaunay over the lot (Bowyer-Watson), in LOCAL coordinates. At survey easting/northing the
+     circumcircle test loses most of its precision and triangles come out scrambled.
+   - Then the hull is cut back to the ground that was actually drawn: a triangle survives only if
+     its centre is inside one of the closed outlines. Without that, a concave cell gets its bays
+     bridged over and the "surface" covers ground the geomembrane never reaches.
+   ============================================================================================= */
+const OUTLINE_SURFACE_MAX_PTS = 4000;
+
+/** Every path in a DXF with its levels and whether it closes — polylines heavy and light, and lines. */
+function dxfPaths3D(text) {
+  const records = dxfEntityRecords(text);
   const out = [];
-  dxfEntityRecords(text).forEach((rec) => {
-    if (rec.section !== "ENTITIES" || rec.block) return;
+  let heavy = null;
+  for (const rec of records) {
+    if (rec.section !== "ENTITIES" || rec.block) { if (rec.type === "SEQEND") heavy = null; continue; }
     const num = (code) => rec.codes.filter((c) => c.code === code).map((c) => parseFloat(c.value));
+    if (rec.type === "POLYLINE") {
+      heavy = { pts: [], closed: !!(dxfNum(rec, 70, 0) & 1) };
+      out.push(heavy);
+      continue;
+    }
+    if (rec.type === "VERTEX" && heavy) {
+      heavy.pts.push({ x: dxfNum(rec, 10), y: dxfNum(rec, 20), z: dxfNum(rec, 30, 0) });
+      continue;
+    }
+    if (rec.type === "SEQEND") { heavy = null; continue; }
+    if (rec.type === "LWPOLYLINE") {
+      const xs = num(10), ys = num(20), elev = dxfNum(rec, 38, 0);
+      const pts = [];
+      for (let i = 0; i < Math.min(xs.length, ys.length); i++) {
+        if (Number.isFinite(xs[i]) && Number.isFinite(ys[i])) pts.push({ x: xs[i], y: ys[i], z: elev });
+      }
+      if (pts.length >= 2) out.push({ pts, closed: !!(dxfNum(rec, 70, 0) & 1) });
+      continue;
+    }
     if (rec.type === "LINE") {
-      const x1 = num(10)[0], y1 = num(20)[0], x2 = num(11)[0], y2 = num(21)[0];
-      if ([x1, y1, x2, y2].every(Number.isFinite)) out.push([{ x: x1, y: y1 }, { x: x2, y: y2 }]);
-      return;
+      const a = { x: num(10)[0], y: num(20)[0], z: num(30)[0] || 0 };
+      const b = { x: num(11)[0], y: num(21)[0], z: num(31)[0] || 0 };
+      if ([a.x, a.y, b.x, b.y].every(Number.isFinite)) out.push({ pts: [a, b], closed: false });
     }
-    if (rec.type !== "LWPOLYLINE" && rec.type !== "POLYLINE" && rec.type !== "_POLYLINE") return;
-    const flags = num(70)[0] || 0;
-    if (flags & 1) return;                       // closed: that is a boundary, not a sheet
-    const xs = num(10), ys = num(20);
-    const pts = [];
-    for (let i = 0; i < Math.min(xs.length, ys.length); i++) {
-      if (Number.isFinite(xs[i]) && Number.isFinite(ys[i])) pts.push({ x: xs[i], y: ys[i] });
+  }
+  return out.filter((p) => p.pts.length >= 2 && p.pts.every((q) => Number.isFinite(q.x) && Number.isFinite(q.y)));
+}
+
+/** Points along a path at no more than `step` apart, levels interpolated along the line. */
+function densifyPath(pts, closed, step) {
+  const out = [];
+  const n = closed ? pts.length : pts.length - 1;
+  for (let i = 0; i < n; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    const cuts = Math.max(1, Math.ceil(len / step));
+    for (let s = 0; s < cuts; s++) {
+      const f = s / cuts;
+      out.push({ x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, z: (a.z || 0) + ((b.z || 0) - (a.z || 0)) * f });
     }
-    if (pts.length >= 2) out.push(pts);
-  });
+  }
+  if (!closed) out.push(pts[pts.length - 1]);
   return out;
+}
+
+/** Delaunay triangulation of 2D points (Bowyer-Watson). Returns index triples. */
+function delaunay2D(points) {
+  if (points.length < 3) return [];
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  points.forEach((p) => {
+    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+    minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+  });
+  // Local coordinates: at 407,000 / 854,000 the circumcircle determinant is all round-off.
+  const P = points.map((p) => ({ x: p.x - minX, y: p.y - minY }));
+  const w = maxX - minX, h = maxY - minY, d = Math.max(w, h, 1);
+  const n = P.length;
+  P.push({ x: w / 2 - 20 * d, y: h / 2 - d }, { x: w / 2, y: h / 2 + 20 * d }, { x: w / 2 + 20 * d, y: h / 2 - d });
+
+  const circum = (t) => {
+    const a = P[t[0]], b = P[t[1]], c = P[t[2]];
+    const ax = a.x, ay = a.y, bx = b.x, by = b.y, cx = c.x, cy = c.y;
+    const dd = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+    if (Math.abs(dd) < 1e-12) return null;
+    const a2 = ax * ax + ay * ay, b2 = bx * bx + by * by, c2 = cx * cx + cy * cy;
+    const ux = (a2 * (by - cy) + b2 * (cy - ay) + c2 * (ay - by)) / dd;
+    const uy = (a2 * (cx - bx) + b2 * (ax - cx) + c2 * (bx - ax)) / dd;
+    return { x: ux, y: uy, r2: (ax - ux) * (ax - ux) + (ay - uy) * (ay - uy) };
+  };
+
+  let tris = [{ v: [n, n + 1, n + 2], c: null }];
+  tris[0].c = circum(tris[0].v);
+  for (let i = 0; i < n; i++) {
+    const p = P[i];
+    const edges = [];
+    const keep = [];
+    for (const t of tris) {
+      if (t.c && (p.x - t.c.x) * (p.x - t.c.x) + (p.y - t.c.y) * (p.y - t.c.y) <= t.c.r2 + 1e-9) {
+        edges.push([t.v[0], t.v[1]], [t.v[1], t.v[2]], [t.v[2], t.v[0]]);
+      } else keep.push(t);
+    }
+    tris = keep;
+    // Only the edges that belonged to exactly one bad triangle bound the hole.
+    for (let a = 0; a < edges.length; a++) {
+      let shared = false;
+      for (let b = 0; b < edges.length; b++) {
+        if (a === b) continue;
+        if ((edges[a][0] === edges[b][1] && edges[a][1] === edges[b][0]) ||
+            (edges[a][0] === edges[b][0] && edges[a][1] === edges[b][1])) { shared = true; break; }
+      }
+      if (shared) continue;
+      const v = [edges[a][0], edges[a][1], i];
+      tris.push({ v, c: circum(v) });
+    }
+  }
+  return tris.filter((t) => t.v.every((v) => v < n)).map((t) => t.v);
+}
+
+/** Ray crossing, on the plan. */
+function pointInRing(x, y, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const a = ring[i], b = ring[j];
+    if ((a.y > y) !== (b.y > y) && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * The cell as triangles, built from the outlines a geomembrane extents drawing carries.
+ * Returns null when there is nothing with levels to work from.
+ */
+function surfaceFromOutlines(paths) {
+  const rings = paths.filter((p) => p.closed && p.pts.length >= 3);
+  if (!rings.length) return null;
+
+  // Spacing follows the job: fine enough to hold the breaks, coarse enough to stay quick.
+  let perimeter = 0;
+  paths.forEach((p) => {
+    for (let i = 0; i + 1 < p.pts.length; i++) perimeter += Math.hypot(p.pts[i + 1].x - p.pts[i].x, p.pts[i + 1].y - p.pts[i].y);
+  });
+  let step = Math.min(5, Math.max(1, perimeter / 600));
+  let pts = [];
+  const gather = () => {
+    pts = [];
+    paths.forEach((p) => pts.push(...densifyPath(p.pts, p.closed, step)));
+  };
+  gather();
+  // A contoured extents drawing can carry tens of thousands of vertices; thin it rather than hang.
+  while (pts.length > OUTLINE_SURFACE_MAX_PTS && step < 50) { step *= 1.5; gather(); }
+
+  // Two points a millimetre apart make a circumcircle the size of the job.
+  const seen = new Map();
+  const uniq = [];
+  pts.forEach((p) => {
+    const k = `${p.x.toFixed(3)},${p.y.toFixed(3)}`;
+    if (seen.has(k)) return;
+    seen.set(k, true);
+    uniq.push(p);
+  });
+  if (uniq.length < 3) return null;
+
+  const triangles = [];
+  delaunay2D(uniq).forEach(([i, j, k]) => {
+    const a = uniq[i], b = uniq[j], c = uniq[k];
+    const cx = (a.x + b.x + c.x) / 3, cy = (a.y + b.y + c.y) / 3;
+    // Inside the drawn ground, or it is hull fill across a bay the geomembrane never reaches.
+    if (!rings.some((r) => pointInRing(cx, cy, r.pts))) return;
+    if (Math.abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) < 1e-6) return;
+    triangles.push([a, b, c]);
+  });
+  if (!triangles.length) return null;
+
+  const zs = uniq.map((p) => p.z || 0);
+  const flat = Math.max(...zs) - Math.min(...zs) < 0.05;
+  return {
+    triangles,
+    rings: rings.length,
+    openPaths: paths.length - rings.length,
+    points: uniq.length,
+    step,
+    flat,
+    zMin: Math.min(...zs),
+    zMax: Math.max(...zs),
+  };
+}
+
+/**
+ * LINEs and open polylines in model space — on this job, the individual sheets.
+ *
+ * It reads them through dxfPaths3D because a HEAVY POLYLINE keeps its coordinates in the VERTEX
+ * records that follow it, not in its own. Looking for codes 10/20 on the POLYLINE record itself
+ * found nothing, so a file drawn with 3D polylines — which is what a draped line IS — came back
+ * with no open paths at all, and the layout import then said there were no closed polylines in a
+ * file that had four.
+ */
+function dxfOpenPaths(text) {
+  return dxfPaths3D(text).filter((p) => !p.closed).map((p) => p.pts);
 }
 
 /**
@@ -10235,14 +10486,20 @@ function importPanelLayoutDxf(text) {
   const sheets = open.filter((line) => lengthOfLine(line) >= 5);
   const groups = [];
   const TOL = 22;
+  // Axes, so 179° and 1° are two degrees apart and not a hundred and seventy-eight.
+  const apart = (a, b) => Math.abs(((a - b + 90 + 180) % 180) - 90);
   sheets
     .slice()
     .sort((a, b) => lengthOfLine(b) - lengthOfLine(a))
     .forEach((line) => {
       const br = bearingOf(line);
-      const near = groups.find((gp) => {
-        const d = Math.abs(((gp.bearing - br + 90 + 180) % 180) - 90);
-        return d < TOL;
+      /* The NEAREST group, not the first one that happens to be within tolerance. Taking the first
+       * put a sheet into a group 15 degrees away when one 2 degrees away existed further down the
+       * list, and the two averages then drifted apart into two panels where the drawing has one. */
+      let near = null, best = TOL;
+      groups.forEach((gp) => {
+        const d = apart(gp.bearing, br);
+        if (d < best) { best = d; near = gp; }
       });
       if (near) {
         const w = near.length + lengthOfLine(line);
@@ -10252,7 +10509,36 @@ function importPanelLayoutDxf(text) {
       } else groups.push({ bearing: br, length: lengthOfLine(line), sheets: [line] });
     });
 
-  const panels = groups
+  /* Then merge what drifted together. A group's bearing moves as sheets join it, so two groups can
+   * finish within tolerance of each other even though neither sheet would have started the second
+   * one — on the user's file that split one panel of 14 sheets into 10 at 100° and 4 at 91°, which
+   * left a 476 m² gap between the two sets of rolls. */
+  for (let pass = 0; pass < groups.length; pass++) {
+    let joined = false;
+    for (let i = 0; i < groups.length && !joined; i++) {
+      for (let j = i + 1; j < groups.length && !joined; j++) {
+        if (apart(groups[i].bearing, groups[j].bearing) >= TOL) continue;
+        const a = groups[i], b = groups[j], w = a.length + b.length;
+        a.bearing = (a.bearing * a.length + b.bearing * b.length) / w;
+        a.length = w;
+        a.sheets.push(...b.sheets);
+        groups.splice(j, 1);
+        joined = true;
+      }
+    }
+    if (!joined) break;
+  }
+
+  /* IS THERE SHEETING IN THIS FILE AT ALL?
+   *
+   * "Open lines are sheets" holds for a layout drawing with 51 of them in it. It does not hold for
+   * an extents drawing with three odd lines in it — and those three, read as sheets, grouped into
+   * one direction and laid the WHOLE cell one way as a single panel, which is a confident answer
+   * built on nothing. Sheeting is many near-parallel lines, so that is what is asked for: enough
+   * lines to be sheeting, and at least one real run of them. Below that the lines are left alone
+   * and the regions speak instead. */
+  const looksLikeSheeting = sheets.length >= 6 && groups.some((gp) => gp.sheets.length >= 3);
+  const panels = (looksLikeSheeting ? groups : [])
     .filter((gp) => gp.sheets.length >= 2)
     .map((gp) => {
       let cx = 0, cy = 0, n = 0;
@@ -10272,8 +10558,64 @@ function importPanelLayoutDxf(text) {
       return { seed: { x: cx / n, y: cy / n }, bearing, sheets: gp.sheets, sheetCount: gp.sheets.length };
     });
 
-  const unsure = groups.length - panels.length;
-  return { weldLines, panels, lines: open.length, sheets: sheets.length, unsure };
+  /* A LAYOUT WITH NO SHEETS IN IT IS STILL A LAYOUT.
+   *
+   * The geomembrane extents come as the regions alone — four closed 3D polylines that tile the
+   * cell, no sheets drawn inside them. There is nothing to read a direction from, but the regions
+   * themselves are the division lines, and that is most of the job: one panel per region, each
+   * pointed down its own ground until the user says otherwise. Reporting "no panel boundaries"
+   * over a file that is nothing but panel boundaries was simply wrong. */
+  let fromRegions = 0;
+  if (!panels.length) {
+    closed.forEach((poly) => {
+      const seed = insidePoint(poly);
+      if (!seed) return;
+      fromRegions++;
+      panels.push({ seed, bearing: null, sheets: [], sheetCount: 0, fromRegion: true });
+    });
+  }
+
+  const unsure = fromRegions || groups.length - panels.length;
+  // Lines that were not read as sheets are reported, not used: a stray line that happens to cross a
+  // region would split it in two and leave half of it with no panel on it.
+  return { weldLines, panels, lines: open.length, sheets: looksLikeSheeting ? sheets.length : 0, unsure, fromRegions, ignoredLines: looksLikeSheeting ? 0 : open.length };
+}
+
+/**
+ * A point well inside a polygon — the seed for a panel drawn on it.
+ *
+ * The centroid is the obvious answer and it is wrong on an L-shaped region: it lands in the notch,
+ * outside the shape, and the panel is then seeded on ground that belongs to its neighbour. This
+ * samples the polygon instead and keeps the point FURTHEST FROM ANY EDGE, which is inside by
+ * construction and as far from a boundary as the shape allows.
+ */
+function insidePoint(poly) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  poly.forEach((p) => {
+    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+    minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+  });
+  const step = Math.max((maxX - minX) / 40, (maxY - minY) / 40, 0.1);
+  const edgeDist = (x, y) => {
+    let best = Infinity;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const a = poly[i], b = poly[j];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const len2 = dx * dx + dy * dy;
+      const t = len2 > 0 ? Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / len2)) : 0;
+      best = Math.min(best, Math.hypot(x - (a.x + dx * t), y - (a.y + dy * t)));
+    }
+    return best;
+  };
+  let best = null, bestD = -1;
+  for (let x = minX + step / 2; x < maxX; x += step) {
+    for (let y = minY + step / 2; y < maxY; y += step) {
+      if (!pointInRing(x, y, poly)) continue;
+      const d = edgeDist(x, y);
+      if (d > bestD) { bestD = d; best = { x, y }; }
+    }
+  }
+  return best;
 }
 
 {
@@ -10288,7 +10630,9 @@ function importPanelLayoutDxf(text) {
         const got = importPanelLayoutDxf(text);
         if (!got || got.noPanels || !got.panels || !got.panels.length) {
           panelEditorHint(
-            "No closed polylines in that DXF, so there are no panel boundaries to read. The panels have to be closed shapes; open lines on their own are read as sheets.",
+            got && got.lines
+              ? `That DXF has ${got.lines} open line${got.lines === 1 ? "" : "s"} but nothing closed, so there are no panel regions in it. Close the panel boundaries into polylines and re-export — open lines on their own are read as sheets.`
+              : "Nothing in that DXF GeoMate can read as a layout: it wants the panel boundaries as closed polylines, with the sheets as lines inside them.",
             "error"
           );
           return;
@@ -10298,8 +10642,14 @@ function importPanelLayoutDxf(text) {
         panelEditorSave();
         panelEditorArm("idle");
         panelEditorHint(
-          `Read ${got.panels.length} panel${got.panels.length === 1 ? "" : "s"} and ${got.sheets} sheet lines from ${file.name}. ` +
-            (got.unsure
+          (got.fromRegions
+            ? `Read ${got.fromRegions} panel${got.fromRegions === 1 ? "" : "s"} from the regions in ${file.name} — no sheeting is drawn in it, so nothing in the file says which way the rolls run. ` +
+              `Every panel is pointed down its own ground for now: check each arrow and set it with Add a panel.` +
+              (got.ignoredLines ? ` ${got.ignoredLines} loose line${got.ignoredLines === 1 ? " was" : "s were"} left out — draw them as weld lines if the rolls are cut on them.` : "")
+            : `Read ${got.panels.length} panel${got.panels.length === 1 ? "" : "s"} and ${got.sheets} sheet lines from ${file.name}. `) +
+            (got.fromRegions
+              ? ""
+              : got.unsure
               ? `${got.unsure} panel${got.unsure === 1 ? " has" : "s have"} too few sheets to tell which way the rolls run — ${got.unsure === 1 ? "its arrow is" : "their arrows are"} the ground's own fall for now, so check ${got.unsure === 1 ? "it" : "them"} and set ${got.unsure === 1 ? "it" : "them"} with Add a panel.`
               : "Every panel's direction came from its own sheets."),
           got.unsure ? "warn" : "ok"
@@ -11451,7 +11801,13 @@ function computePanelPlan(surface, weldLines, panels, opts) {
     nearestPanel = (x, y) => {
       let best = -1, bestD = Infinity;
       (panels || []).forEach((pan, pi) => {
-        (pan.sheets || []).forEach((line) => {
+        /* A panel the user DROPPED here has no sheets, and under "nearest sheet wins" it could
+         * never claim a square of anything — so after importing a layout, adding a panel did
+         * nothing at all, which is the one move available for closing a gap the import left. Its
+         * seed stands in as a sheet of no length, so it competes on the same terms and takes the
+         * ground that is nearer to it than to anybody's sheets. */
+        const lines = pan.sheets && pan.sheets.length ? pan.sheets : pan.seed ? [[pan.seed, pan.seed]] : [];
+        lines.forEach((line) => {
           for (let k = 0; k + 1 < line.length; k++) {
             const d = dist2ToSeg(x, y, line[k], line[k + 1]);
             if (d < bestD) { bestD = d; best = pi; }
