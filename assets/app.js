@@ -10324,6 +10324,7 @@ const ROLL_FLAT_GRADE = 0.12;
  *             across the next batter.
  *   "edge"    it ran off the design.
  *   "length"  it used up the roll.
+ *   "neighbour" it reached a run already laid. Nobody lays a roll on top of another roll.
  *
  * It does NOT stop at a hollow. Running onto the base at the toe of a batter, the grid lies down
  * into the break and keeps going, which is what "it carries on across the base" means and is worth
@@ -10338,6 +10339,7 @@ function traceRoll(tin, start, dir0, opts) {
   const maxLen = o.rollLength > 0 ? o.rollLength : Infinity;
   const turnLimit = o.turnLimit ?? ROLL_TURN_LIMIT_DEG;
   const isRidgeAt = o.isRidgeAt || (() => false);
+  const isCovered = o.isCovered || (() => false);
 
   const first = tin.faceAt(start.x, start.y);
   if (!first) return null;
@@ -10357,6 +10359,13 @@ function traceRoll(tin, start, dir0, opts) {
     // A ridge between here and there ends the run at the break, not past it.
     if (isRidgeAt(p, { x: nx, y: ny })) { stoppedBy = "ridge"; break; }
 
+    /* And it stops when it reaches ground a neighbour already covers. Without this a run laid on
+     * bare ground travels straight through ground somebody else has already paid for, which drew
+     * as two sets of runs crossing each other in a diamond over the flat arm — nobody lays a roll
+     * over the top of another roll. Stopping here is also what makes the FIRST runs long: the
+     * early ones get their full length and the later ones butt up against them. */
+    if (isCovered(nx, ny)) { stoppedBy = "neighbour"; break; }
+
     // Flat ground has no opinion on direction; only a real batter can be run across diagonally.
     const steep = f.grade >= (o.flatGrade ?? ROLL_FLAT_GRADE);
     if (steep && f.fall && dirTurnDeg(dir, f.fall) > turnLimit) { stoppedBy = "turn"; break; }
@@ -10367,10 +10376,20 @@ function traceRoll(tin, start, dir0, opts) {
     draped += seg;
     p = { x: nx, y: ny, z: f.z };
     path.push(p);
-    // Ease onto the new fall line instead of snapping to it, so a run crossing a triangle seam
-    // does not kink. A roll is stiff; it does not change direction in one metre. And it only
-    // steers to ground that HAS a direction — a flat base must not drag the run sideways.
-    if (steep && f.fall) dir = normalise2({ x: dir.x * 0.65 + f.fall.x * 0.35, y: dir.y * 0.65 + f.fall.y * 0.35 }) || dir;
+    /* STEERING IS OFF BY DEFAULT, AND THAT IS THE POINT.
+     *
+     * The first version eased the run onto the local fall line at every step. Drawn on the real
+     * cell the result was "all over the place" — curved runs crossing each other and twenty of
+     * them converging into one point on the corner batter. Of course it was: a roll of geogrid is
+     * a stiff 7 m strip. It does not curve to follow the ground, and the installer's drawing shows
+     * straight parallel runs within each piece of ground, fanning between pieces, not within one.
+     *
+     * So a run holds the bearing it was laid on. `steer` is kept for the curved case because the
+     * machinery is here and costs nothing, but nothing asks for it. */
+    const steer = o.steer || 0;
+    if (steer > 0 && steep && f.fall) {
+      dir = normalise2({ x: dir.x * (1 - steer) + f.fall.x * steer, y: dir.y * (1 - steer) + f.fall.y * steer }) || dir;
+    }
   }
 
   if (path.length < 2) return null;
