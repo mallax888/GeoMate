@@ -10330,8 +10330,10 @@ function dxfPaths3D(text) {
   for (const rec of records) {
     if (rec.section !== "ENTITIES" || rec.block) { if (rec.type === "SEQEND") heavy = null; continue; }
     const num = (code) => rec.codes.filter((c) => c.code === code).map((c) => parseFloat(c.value));
+    // The layer travels with the path. A drawing is organised by layer and the reader has to be
+    // able to take one — "the weld lines are on LINER-WELD" is how the job is actually described.
     if (rec.type === "POLYLINE") {
-      heavy = { pts: [], closed: !!(dxfNum(rec, 70, 0) & 1) };
+      heavy = { pts: [], closed: !!(dxfNum(rec, 70, 0) & 1), layer: rec.layer || "0" };
       out.push(heavy);
       continue;
     }
@@ -10346,13 +10348,13 @@ function dxfPaths3D(text) {
       for (let i = 0; i < Math.min(xs.length, ys.length); i++) {
         if (Number.isFinite(xs[i]) && Number.isFinite(ys[i])) pts.push({ x: xs[i], y: ys[i], z: elev });
       }
-      if (pts.length >= 2) out.push({ pts, closed: !!(dxfNum(rec, 70, 0) & 1) });
+      if (pts.length >= 2) out.push({ pts, closed: !!(dxfNum(rec, 70, 0) & 1), layer: rec.layer || "0" });
       continue;
     }
     if (rec.type === "LINE") {
       const a = { x: num(10)[0], y: num(20)[0], z: num(30)[0] || 0 };
       const b = { x: num(11)[0], y: num(21)[0], z: num(31)[0] || 0 };
-      if ([a.x, a.y, b.x, b.y].every(Number.isFinite)) out.push({ pts: [a, b], closed: false });
+      if ([a.x, a.y, b.x, b.y].every(Number.isFinite)) out.push({ pts: [a, b], closed: false, layer: rec.layer || "0" });
     }
   }
   return out.filter((p) => p.pts.length >= 2 && p.pts.every((q) => Number.isFinite(q.x) && Number.isFinite(q.y)));
@@ -10524,7 +10526,27 @@ function dxfOpenPaths(text) {
  */
 function importWeldLinesDxf(text) {
   const paths = dxfPaths3D(text);
-  const lines = paths
+
+  /* THE LAYER IS THE FILTER. A marked-up drawing is not a drawing of weld lines — it is a drawing
+   * WITH weld lines on a layer of their own, beside contours, a boundary, a title block and
+   * whatever else was switched on at export. Reading the lot would quietly chop the cell up along a
+   * contour. The user's are on LINER-WELD; this does not hard-code that name, it takes any layer
+   * whose name mentions weld (case and separators are not worth being strict about — LINER-WELD,
+   * liner_weld and C-LINR-WELD are the same intent) and says which layer it took.
+   *
+   * No weld layer in the file: read everything and NAME the layers, so a cell that comes out
+   * divided in a way nobody drew can be traced back to the layer that did it. */
+  const byLayer = new Map();
+  paths.forEach((p) => {
+    const key = p.layer || "0";
+    if (!byLayer.has(key)) byLayer.set(key, []);
+    byLayer.get(key).push(p);
+  });
+  const weldLayers = [...byLayer.keys()].filter((name) => /weld/i.test(name));
+  const used = weldLayers.length ? weldLayers : [...byLayer.keys()];
+  const chosen = used.flatMap((name) => byLayer.get(name));
+
+  const lines = chosen
     // A closed shape is a line that comes back to where it started: the loop is the weld.
     .map((p) => (p.closed ? p.pts.concat([p.pts[0]]) : p.pts))
     .filter((pts) => pts.length >= 2);
@@ -10532,7 +10554,15 @@ function importWeldLinesDxf(text) {
   lines.forEach((pts) => {
     for (let i = 0; i + 1 < pts.length; i++) length += Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
   });
-  return { lines, length, closed: paths.filter((p) => p.closed).length };
+  return {
+    lines,
+    length,
+    closed: chosen.filter((p) => p.closed).length,
+    layers: used,
+    pickedByName: weldLayers.length > 0,
+    skippedLayers: [...byLayer.keys()].filter((name) => !used.includes(name)),
+    skippedPaths: paths.length - chosen.length,
+  };
 }
 
 /**
@@ -10842,17 +10872,47 @@ function insidePoint(poly) {
          * on top of a half-drawn layout leaves a cell divided by two sets of lines that were never
          * meant to be seen together, and no way to tell which is which. Undo puts it back. */
         panelEditor.weldLines = got.lines;
-        panelEditor.panels = panelsFromWeldRegions(baseGridSurface, got.lines);
+        const seeded = panelsFromWeldRegions(baseGridSurface, got.lines);
+
+        /* WELD LINES DO NOT CUT A CELL INTO FIFTY PIECES. Hand this button a full layout drawing by
+         * mistake and every 7 m sheet in it becomes a "weld line": the user's own layout file came
+         * back as 85 regions, 247 runs and 28,259 m² of liner over a 17,301 m² cell — an answer
+         * that is wrong by two thirds and looks exactly like an answer. A weld drawing divides a
+         * cell into a handful of regions. Past that the lines are loaded so they can be looked at,
+         * but nothing is panelled off them and the message says which button this file wants. */
+        const TOO_MANY_REGIONS = 20;
+        if (seeded.length > TOO_MANY_REGIONS) {
+          panelEditor.panels = [];
+          panelEditorSave();
+          panelEditorArm("idle");
+          panelEditorHint(
+            `${got.lines.length} lines from ${file.name} cut the cell into ${seeded.length} regions — that is sheeting, not weld lines. ` +
+              `The lines are on the drawing so you can see what came in, but nothing has been panelled off them. ` +
+              `If this is the full layout drawing, with every sheet in it, use Import full layout DXF instead.`,
+            "error"
+          );
+          renderPanelEditor();
+          return;
+        }
+
+        panelEditor.panels = seeded;
         panelEditorSave();
         panelEditorArm("idle");
         const n = panelEditor.panels.length;
+        /* Which layer it took is the first thing to say. Taking the wrong lines is the one way this
+         * can be confidently wrong, and the cell quietly divided along a contour looks exactly like
+         * a cell divided along a weld. */
+        const from = got.pickedByName
+          ? `layer ${got.layers.join(", ")}` + (got.skippedPaths ? ` (${got.skippedPaths} line${got.skippedPaths === 1 ? "" : "s"} on other layers left alone)` : "")
+          : `every layer in it — nothing in there is named as a weld layer, so check nothing has come in that should not have` +
+            (got.layers.length > 1 ? `: ${got.layers.slice(0, 6).join(", ")}${got.layers.length > 6 ? "…" : ""}` : "");
         panelEditorHint(
-          `${got.lines.length} weld line${got.lines.length === 1 ? "" : "s"} from ${file.name}, ${fmt.int(got.length)} m in all. ` +
+          `${got.lines.length} weld line${got.lines.length === 1 ? "" : "s"} from ${file.name}, ${from}, ${fmt.int(got.length)} m in all. ` +
             (n
               ? `They close the cell into ${n} region${n === 1 ? "" : "s"}, and a panel is in each one pointed down its own ground — ` +
                 `nothing in a weld line says which way the rolls run, so check the arrows and set any that are wrong with Add a panel.`
               : `No region closed off by them is big enough to panel — check the lines reach the edge of the cell, or drop panels in by hand.`),
-          "warn"
+          got.pickedByName ? "ok" : "warn"
         );
         renderPanelEditor();
       } catch (err) {
