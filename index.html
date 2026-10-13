@@ -276,7 +276,7 @@
 
   <section class="panel panel--lifts" aria-labelledby="liftsHeading">
     <div class="panel__headrow">
-      <!-- The heading is read out but not drawn. "Lifts" stopped being true once the Landfill liner
+      <!-- The heading is read out but not drawn. "Lifts" stopped being true once the Base geogrid
            moved in here, and it was spending about 60px of a tab strip that has none to spare — but
            a panel with no name at all is worse for anyone using a screen reader. -->
       <h2 id="liftsHeading" class="panel__heading sr-only">Lifts, surfaces and output</h2>
@@ -292,7 +292,7 @@
         </button>
         <button type="button" class="tab" id="tabLiner" role="tab" aria-selected="false">
           <svg class="tab__icon" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.8 14.5 5 8 8.2 1.5 5z"/><path d="M1.5 8.2 8 11.4l6.5-3.2M1.5 11.2 8 14.4l6.5-3.2"/></svg>
-          Landfill liner
+          Base geogrid
         </button>
         <span class="tabs__spacer" aria-hidden="true"></span>
         <span class="tabs__group" aria-hidden="true"><span class="tabs__group-text">For site</span></span>
@@ -314,7 +314,7 @@
       </div>
       <div class="panel__headactions">
         <!-- Says WHICH DXF. On the output tabs this is the only upload on screen, and "Upload DXF"
-             beside a tab full of liner panels read as "upload anything that is a DXF". -->
+             beside a tab full of geogrid panels read as "upload anything that is a DXF". -->
         <button id="headerUploadBtn" class="btn btn--ghost btn--icon" type="button" title="Load a lift extents DXF from CAD">
           <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 10.5V2.2M5 5.2 8 2.2l3 3"/><path d="M2.5 10.5v2.3c0 .6.5 1 1 1h9c.6 0 1-.4 1-1v-2.3"/></svg>
           Upload lift extents
@@ -650,7 +650,7 @@
           Lines a whole landfill cell — base and batters — from the <strong>survey surface</strong>:
           rolls deployed off the bench at the top, run down the slope and cut at the end. Every panel
           length is measured over the ground rather than across the drawing, each panel sits on one
-          plane and stops at a change of grade, and the weld at each of those changes is measured
+          plane and stops at a change of grade, and the join at each of those changes is measured
           with it.
         </p>
       </div>
@@ -677,30 +677,17 @@
       </div>
 
       <div class="liner-inputs liner-inputs--specs">
-        <!-- The two products on a cell floor are laid to opposite rules, and were being laid to one:
-             geogrid laps, a landfill liner must not — it butts and the joint is the weld. -->
-        <label class="field field--compact">
-          <span>Product</span>
-          <select id="baseGridProduct">
-            <option value="liner" selected>Landfill liner — welded</option>
-            <option value="geogrid">Base geogrid — lapped</option>
-          </select>
-        </label>
         <label class="field field--compact">
           <span>Roll width</span>
           <div class="field__unit"><input type="number" id="baseGridRollWidth" value="7" min="0.1" step="0.1" /><em>m</em></div>
         </label>
-        <label class="field field--compact" id="baseGridOverlapField">
+        <label class="field field--compact">
           <span>Minimum overlap</span>
           <div class="field__unit"><input type="number" id="baseGridOverlap" value="300" min="0" step="10" /><em>mm</em></div>
         </label>
         <label class="field field--compact">
           <span>Roll length</span>
           <div class="field__unit"><input type="number" id="baseGridRollLength" value="100" min="0" step="1" /><em>m</em></div>
-        </label>
-        <label class="field field--compact">
-          <span>Weld rate</span>
-          <div class="field__unit"><input type="number" id="baseGridWeldRate" min="0" step="0.5" placeholder="e.g. 12" /><em>/m</em></div>
         </label>
         <label class="field field--compact">
           <span>Base roll direction</span>
@@ -733,10 +720,9 @@
           <div class="stat"><span class="stat__label">Total run</span><span class="stat__value" id="baseGridStatRun">0<small> m</small></span></div>
           <div class="stat"><span class="stat__label">Grid to order</span><span class="stat__value" id="baseGridStatMaterial">0<small> m²</small></span></div>
           <div class="stat"><span class="stat__label">Rolls</span><span class="stat__value" id="baseGridStatRolls">0</span></div>
-          <div class="stat"><span class="stat__label" id="baseGridStatHingeLabel">Weld at grade changes</span><span class="stat__value" id="baseGridStatHinge">0<small> m</small></span></div>
-          <div class="stat"><span class="stat__label">Panel seams</span><span class="stat__value" id="baseGridStatSeam">0<small> m</small></span></div>
-          <div class="stat"><span class="stat__label">Total weld</span><span class="stat__value" id="baseGridStatWeld">0<small> m</small></span></div>
-          <div class="stat"><span class="stat__label">Weld cost</span><span class="stat__value" id="baseGridStatWeldCost">—</span></div>
+          <div class="stat"><span class="stat__label" id="baseGridStatHingeLabel">Joins at grade changes</span><span class="stat__value" id="baseGridStatHinge">0<small> m</small></span></div>
+          <div class="stat"><span class="stat__label">Panel laps</span><span class="stat__value" id="baseGridStatSeam">0<small> m</small></span></div>
+          <div class="stat"><span class="stat__label">Total join</span><span class="stat__value" id="baseGridStatWeld">0<small> m</small></span></div>
         </div>
         <!-- Which plan these numbers came from: the layout the installer drew, or the zones GeoMate
              read off the surface. Set in refreshLinerOutputs. -->
@@ -747,19 +733,21 @@
         <svg id="baseGridPlan" class="basegrid-plan" role="img" aria-label="Zones over the cell"></svg>
 
         <!-- The panelling is the installer's judgement, not something to infer from the surface —
-             see computePanelPlan. They draw the weld lines and the roll direction here. -->
+             see computePanelPlan. They draw the panel boundaries and the roll direction here.
+             A boundary is where the roll direction changes; on a lapped geogrid it is a lap, not a
+             weld, so nothing here measures or prices a weld any more. -->
         <h3 class="panel__subheading">Panel layout — you draw it</h3>
         <div class="panel-editor__bar">
-          <button id="panelWeldBtn" class="btn btn--ghost" type="button">Draw a weld line</button>
+          <button id="panelWeldBtn" class="btn btn--ghost" type="button">Draw a panel boundary</button>
           <button id="panelSeedBtn" class="btn btn--ghost" type="button">Add a panel</button>
           <button id="panelUndoBtn" class="btn btn--ghost" type="button">Undo</button>
           <button id="panelClearBtn" class="btn btn--ghost btn--danger" type="button">Clear all</button>
           <!-- The panelling usually already exists in CAD. Reading it beats redrawing it.
-               Two different drawings, so two buttons: WELD LINES is the one a designer marks up —
-               the lines the liner is cut on and nothing else — and LAYOUT is the full drawing with
-               every sheet in it, which the panelling can be read back out of. -->
+               Two different drawings, so two buttons: BOUNDARIES is the one a designer marks up —
+               the lines the panelling is divided on and nothing else — and LAYOUT is the full
+               drawing with every sheet in it, which the panelling reads back out of. -->
           <label class="btn btn--primary btn--upload">
-            Import weld lines (DXF)
+            Import panel boundaries (DXF)
             <input type="file" id="panelWeldImportInput" accept=".dxf" hidden />
           </label>
           <label class="btn btn--ghost btn--upload">
@@ -768,7 +756,7 @@
           </label>
         </div>
         <p id="panelEditorHint" class="cutplan-status"></p>
-        <svg id="panelPlan" class="basegrid-plan panel-editor" aria-label="Draw the weld lines and the roll direction for each panel"></svg>
+        <svg id="panelPlan" class="basegrid-plan panel-editor" aria-label="Draw the panel boundaries and the roll direction for each panel"></svg>
         <p id="panelPlanStats" class="export-note"></p>
 
         <div class="basegrid-3d">
@@ -818,78 +806,6 @@
       </div>
 
       </div>
-
-      <!-- The original calculator: four typed numbers and an idealised rectangular pyramid. Superseded
-           by the surface tool above whenever a survey model exists, which on a real job is always — but
-           it is the only one that works before there is a model, so it is kept, out of the way. -->
-      <details class="tool liner-fallback">
-        <summary class="tool__summary">No surface model yet? Size it from the excavation's dimensions</summary>
-        <div class="liner-head">
-          <p class="liner-intro">Sizes a dug excavation from four numbers, with no survey model: an idealised rectangular floor rising on the same side slope all round. Quick for early pricing — but where a surface exists, the calculator above measures the real one and this will not match it.</p>
-          <button id="linerResetBtn" class="btn btn--ghost" type="button">Reset</button>
-        </div>
-        <div class="liner-inputs liner-inputs--specs">
-          <label class="field field--compact">
-            <span>Roll width</span>
-            <div class="field__unit"><input type="number" id="linerRollWidth" value="1.3" min="0.1" step="0.05" /><em>m</em></div>
-          </label>
-          <label class="field field--compact">
-            <span>Minimum overlap</span>
-            <div class="field__unit"><input type="number" id="linerMinOverlap" value="300" min="0" step="10" /><em>mm</em></div>
-          </label>
-          <label class="field field--compact">
-            <span>Roll length</span>
-            <div class="field__unit"><input type="number" id="linerRollLength" value="50" min="1" step="1" /><em>m</em></div>
-          </label>
-        </div>
-        <label class="checkbox">
-          <input type="checkbox" id="linerExtendFaceToggle" />
-          <span>Extend face length instead of spreading overlap</span>
-        </label>
-        <p class="generator__hint">
-          Panels sit at exactly the minimum overlap instead of a bit more. The excavation dimensions
-          never change, only how the overlap is reported.
-        </p>
-        <p id="linerSpecWarning" class="warning-text" hidden></p>
-        <div class="liner-inputs">
-          <label class="field field--compact">
-            <span>Floor length</span>
-            <div class="field__unit"><input type="number" id="linerFloorLength" min="0" step="0.1" placeholder="e.g. 40" /><em>m</em></div>
-          </label>
-          <label class="field field--compact">
-            <span>Floor width</span>
-            <div class="field__unit"><input type="number" id="linerFloorWidth" min="0" step="0.1" placeholder="e.g. 25" /><em>m</em></div>
-          </label>
-          <label class="field field--compact">
-            <span>Depth</span>
-            <div class="field__unit"><input type="number" id="linerDepth" min="0" step="0.1" placeholder="e.g. 6" /><em>m</em></div>
-          </label>
-          <label class="field field--compact">
-            <span>Side slope</span>
-            <div class="field__unit"><input type="number" id="linerSlope" min="0" step="0.1" placeholder="e.g. 3" /><em>H : 1V</em></div>
-          </label>
-        </div>
-        <p id="linerEmpty" class="empty-state"><svg class="empty-state__icon" viewBox="0 0 16 16" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.8 14.5 5 8 8.2 1.5 5z"/><path d="M1.5 8.2 8 11.4l6.5-3.2M1.5 11.2 8 14.4l6.5-3.2"/></svg><br>Enter the excavation's floor dimensions, depth and side slope above to see the liner takeoff.</p>
-        <div id="linerResults" hidden>
-          <div class="stat-grid liner-stat-grid">
-            <div class="stat"><span class="stat__label">Floor area</span><span class="stat__value" id="linerStatFloor">0<small> m²</small></span></div>
-            <div class="stat"><span class="stat__label">Wall area</span><span class="stat__value" id="linerStatWalls">0<small> m²</small></span></div>
-            <div class="stat"><span class="stat__label">Total liner area</span><span class="stat__value" id="linerStatTotal">0<small> m²</small></span></div>
-            <div class="stat"><span class="stat__label">Slope length</span><span class="stat__value" id="linerStatSlope">0<small> m</small></span></div>
-            <div class="stat"><span class="stat__label">Panels</span><span class="stat__value" id="linerStatPanels">0</span></div>
-            <div class="stat"><span class="stat__label">Rolls to order</span><span class="stat__value" id="linerStatRolls">0</span></div>
-          </div>
-          <p class="liner-corner-note">Corner boots and folds aren't modelled — allow roughly 5–10% extra material at the corners on top of the figures above.</p>
-
-          <h3 class="panel__subheading">Main run — down one long wall, across the floor, up the other</h3>
-          <p class="liner-run-desc" id="linerMainDesc"></p>
-          <svg class="strip-diagram liner-diagram" id="linerMainDiagram" viewBox="0 0 240 34" preserveAspectRatio="none"></svg>
-
-          <h3 class="panel__subheading">End walls — the two shorter sides</h3>
-          <p class="liner-run-desc" id="linerEndDesc"></p>
-          <svg class="strip-diagram liner-diagram" id="linerEndDiagram" viewBox="0 0 240 34" preserveAspectRatio="none"></svg>
-        </div>
-      </details>
     </div>
   </section>
 
@@ -982,9 +898,9 @@
          weight; the cut-plan-only export stays underneath for when that is all anyone wants to
          hand over. -->
     <button id="exportAllDxfBtn" class="btn btn--primary btn--block" type="button">Export everything to CAD (DXF)</button>
-    <p id="exportAllDxfNote" class="export-note">One file, layer-grouped: lift extents, every strip, the patches and the strip labels, plus the landfill liner's panels, centrelines and weld hinges when a cell surface is loaded. All in survey coordinates. Opens straight in Civil 3D — <strong>Save As</strong> there to get a DWG.</p>
+    <p id="exportAllDxfNote" class="export-note">One file, layer-grouped: lift extents, every strip, the patches and the strip labels, plus the base geogrid's panels, centrelines and panel boundaries when a cell surface is loaded. All in survey coordinates. Opens straight in Civil 3D — <strong>Save As</strong> there to get a DWG.</p>
     <button id="exportCutPlanDxfBtn" class="btn btn--ghost btn--block" type="button">Export cut plan only (DXF)</button>
-    <p id="exportCutPlanDxfNote" class="export-note">Every strip as a closed polyline in survey coordinates, each lift on its own layer at its own RL — without the liner.</p>
+    <p id="exportCutPlanDxfNote" class="export-note">Every strip as a closed polyline in survey coordinates, each lift on its own layer at its own RL — without the cell geogrid.</p>
   </aside>
 
 </main>

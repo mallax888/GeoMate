@@ -1891,8 +1891,6 @@ body.show-help .liner-head { margin-bottom: 1.4rem; }
   font-size: var(--fs-sm); color: var(--warn); background: var(--warn-tint);
   border-radius: var(--radius); padding: 0.5rem 0.6rem; margin: 0 0 1.3rem;
 }
-.liner-run-desc { font-size: var(--fs-sm); color: var(--ink-muted); margin: 0 0 0.5rem; max-width: 68ch; }
-.liner-diagram { width: 100%; height: 34px; display: block; margin-bottom: 1.3rem; }
 
 @media print {
   /* Chrome/Edge/Firefox all default to stripping background colours and (for Chrome/Edge, at least)
@@ -2318,12 +2316,6 @@ body.show-help .liner-head { margin-bottom: 1.4rem; }
 .panel-editor .pe-bare { fill: #953a2f; fill-opacity: 0.55; stroke: none; }
 .panel-editor .pe-weld { stroke: #1565c0; stroke-width: 3.2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
 .panel-editor .pe-weld-draft { stroke: #1565c0; stroke-width: 2; stroke-dasharray: 6 5; fill: none; }
-/* Welds GeoMate worked out from the layout, as against the heavier line the user drew: they are a
-   consequence of where the rolls landed, so they read as finer than a line somebody decided on. */
-.panel-editor .pe-weld-made { stroke: var(--stitch); stroke-width: 1.3; fill: none; stroke-opacity: 0.9; }
-.panel-editor .pe-weld-made--join { stroke-width: 2; stroke-opacity: 1; }
-.field.is-disabled { opacity: 0.55; }
-.field.is-disabled input { background: var(--surface-sunken, #eef1f3); }
 .panel-editor .pe-seed { fill: var(--accent); stroke: var(--surface); stroke-width: 1.5; }
 .panel-editor .pe-arrow { stroke: var(--accent-strong); stroke-width: 2.4; fill: none; marker-end: url(#peArrow); }
 .panel-editor .pe-vertex { fill: #1565c0; stroke: var(--surface); stroke-width: 1.2; }

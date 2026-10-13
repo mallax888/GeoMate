@@ -4931,7 +4931,6 @@ function computeAndRender() {
   renderCutPlan(liftResults);
   render3D(liftResults);
   renderRollSchedule(window.__geogridRolls || [], rollGroupSize);
-  renderLiner();
   saveAutosave();
 }
 
@@ -8575,8 +8574,8 @@ document.getElementById("exportBtn").addEventListener("click", () => {
         // Say which of the three reasons it is. "Nothing happened" on a button is the least useful
         // answer available, and this one can be empty for genuinely different reasons.
         note.textContent = (window.__geogridResults || []).length
-          ? "Nothing with survey coordinates yet — these lifts were typed in by hand, so there is nowhere on the ground to put them. Upload the lift extents DXF, or a cell surface on the Landfill liner tab."
-          : "Nothing to export yet — load your lift extents, or a cell surface on the Landfill liner tab.";
+          ? "Nothing with survey coordinates yet — these lifts were typed in by hand, so there is nowhere on the ground to put them. Upload the lift extents DXF, or a cell surface on the Base geogrid tab."
+          : "Nothing to export yet — load your lift extents, or a cell surface on the Base geogrid tab.";
         note.classList.add("is-error");
         return;
       }
@@ -8586,7 +8585,7 @@ document.getElementById("exportBtn").addEventListener("click", () => {
       // should not be told its liner was exported.
       const parts = [];
       if (built.lifts) parts.push(`${built.strips} strips across ${built.lifts} lift${built.lifts === 1 ? "" : "s"}`);
-      if (built.panels) parts.push(`${built.panels} liner panels and ${fmt.int(built.weld)} m of weld`);
+      if (built.panels) parts.push(`${built.panels} geogrid panels and ${fmt.int(built.weld)} m of join`);
       // Far apart means two different jobs' coordinates in one file: still correct, but it opens
       // looking empty, and that is worth a word rather than a puzzle.
       const apart =
@@ -8638,162 +8637,6 @@ function csvEscape(str) {
 function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
-
-/* ============================================================
-   Landfill liner — a separate, self-contained calculator: lining a dug excavation (floor +
-   battered sides) to stop leachate reaching natural ground, not stacked lift-by-lift fill like
-   the rest of this app. Shares the roll width/overlap/length spec and the strip-diagram/roll-
-   packing helpers above, but has its own geometry inputs and its own small results panel — it
-   doesn't touch the lift table or the main Material schedule sidebar, which is a different job.
-   ============================================================ */
-
-const linerInputs = {
-  rollWidth: document.getElementById("linerRollWidth"),
-  minOverlap: document.getElementById("linerMinOverlap"),
-  rollLength: document.getElementById("linerRollLength"),
-  floorLength: document.getElementById("linerFloorLength"),
-  floorWidth: document.getElementById("linerFloorWidth"),
-  depth: document.getElementById("linerDepth"),
-  slope: document.getElementById("linerSlope"),
-  extendFace: document.getElementById("linerExtendFaceToggle"),
-};
-
-/** Back to the same defaults a fresh project starts with — a blank roll width would break the
- *  liner calculation entirely, so the roll spec resets to real numbers, not blank like the floor
- *  dimensions (which have no sensible default of their own). Shared by New Project and the liner's
- *  own Reset button, so the "starting point" stays defined in exactly one place. */
-function resetLinerInputs() {
-  linerInputs.rollWidth.value = "1.3";
-  linerInputs.minOverlap.value = "300";
-  linerInputs.rollLength.value = "50";
-  linerInputs.floorLength.value = "";
-  linerInputs.floorWidth.value = "";
-  linerInputs.depth.value = "";
-  linerInputs.slope.value = "";
-  linerInputs.extendFace.checked = false;
-}
-
-document.getElementById("linerResetBtn").addEventListener("click", () => {
-  if (!window.confirm("Reset the Landfill liner's roll spec and floor dimensions back to their defaults?")) return;
-  resetLinerInputs();
-  computeAndRender();
-});
-
-/**
- * Models the excavation as a rectangular-floor truncated pyramid: a flat floor rising on a
- * uniform side slope on all four sides to its crest. Both wall pairs share the same slope
- * length (Pythagoras on depth + slope ratio doesn't depend on which floor edge it rises from);
- * only their trapezoid base widths differ, matching the floor's own length vs width.
- */
-function computeLinerPlan(Lf, Wf, D, slopeRatio, w, oMin, extendFace) {
-  if (!(Lf > 0) || !(Wf > 0) || !(D > 0) || !(slopeRatio >= 0) || !(w > 0) || oMin < 0 || oMin >= w) return null;
-
-  const S = D * Math.sqrt(1 + slopeRatio * slopeRatio); // slope length, same up every wall
-  const horizRun = D * slopeRatio; // crest set-back from the floor edge, per side
-
-  const floorArea = Lf * Wf;
-  const longWallArea = ((Lf + (Lf + 2 * horizRun)) / 2) * S * 2; // both long walls
-  const endWallArea = ((Wf + (Wf + 2 * horizRun)) / 2) * S * 2; // both end walls
-  const wallArea = longWallArea + endWallArea;
-  const totalArea = floorArea + wallArea;
-
-  // Main run: down one long wall, across the floor, up the other — one continuous panel per
-  // strip, tiled across the floor length. Minimises seams crossing a slope (a real leachate-risk
-  // point), matching how liner panels are actually laid out on site.
-  const mainPanelLength = 2 * S + Wf;
-  let mainResult = calcLift(Lf, w, oMin);
-
-  // End walls: the two shorter sides, each its own panel run tiled across the floor width — same
-  // strip-count math, idealised the same way the rest of this app treats a tapering face (strip
-  // count comes from the baseline length; only the CUT length reflects the slope).
-  let endResult = calcLift(Wf, w, oMin);
-
-  // Extend mode, liner version: pin overlap to exactly the minimum on both runs — but unlike the
-  // takeoff table, there's no "face length" here to grow instead. Lf/Wf/floorArea/wallArea are the
-  // real dug excavation and can never change, so this only affects how each run's overlap is
-  // reported, not the excavation itself.
-  if (extendFace) {
-    if (mainResult && mainResult.n > 1) mainResult = { ...mainResult, overlap: oMin };
-    if (endResult && endResult.n > 1) endResult = { ...endResult, overlap: oMin };
-  }
-
-  return { S, horizRun, floorArea, wallArea, totalArea, mainPanelLength, mainResult, endResult };
-}
-
-function renderLiner() {
-  const w = parseFloat(linerInputs.rollWidth.value) || 0;
-  const oMin = (parseFloat(linerInputs.minOverlap.value) || 0) / 1000;
-  const rollLength = parseFloat(linerInputs.rollLength.value) || 0;
-  const Lf = parseFloat(linerInputs.floorLength.value) || 0;
-  const Wf = parseFloat(linerInputs.floorWidth.value) || 0;
-  const D = parseFloat(linerInputs.depth.value) || 0;
-  const slopeRaw = parseFloat(linerInputs.slope.value);
-
-  // Same "blank isn't an error, an explicit bad value is" distinction as the takeoff table's own
-  // spec warnings — a fresh, not-yet-filled-in liner shouldn't greet the user with a wall of red.
-  const specIssues = [];
-  if (oMin < 0) {
-    specIssues.push(`Minimum overlap can't be negative.`);
-  } else if (oMin >= w) {
-    specIssues.push(`Minimum overlap (${fmt.mm(oMin)} mm) must be smaller than the roll width (${w} m).`);
-  }
-  const rollLengthRaw = linerInputs.rollLength.value;
-  if (rollLengthRaw.trim() !== "" && parseFloat(rollLengthRaw) <= 0) {
-    specIssues.push(`Roll length must be greater than zero — "Rolls to order" will show as 0 until it's fixed.`);
-  }
-  [
-    ["floorLength", "Floor length"],
-    ["floorWidth", "Floor width"],
-    ["depth", "Depth"],
-  ].forEach(([key, label]) => {
-    const raw = linerInputs[key].value;
-    if (raw.trim() !== "" && parseFloat(raw) <= 0) specIssues.push(`${label} must be greater than zero.`);
-  });
-  const specWarningEl = document.getElementById("linerSpecWarning");
-  specWarningEl.hidden = specIssues.length === 0;
-  specWarningEl.innerHTML = specIssues.map((m) => `<span>${escapeHtml(m)}</span>`).join("<br>");
-
-  const plan = computeLinerPlan(Lf, Wf, D, Number.isFinite(slopeRaw) ? slopeRaw : 0, w, oMin, linerInputs.extendFace.checked);
-
-  const emptyEl = document.getElementById("linerEmpty");
-  const resultsEl = document.getElementById("linerResults");
-  if (!plan) {
-    emptyEl.hidden = false;
-    resultsEl.hidden = true;
-    window.__geogridLinerRolls = [];
-    return;
-  }
-  emptyEl.hidden = true;
-  resultsEl.hidden = false;
-
-  document.getElementById("linerStatFloor").innerHTML = `${fmt.m(plan.floorArea)}<small> m²</small>`;
-  document.getElementById("linerStatWalls").innerHTML = `${fmt.m(plan.wallArea)}<small> m²</small>`;
-  document.getElementById("linerStatTotal").innerHTML = `${fmt.m(plan.totalArea)}<small> m²</small>`;
-  document.getElementById("linerStatSlope").innerHTML = `${fmt.m(plan.S)}<small> m</small>`;
-  document.getElementById("linerStatPanels").textContent = plan.mainResult.n + plan.endResult.n * 2;
-
-  // Pooled across the main run and both end walls, same bin-packing the main roll schedule uses —
-  // a short end-wall panel can fill out what a long main-run panel leaves on a roll.
-  const pieces = [];
-  for (let i = 0; i < plan.mainResult.n; i++) pieces.push({ label: `Main run · panel ${i + 1}`, length: plan.mainPanelLength, seq: i });
-  for (let i = 0; i < plan.endResult.n; i++) {
-    pieces.push({ label: `End wall A · panel ${i + 1}`, length: plan.S, seq: 1000 + i });
-    pieces.push({ label: `End wall B · panel ${i + 1}`, length: plan.S, seq: 2000 + i });
-  }
-  const rolls = rollLength > 0 ? packRollsDetailed(pieces, rollLength) : [];
-  window.__geogridLinerRolls = rolls;
-  document.getElementById("linerStatRolls").textContent = rolls.length;
-
-  document.getElementById("linerMainDesc").textContent =
-    `${plan.mainResult.n} panel${plan.mainResult.n === 1 ? "" : "s"} × ${fmt.m(plan.mainPanelLength)} m long (down ${fmt.m(plan.S)} m of slope, ${fmt.m(Wf)} m across the floor, up ${fmt.m(plan.S)} m of the far slope), tiled across the ${fmt.m(Lf)} m floor length.`;
-  renderDiagram(document.getElementById("linerMainDiagram"), Lf, plan.mainResult, w);
-
-  document.getElementById("linerEndDesc").textContent =
-    `${plan.endResult.n} panel${plan.endResult.n === 1 ? "" : "s"} × ${fmt.m(plan.S)} m long, per end wall (×2), tiled across the ${fmt.m(Wf)} m floor width.`;
-  renderDiagram(document.getElementById("linerEndDiagram"), Wf, plan.endResult, w);
-}
-
-Object.values(linerInputs).forEach((el) => el.addEventListener("input", computeAndRender));
 
 /* ============================================================
    State snapshot — serialize/restore everything a project is (spec, settings, every lift row
@@ -8851,25 +8694,13 @@ function buildStateSnapshot() {
     },
     products: snapshotProductRows(),
     rows,
-    liner: {
-      rollWidth: linerInputs.rollWidth.value,
-      minOverlap: linerInputs.minOverlap.value,
-      rollLength: linerInputs.rollLength.value,
-      floorLength: linerInputs.floorLength.value,
-      floorWidth: linerInputs.floorWidth.value,
-      depth: linerInputs.depth.value,
-      slope: linerInputs.slope.value,
-      extendFace: linerInputs.extendFace.checked,
-    },
   };
 }
 
 /** Rebuilds the settings panel, lift table, and liner inputs from a saved state. Returns true if anything was restored. */
 function applyStateSnapshot(state) {
   const hasRows = state && Array.isArray(state.rows) && state.rows.length;
-  const l = state && state.liner;
-  const hasLiner = l && (l.floorLength || l.floorWidth || l.depth || l.slope);
-  if (!state || (!hasRows && !hasLiner)) return false;
+  if (!state || !hasRows) return false;
 
   if (state.projectName != null) document.getElementById("projectName").value = state.projectName;
   const pd = state.projectDetails || {};
@@ -8901,16 +8732,6 @@ function applyStateSnapshot(state) {
     renderProductTable(legacyProductRowsFrom(state));
   }
 
-  if (l) {
-    if (l.rollWidth != null) linerInputs.rollWidth.value = l.rollWidth;
-    if (l.minOverlap != null) linerInputs.minOverlap.value = l.minOverlap;
-    if (l.rollLength != null) linerInputs.rollLength.value = l.rollLength;
-    if (l.floorLength != null) linerInputs.floorLength.value = l.floorLength;
-    if (l.floorWidth != null) linerInputs.floorWidth.value = l.floorWidth;
-    if (l.depth != null) linerInputs.depth.value = l.depth;
-    if (l.slope != null) linerInputs.slope.value = l.slope;
-    if (l.extendFace != null) linerInputs.extendFace.checked = !!l.extendFace;
-  }
 
   // Loading a named project needs to fully replace whatever's currently in the table — unlike the
   // boot-time autosave restore (the only other caller), which always runs against an empty table.
@@ -9131,7 +8952,6 @@ document.getElementById("newProjectBtn").addEventListener("click", () => {
   settingsInputs.avoidStitches.checked = false;
 
   renderProductTable(defaultProductRows());
-  resetLinerInputs();
 
   ["genStartRL", "genSpacing", "genCount", "interFromRL", "interToRL", "bulkPasteInput"].forEach((id) => {
     document.getElementById(id).value = "";
@@ -9601,43 +9421,11 @@ function bestBaseGridBearing(triangles, poly, rollWidth, minOverlap, maxPanelLen
 /* --- Base geogrid: the tab ------------------------------------------------------------------- */
 
 const baseGridInputs = {
-  product: document.getElementById("baseGridProduct"),
   rollWidth: document.getElementById("baseGridRollWidth"),
   overlap: document.getElementById("baseGridOverlap"),
   rollLength: document.getElementById("baseGridRollLength"),
   bearing: document.getElementById("baseGridBearing"),
-  weldRate: document.getElementById("baseGridWeldRate"),
 };
-
-/* TWO PRODUCTS, OPPOSITE RULES, AND THE TAB WAS APPLYING ONE RULE TO BOTH.
- *
- * A base geogrid is lapped: neighbouring rolls overlap by the specified minimum and the lap is the
- * joint. A landfill liner is NOT lapped — the rolls butt and the butt joint is welded, which is the
- * whole reason there is a weld at all. Laid at a lap this tab was pitching liner runs 300 mm tight,
- * reporting 18,434 m2 of material over a 17,301 m2 cell: 6.5% of lap allowance that a welded liner
- * does not carry, and calling the joint between two rolls "lap" when it is a weld.
- *
- * So the lap is a property of the PRODUCT, not of the tab. On a liner it is zero and cannot be set.
- */
-function baseGridIsLiner() {
-  return ((baseGridInputs.product && baseGridInputs.product.value) || "liner") === "liner";
-}
-/** Metres of lap between neighbouring rolls: whatever is set for geogrid, always 0 for a liner. */
-function baseGridLap() {
-  if (baseGridIsLiner()) return 0;
-  return (parseFloat(baseGridInputs.overlap.value) || 0) / 1000;
-}
-/** The overlap box is meaningless on a welded liner, so it is shown as such rather than ignored. */
-function syncBaseGridProduct() {
-  const field = document.getElementById("baseGridOverlapField");
-  const liner = baseGridIsLiner();
-  if (baseGridInputs.overlap) baseGridInputs.overlap.disabled = liner;
-  if (field) {
-    field.classList.toggle("is-disabled", liner);
-    const label = field.querySelector("span");
-    if (label) label.textContent = liner ? "Overlap — none, it is welded" : "Minimum overlap";
-  }
-}
 
 /* The surface stays in memory for the session rather than in localStorage: a cell TIN is megabytes
  * of triangles and would blow the storage quota that every saved project shares. Re-upload after a
@@ -9657,12 +9445,9 @@ function baseGridStatus(message, kind) {
 
 function resetBaseGridInputs() {
   baseGridInputs.rollWidth.value = "7";
-  if (baseGridInputs.product) baseGridInputs.product.value = "liner";
   baseGridInputs.overlap.value = "300";
-  syncBaseGridProduct();
   baseGridInputs.rollLength.value = "100";
   baseGridInputs.bearing.value = "";
-  baseGridInputs.weldRate.value = "";
   // Reset puts the direction back to auto itself, so there is nothing left to undo.
   baseGridBearingBefore = null;
   showBearingUndo(false);
@@ -9749,7 +9534,7 @@ function renderBaseGrid() {
   }
 
   const w = parseFloat(baseGridInputs.rollWidth.value);
-  const oMin = baseGridLap();
+  const oMin = (parseFloat(baseGridInputs.overlap.value) || 0) / 1000;
   const rollLength = parseFloat(baseGridInputs.rollLength.value) || 0;
   // Blank means "work it out per zone" — see computeCellGridPlan.
   const typed = baseGridInputs.bearing.value.trim();
@@ -9811,7 +9596,7 @@ function refreshLinerOutputs() {
       provenance.className = "cutplan-status is-warn";
       provenance.innerHTML = built.flat
         ? `This cell was built from an extents DXF with <strong>no levels on it</strong>, so it is being treated as flat ground: ` +
-          `lengths are plan lengths, there is no drape and no weld at a change of grade. Upload the surface (3DFACE or LandXML) for the real numbers.`
+          `lengths are plan lengths, there is no drape and no join at a change of grade. Upload the surface (3DFACE or LandXML) for the real numbers.`
         : `This cell was built from an extents DXF, not a survey surface — <strong>the levels on your outlines are exact, the levels between them are interpolated</strong>. ` +
           `Areas and drape are as good as that interpolation. Upload the surface (3DFACE or LandXML) if you have one.`;
     }
@@ -9822,9 +9607,9 @@ function refreshLinerOutputs() {
     source.className = "cutplan-status is-ok";
     source.innerHTML = drawn
       ? `These numbers are off <strong>the layout you drew</strong> below — ${panelEditor.panels.length} panel${panelEditor.panels.length === 1 ? "" : "s"}` +
-        `, ${panelEditor.weldLines.length} weld line${panelEditor.weldLines.length === 1 ? "" : "s"}, ${plan.panels.length} rolls laid. ` +
+        `, ${panelEditor.weldLines.length} panel boundar${panelEditor.weldLines.length === 1 ? "y" : "ies"}, ${plan.panels.length} rolls laid. ` +
         `The zone drawing below is only there to show what the ground is doing.`
-      : `These numbers are off <strong>the zones GeoMate read from the surface</strong>. Draw the weld lines and point the rolls ` +
+      : `These numbers are off <strong>the zones GeoMate read from the surface</strong>. Draw the panel boundaries and point the rolls ` +
         `in the panel layout below — or import the layout from CAD — and the stats, the schedule, the 3D view and the CAD export all follow that instead.`;
   }
 
@@ -9846,8 +9631,6 @@ function refreshLinerOutputs() {
   set("baseGridStatHinge", fmt.int(plan.hingeWeld), "m");
   set("baseGridStatSeam", fmt.int(plan.panelSeam), "m");
   set("baseGridStatWeld", fmt.int(plan.totalWeld), "m");
-  const weldRate = parseFloat(baseGridInputs.weldRate.value);
-  set("baseGridStatWeldCost", weldRate > 0 ? fmt.cost(plan.totalWeld * weldRate) : "—");
 
   const note = document.getElementById("baseGridDrapeNote");
   if (note) {
@@ -9864,17 +9647,17 @@ function refreshLinerOutputs() {
       (drawn
         ? plan.surface - plan.covered > 1
           ? `The runs cover ${fmt.int(plan.covered)} m² of the ${fmt.int(plan.surface)} m² surface at ${(plan.minOverlap * 1000).toFixed(0)} mm laps — ` +
-            `<strong>${fmt.int(plan.surface - plan.covered)} m² is bare</strong>, and a liner with a gap in it is not a liner.`
+            `<strong>${fmt.int(plan.surface - plan.covered)} m² is bare</strong>, which is ground with no grid on it.`
           : `Every square metre of the ${fmt.int(plan.surface)} m² surface has a roll on it at ${(plan.minOverlap * 1000).toFixed(0)} mm laps — nothing bare.`
         : `At ${(plan.minOverlap * 1000).toFixed(0)} mm laps the runs cover ${fmt.int(plan.covered)} m² against ${fmt.int(plan.surface)} m² of surface, ` +
           `so about ${short}% of the lap is being spent on cross-fall.`) +
       (drawn
-        ? ` The rolls are cut and welded on the lines you drew: <strong>${fmt.int(plan.hingeWeld)} m of weld on those lines</strong> ` +
+        ? ` The rolls are cut on the boundaries you drew: <strong>${fmt.int(plan.hingeWeld)} m of boundary</strong> ` +
           `plus ${fmt.int(plan.panelSeam)} m of seam between neighbouring rolls.`
-        : ` Panels stop at every change of grade and are welded to the strip on the next plane: ` +
-          `<strong>${fmt.int(plan.hingeWeld)} m of weld at grade changes</strong> plus ${fmt.int(plan.panelSeam)} m of panel seam.`) +
+        : ` Panels stop at every change of grade and lap onto the strip on the next plane: ` +
+          `<strong>${fmt.int(plan.hingeWeld)} m of join at grade changes</strong> plus ${fmt.int(plan.panelSeam)} m of panel lap.`) +
       (drawn && plan.unpanelledArea > 1
-        ? ` <strong>${fmt.int(plan.unpanelledArea)} m² of the cell is inside no panel</strong> — drop a panel in that region, or move a weld line.`
+        ? ` <strong>${fmt.int(plan.unpanelledArea)} m² of the cell is inside no panel</strong> — drop a panel in that region, or move a boundary.`
         : "") +
       (packing
         ? ` Each ${piece} has to come off one roll, so ${plan.panels.length} ${piece}s pack into <strong>${packing.rolls} rolls</strong> of ${rollLength} m` +
@@ -10108,20 +9891,11 @@ function panelPlanAsLinerPlan(pp, surface) {
       segments.push({ a: { ...line[i], z: zs[i] }, b: { ...line[i + 1], z: zs[i + 1] }, kind: "weld" });
     }
   });
-  /* The generated welds join the drawn ones in the same list, so the 3D view and the CAD export
-   * draw the whole weld drawing rather than only the part somebody typed in. They carry their own
-   * kind so a reader can still tell which lines were a decision and which were a consequence. */
-  (pp.weldSeamLines || []).forEach((line) => {
-    for (let i = 0; i + 1 < line.length; i++) segments.push({ a: line[i], b: line[i + 1], kind: "seam" });
-  });
-  (pp.weldJoinLines || []).forEach((line) => {
-    for (let i = 0; i + 1 < line.length; i++) segments.push({ a: line[i], b: line[i + 1], kind: "join" });
-  });
   return {
     fromEditor: true,
     zones,
     panels: allPanels,
-    hinges: { segments, length: pp.weldAtLines + (pp.seamWeld || 0) + (pp.joinWeld || 0) },
+    hinges: { segments, length: pp.weldAtLines },
     rollWidth: pp.rollWidth,
     minOverlap: pp.minOverlap,
     surface: pp.surfaceArea3D,
@@ -10141,7 +9915,7 @@ function panelPlanAsLinerPlan(pp, surface) {
 /* ===============================================================================================
    THE PANEL EDITOR
    ===============================================================================================
-   Draw the weld lines, drop a panel inside each region and point it the way the rolls run. The
+   Draw the panel boundaries, drop a panel inside each region and point it the way the rolls run. The
    engine (computePanelPlan) does the rest. Kept entirely separate from the zone plan above it: that
    drawing shows what the GROUND is doing, this one shows what the INSTALLER has decided, and
    conflating the two is how five attempts at inferring the second from the first went wrong.
@@ -10195,11 +9969,11 @@ function panelEditorArm(mode) {
   panelEditor.draft = null;
   const weld = document.getElementById("panelWeldBtn");
   const seed = document.getElementById("panelSeedBtn");
-  if (weld) { weld.classList.toggle("is-armed", mode === "weld"); weld.textContent = mode === "weld" ? "Finish the line" : "Draw a weld line"; }
+  if (weld) { weld.classList.toggle("is-armed", mode === "weld"); weld.textContent = mode === "weld" ? "Finish the line" : "Draw a panel boundary"; }
   if (seed) seed.classList.toggle("is-armed", mode === "seed" || mode === "aim");
   const svg = document.getElementById("panelPlan");
   if (svg) svg.classList.toggle("is-drawing", mode !== "idle");
-  if (mode === "weld") panelEditorHint("Click along the line they weld on. Click Finish, or press Enter, when the line is done — Escape throws it away.");
+  if (mode === "weld") panelEditorHint("Click along the boundary between two panels. Click Finish, or press Enter, when the line is done — Escape throws it away.");
   else if (mode === "seed") panelEditorHint("Click inside a panel — anywhere in it.");
   else if (mode === "aim") panelEditorHint("Now click the way the rolls run in that panel: from the trench, down the slope.");
   else panelEditorHint("");
@@ -10248,7 +10022,7 @@ function renderPanelEditor() {
 
   const plan = computePanelPlan(baseGridSurface, panelEditor.weldLines, panelEditor.panels, {
     rollWidth: parseFloat(baseGridInputs.rollWidth.value) || 7,
-    minOverlap: baseGridLap(),
+    minOverlap: (parseFloat(baseGridInputs.overlap.value) || 0) / 1000,
     rollLength: parseFloat(baseGridInputs.rollLength.value) || 0,
   });
   panelEditor.plan = plan;
@@ -10279,12 +10053,6 @@ function renderPanelEditor() {
     g += bare;
     plan.panels.forEach((pan) => pan.runs.forEach((r) => { g += `<polyline points="${pts(r.path)}" class="pe-run"/>`; }));
     plan.infill.forEach((r) => { g += `<polyline points="${pts(r.path)}" class="pe-run"/>`; });
-    /* The generated welds, drawn where they actually fall — between the rolls, not down their
-     * middles. Only on a butted liner: a lapped geogrid has a lap there, not a weld. */
-    if (plan.butted) {
-      (plan.weldSeamLines || []).forEach((line) => { g += `<polyline points="${pts(line)}" class="pe-weld-made"/>`; });
-      (plan.weldJoinLines || []).forEach((line) => { g += `<polyline points="${pts(line)}" class="pe-weld-made pe-weld-made--join"/>`; });
-    }
   }
 
   panelEditor.weldLines.forEach((line) => { g += `<polyline points="${pts(line)}" class="pe-weld"/>`; });
@@ -10317,24 +10085,20 @@ function renderPanelEditor() {
   if (statsEl) {
     if (!plan || !panelEditor.panels.length) {
       statsEl.className = "export-note";
-      statsEl.textContent = "No panels yet. Draw the weld lines, then drop a panel in each region and point it the way the rolls run.";
+      statsEl.textContent = "No panels yet. Draw the panel boundaries, then drop a panel in each region and point it the way the rolls run.";
     } else {
       const bare = plan.unpanelledArea;
       statsEl.className = bare > 1 ? "export-note is-error" : "export-note";
       statsEl.innerHTML =
         `${plan.panels.length} panel${plan.panels.length === 1 ? "" : "s"}, ${plan.runs} runs, ` +
-        `<strong>${fmt.int(plan.material)} m²</strong> of ${baseGridIsLiner() ? "liner" : "grid"} over ${fmt.int(plan.surfaceArea3D)} m² of ground. ` +
-        /* A butted liner has no lap, so the joint between two rolls is weld and GeoMate works the
-         * lines out itself; a lapped geogrid has no weld at all and saying "weld" there was simply
-         * wrong. One sentence, two products, and it says which it is. */
-        (plan.butted
-          ? `Weld: <strong>${fmt.int(plan.seamWeld + plan.joinWeld)} m generated</strong> — ${fmt.int(plan.seamWeld)} m of seam between rolls and ${fmt.int(plan.joinWeld)} m of end join` +
-            (plan.weldAtLines > 0 ? `, plus ${fmt.int(plan.weldAtLines)} m on your own lines. ` : ". ")
-          : `Lap: ${fmt.int(plan.seam)} m between neighbouring rolls` +
-            (plan.weldAtLines > 0 ? `, and ${fmt.int(plan.weldAtLines)} m of weld on your lines. ` : ". ")) +
+        `<strong>${fmt.int(plan.material)} m²</strong> of grid over ${fmt.int(plan.surfaceArea3D)} m² of ground. ` +
+        // Geogrid laps; it is never welded. The lap between neighbouring rolls is the joint, and
+        // the boundaries the user drew are where the roll direction changes.
+        `Lap: ${fmt.int(plan.seam)} m between neighbouring rolls` +
+        (plan.weldAtLines > 0 ? `, across ${fmt.int(plan.weldAtLines)} m of panel boundary. ` : ". ") +
         (plan.offcutPieces ? `${plan.offcutPieces} offcut pieces (${fmt.int(plan.offcutArea)} m²). ` : "") +
         (bare > 1
-          ? `<strong>${fmt.int(bare)} m² is inside no panel</strong> — shown in red. A liner cannot have gaps: add a panel there, or move a weld line.`
+          ? `<strong>${fmt.int(bare)} m² is inside no panel</strong> — shown in red: add a panel there, or move a boundary.`
           : "Nothing bare.");
     }
   }
@@ -10355,8 +10119,8 @@ function makeTinIndexCachedZ(x, y) {
 /* ===============================================================================================
    A SURFACE FROM THE EXTENTS, WHEN THERE IS NO SURFACE
    ===============================================================================================
-   The liner tab wants a triangulated surface, because everything it does depends on levels: the
-   drape, the fall line, the weld at a change of grade, the 3D view. But a geomembrane is often
+   The geogrid tab wants a triangulated surface, because everything it does depends on levels: the
+   drape, the fall line, the join at a change of grade, the 3D view. But a cell is often
    issued as its EXTENTS — closed 3D polylines following the ground round the edge of each region —
    and refusing that file is refusing the drawing the user actually has (see rule 11).
 
@@ -11134,7 +10898,7 @@ document.getElementById("baseGridBestBtn").addEventListener("click", () => {
     return;
   }
   const w = parseFloat(baseGridInputs.rollWidth.value);
-  const oMin = baseGridLap();
+  const oMin = (parseFloat(baseGridInputs.overlap.value) || 0) / 1000;
   const rollLength = parseFloat(baseGridInputs.rollLength.value) || 0;
   // Only the base is free to choose — a batter's direction is set by the ground it is on.
   const zones = classifyCellZones(baseGridSurface.triangles);
@@ -11211,16 +10975,6 @@ document.getElementById("baseGridResetBtn").addEventListener("click", () => {
 Object.values(baseGridInputs).forEach((el) => {
   if (el) el.addEventListener("input", renderBaseGrid);
 });
-/* A <select> fires change, not input, in every browser worth supporting — wired separately rather
- * than relying on the line above, which would leave the product switch doing nothing at all. */
-if (baseGridInputs.product) {
-  baseGridInputs.product.addEventListener("change", () => {
-    syncBaseGridProduct();
-    renderBaseGrid();
-    renderPanelEditor();
-  });
-}
-syncBaseGridProduct();
 
 /**
  * The panel layout as CAD geometry, in the survey coordinates the surface arrived on and at the
@@ -12086,9 +11840,7 @@ function layPanel(tin, R, cells, dir, rollWidth, minOverlap, rollLength) {
   for (let t = tmin + pitch / 2; t <= tmax + 1e-9; t += pitch) ts.push(t);
   if (!ts.length) ts.push((tmin + tmax) / 2);
   if (tmax - ts[ts.length - 1] > pitch * 0.15) ts.push(tmax - pitch * 0.35);
-  ts.sort((a, b) => a - b);
-  for (let band = 0; band < ts.length; band++) {
-    const t = ts[band];
+  for (const t of ts) {
     // Start at the up-slope end of this line across the panel: smallest projection along dir,
     // because dir points the way the roll travels.
     /* A PANEL IS NOT A RECTANGLE, SO ONE LINE ACROSS IT CAN ENTER IT MORE THAN ONCE.
@@ -12125,94 +11877,15 @@ function layPanel(tin, R, cells, dir, rollWidth, minOverlap, rollLength) {
       const r = layStraightRun(tin, inPanel, from, dir, rollLength);
       if (!r) break;
       r.continued = piece > 0;
-      // Which line across the panel this roll sits on, so the joint with its neighbour can be
-      // drawn from the two rolls' own geometry rather than guessed at afterwards.
-      r.band = band;
-      r.t = t;
       runs.push(r);
       if (r.stoppedBy !== "length") break;
-      /* End of the roll. On a lapped product the next one starts a lap back up the slope; on a
-       * welded liner minOverlap is 0, so it starts exactly where this one stopped and the butt
-       * joint across the roll is a weld — see generatePanelWelds. */
+      // Next roll starts one lap back up, so the joint is a lapped overlap and not a butt.
       const e = r.path[r.path.length - 1];
       from = { x: e.x - dir.x * minOverlap, y: e.y - dir.y * minOverlap };
     }
     }
   }
   return runs;
-}
-
-/**
- * THE WELD LINES, WORKED OUT RATHER THAN ASKED FOR.
- *
- * A welded liner does not overlap: roll n occupies its own width and roll n+1 starts where it
- * stops, so every joint between two rolls is a line both of them share — and that line IS the
- * weld. There is nothing for a user to draw, because the layout already decides it. Two kinds come
- * out of one panel:
- *
- *   SEAM   — the long joint between neighbouring rolls, which is roll n's own path pushed sideways
- *            by half a roll width. Trimmed to where the neighbour actually has material, so a seam
- *            is never drawn running past the end of the roll it is welding to.
- *   JOIN   — the short joint across the roll where one roll ends and the next carries on, which
- *            only exists when a run is longer than a roll.
- *
- * Panel-to-panel welds are NOT generated here: where two panels run different ways the boundary is
- * a design decision, not a consequence of the layout, and it comes from the user's own weld lines.
- */
-function generatePanelWelds(runs, dir, rollWidth) {
-  const perp = { x: -dir.y, y: dir.x };
-  const half = rollWidth / 2;
-  const seams = [];
-  const joins = [];
-  let seamLength = 0, joinLength = 0;
-
-  const byBand = new Map();
-  runs.forEach((r) => {
-    if (!Number.isFinite(r.band)) return;
-    if (!byBand.has(r.band)) byBand.set(r.band, []);
-    byBand.get(r.band).push(r);
-  });
-  const bands = [...byBand.keys()].sort((a, b) => a - b);
-
-  bands.forEach((b, bi) => {
-    const next = byBand.get(bands[bi + 1]);
-    if (!next || bands[bi + 1] !== b + 1) return;   // no neighbour, or a band that laid nothing
-    // Points of the neighbouring band, to test that the seam has material on both sides of it.
-    const theirs = [];
-    next.forEach((r) => r.path.forEach((q) => theirs.push(q)));
-    const nearTheirs = (p) => {
-      for (let k = 0; k < theirs.length; k++) {
-        if (Math.hypot(theirs[k].x - p.x, theirs[k].y - p.y) <= rollWidth * 0.75) return true;
-      }
-      return false;
-    };
-    byBand.get(b).forEach((r) => {
-      let open = null;
-      r.path.forEach((q) => {
-        const p = { x: q.x + perp.x * half, y: q.y + perp.y * half, z: q.z };
-        if (!nearTheirs(p)) { if (open && open.length > 1) seams.push(open); open = null; return; }
-        if (!open) open = [];
-        open.push(p);
-      });
-      if (open && open.length > 1) seams.push(open);
-    });
-  });
-  seams.forEach((line) => {
-    for (let k = 0; k + 1 < line.length; k++) seamLength += Math.hypot(line[k + 1].x - line[k].x, line[k + 1].y - line[k].y);
-  });
-
-  // Across the roll wherever one roll hands over to the next.
-  runs.forEach((r) => {
-    if (!r.continued || !r.path.length) return;
-    const p = r.path[0];
-    joins.push([
-      { x: p.x - perp.x * half, y: p.y - perp.y * half, z: p.z },
-      { x: p.x + perp.x * half, y: p.y + perp.y * half, z: p.z },
-    ]);
-    joinLength += rollWidth;
-  });
-
-  return { seams, joins, seamLength, joinLength };
 }
 
 /**
@@ -12341,16 +12014,11 @@ function computePanelPlan(surface, weldLines, panels, opts) {
     // n runs side by side lap n-1 times, each lap as long as the shorter of the pair.
     let seam = 0;
     for (let k = 0; k + 1 < runs.length; k++) seam += Math.min(runs[k].draped, runs[k + 1].draped);
-    /* The joints as real lines, not just a length — they are the weld drawing, and on a butted
-     * liner they are the ONLY thing holding the cell together, so they go on the plan, in the 3D
-     * view and into the CAD export like any other piece of the design. */
-    const welds = generatePanelWelds(runs, dir, rollWidth);
     out.push({
       ...panel,
       index: idx,
       cells,
       runs,
-      welds,
       dir,
       bearing: ((Math.atan2(dir.x, dir.y) * 180) / Math.PI + 360) % 360,
       areaPlan: cells.size * R.cell * R.cell,
@@ -12528,14 +12196,6 @@ function computePanelPlan(surface, weldLines, panels, opts) {
     seam: out.reduce((s, p) => s + (p.seam || 0), 0),
     weldAtLines,
     totalWeld: weldAtLines + out.reduce((s, p) => s + (p.seam || 0), 0),
-    /* The generated weld drawing: the joints the layout itself decides, as lines on the ground.
-     * On a butted liner `seamWeld + joinWeld` IS the seam total above, measured from the lines
-     * rather than from the pair of runs, so the drawing and the number cannot disagree. */
-    weldSeamLines: out.flatMap((p) => (p.welds ? p.welds.seams : [])),
-    weldJoinLines: out.flatMap((p) => (p.welds ? p.welds.joins : [])),
-    seamWeld: out.reduce((s, p) => s + (p.welds ? p.welds.seamLength : 0), 0),
-    joinWeld: out.reduce((s, p) => s + (p.welds ? p.welds.joinLength : 0), 0),
-    butted: minOverlap <= 0,
     surfaceArea3D: groundArea3D,
     bareArea3D,
     barePct: groundArea3D > 0 ? (100 * bareArea3D) / groundArea3D : 0,
