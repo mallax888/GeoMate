@@ -70,17 +70,25 @@
   --ink-muted: #5d666e;
   --line: #dfe4e8;
   --line-strong: #c3cbd2;
-  --accent: #1f7a44;
-  --accent-strong: #145c33;
-  --accent-tint: #e3f3e8;
-  /* The cut-plan face reference line. Deliberately outside the green/clay strip palette: a green
-     line on a diagram made of green and clay strips reads as fill, not as a reference. */
-  --face-line: #1b4fd8;
+  /* T+T blue, sampled off the company intranet rather than guessed: the page header and the right
+     hand panels are #016fa2 and the utility bar above them is #016494. White stays white — the
+     surfaces, the drawing sheets and the text on a blue button.
+     --accent-strong is darker than the brand blue on purpose: it carries small text, outlines and
+     the strip edges on a white sheet, and #016fa2 at 11px is 5.5:1 against white where this is
+     8.3:1. It is the same hue, so the two still read as one colour. */
+  --accent: #016fa2;
+  --accent-strong: #01557c;
+  --accent-tint: #e2f0f8;
+  /* The cut-plan face reference line. It has to sit outside the strip palette — a line in the same
+     colour as the strips reads as fill, not as a reference. That used to mean "not green"; with the
+     strips in T+T blue it means a much darker navy, heavy enough to read as a datum under them. */
+  --face-line: #0b3a66;
   /* Gap-filling stitch strips at a corner — outside the green/clay strip run so a narrow piece
      closing a lane never reads as just another strip in the sequence. */
   --stitch: #7b3fb5;
-  --accent-pop: #187a40;
-  --accent-pop-deep: #156b3a;
+  --stitch-tint: #f1e8fa;
+  --accent-pop: #016fa2;
+  --accent-pop-deep: #016494;
   --ink-on-accent: #ffffff;
   --clay: #8f4a07;
   --clay-tint: #fdead2;
@@ -122,10 +130,14 @@
   --ink-muted: #8d938a;
   --line: #34383a;
   --line-strong: #454b4d;
-  --accent: #2fa863;
-  --accent-strong: #6ecf95;
-  --accent-tint: #0f261a;
-  --face-line: #7aa9ff;
+  /* The same blue, lifted for a dark background: #016fa2 on #1a1c1d is 2.4:1 and unreadable as
+     text or as a thin line, so the dark theme runs the brand hue lighter the way the green did. */
+  --accent: #2f9fd4;
+  --accent-strong: #7cc6e9;
+  --accent-tint: #07293b;
+  --face-line: #c8dcff;
+  --stitch: #b98ae8;
+  --stitch-tint: #2a1f38;
   --clay: #ffb238;
   --clay-tint: #3a2a0a;
   --graphite: #a3aca6;
@@ -1520,10 +1532,13 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
 .cutplan-card__strips li:last-child { border-bottom: none; }
 /* A stitch note is a sentence, not a row of fields: it wraps rather than inheriting the max-content
    width above, which pushed the end of it out of the column behind a horizontal scroll. */
+/* In the stitch colour, like the chip beside it and the piece itself on the drawing — it used to
+   take the accent, which read as "another strip" when the accent was green and reads as the strips
+   themselves now that they are blue. */
 .cutplan-card__strips li.is-stitch {
   justify-content: space-between;
-  color: var(--accent-strong);
-  background: var(--accent-tint);
+  color: var(--stitch);
+  background: var(--stitch-tint);
   font-style: italic;
   min-width: 0;
   flex-wrap: wrap;
@@ -1643,7 +1658,7 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
   font-variant-numeric: tabular-nums;
 }
 .cutplan-print-table th { text-transform: uppercase; font-size: var(--fs-xs); letter-spacing: 0.05em; color: var(--ink-muted); }
-.cutplan-print-table tr.is-stitch td { color: var(--accent-strong); font-style: italic; }
+.cutplan-print-table tr.is-stitch td { color: var(--stitch); font-style: italic; }
 /* One line per row, in every column: a wrapped "10.9 m" or a four-line note is what turned a
    one-page sheet into two. Every cell on this table is short by construction — see the print row
    builder, which writes the stitch note as "Stitch −10.4 m". */
@@ -1898,11 +1913,11 @@ body.show-help .liner-head { margin-bottom: 1.4rem; }
     --ink-muted: #5d666e !important;
     --line: #dfe4e8 !important;
     --line-strong: #c3cbd2 !important;
-    --accent: #1f7a44 !important;
-    --accent-strong: #145c33 !important;
-    --accent-tint: #e3f3e8 !important;
-    --accent-pop: #187a40 !important;
-    --accent-pop-deep: #156b3a !important;
+    --accent: #016fa2 !important;
+    --accent-strong: #01557c !important;
+    --accent-tint: #e2f0f8 !important;
+    --accent-pop: #016fa2 !important;
+    --accent-pop-deep: #016494 !important;
     --ink-on-accent: #ffffff !important;
     --clay: #8f4a07 !important;
     --clay-tint: #fdead2 !important;
@@ -1913,6 +1928,8 @@ body.show-help .liner-head { margin-bottom: 1.4rem; }
     --warn-tint: #f5ead2 !important;
     --critical: #953a2f !important;
     --critical-tint: #f6dfdb !important;
+    --stitch: #7b3fb5 !important;
+    --stitch-tint: #f1e8fa !important;
   }
 
   /* .panel--products-full is the product list and project details at the top of the screen. It is a
