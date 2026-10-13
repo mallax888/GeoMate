@@ -5382,38 +5382,78 @@ function buildCutPlanPrintPages(results, project) {
       const stripRollNumbers = stripRollNumbersFor(r, rollLookup);
       const stitchCount = r.cutPlan.stitches.reduce((s, arr) => s + arr.length, 0);
       const rollsUsed = new Set();
-      const rows = r.stripLengths
+      const rowList = r.stripLengths
         .map((len, i) => {
           const rollNums = stripRollNumbers[i];
           rollNums.split(",").filter(Boolean).forEach((n) => rollsUsed.add(+n));
-          const mainRow = `<tr><td>${i + 1}</td><td>${fmt.m(len)} m</td><td>${rollNums}</td><td>Cut</td></tr>`;
+          // The old fourth column said "Cut" on every ordinary row — a column of the same word,
+          // paid for in width the stitch rows then could not fit their own note into.
+          const mainRow = `<tr><td>${i + 1}</td><td>${fmt.m(len)} m</td><td>${rollNums}</td><td></td></tr>`;
           const stitchRows = (r.cutPlan.stitches[i] || [])
             .map((s, si) => {
               const suffix = r.cutPlan.stitches[i].length > 1 ? `.${si + 1}` : "";
               const stitchRolls = rollNumbersForLabel(`${r.row.dataset.liftId}::strip${i + 1}${suffix}::stitch`, rollLookup);
               stitchRolls.split(",").filter(Boolean).forEach((n) => rollsUsed.add(+n));
-              return `<tr class="is-stitch"><td>${i + 1}${suffix}</td><td>${fmt.m(s.length)} m</td><td>${stitchRolls}</td><td>Stitch, starts ${fmt.m(s.offset)} m back</td></tr>`;
+              /* "Stitch, starts 10.4 m back" wrapped to four lines in a column 60 mm wide and blew
+               * the sheet onto a second page. The short form keeps every row to one line; the
+               * legend under the table says what the minus means. */
+              return `<tr class="is-stitch"><td>${i + 1}${suffix}</td><td>${fmt.m(s.length)} m</td><td>${stitchRolls}</td><td>−${fmt.m(s.offset)} m</td></tr>`;
             })
             .join("");
           return mainRow + stitchRows;
-        })
-        .join("");
+        });
+
+      /* ONE PAGE PER LIFT, WHICH IS WHAT THE BUTTON SAYS.
+       *
+       * A 41-strip lift with 13 stitches is 54 rows, and 54 rows in one column is a metre and a
+       * half of paper: the sheet ran to five pages, the plan sat alone at the top of the first and
+       * pages three and four were a column of numbers beside a blank half-page. Past about thirty
+       * rows the list goes into columns under a full-width plan instead of beside a tall one. */
+      /* Measured, not guessed: under the plan and the steps, an A4 page takes about twenty rows in
+       * a column. Two columns of 27 ran onto a second page; three of 18 fit. Three columns are
+       * narrow, so the type in them is set smaller (.is-tight) to keep every row on one line. */
+      const PER_COL = 20;
+      /* Split by ROWS, not by strips. A strip with a stitch against it is two rows, so chunking the
+       * per-strip blocks put 19 strips (19 rows) in one column against 11 strips (22 rows) in the
+       * next — one column ended halfway up the page while the other ran onto the next one. */
+      const allRows = rowList.join("").split(/(?=<tr)/).filter(Boolean);
+      const cols = Math.min(3, Math.max(1, Math.ceil(allRows.length / PER_COL)));
+      const head = `<thead><tr><th>Strip #</th><th>Cut length</th><th>Roll #</th><th>Stitch</th></tr></thead>`;
+      let stripTables;
+      if (cols === 1) {
+        stripTables = `<table class="cutplan-print-table">${head}<tbody>${allRows.join("")}</tbody></table>`;
+      } else {
+        const per = Math.ceil(allRows.length / cols);
+        const chunks = [];
+        for (let c = 0; c < cols; c++) chunks.push(allRows.slice(c * per, (c + 1) * per));
+        stripTables =
+          `<div class="cutplan-print-page__cols${cols >= 3 ? " is-tight" : ""}" style="--cols:${cols}">` +
+          chunks
+            .filter((chunk) => chunk.length)
+            .map((chunk) => `<table class="cutplan-print-table">${head}<tbody>${chunk.join("")}</tbody></table>`)
+            .join("") +
+          `</div>`;
+      }
+
       const metaParts = [`${r.n} strips`, `face ${fmt.m(r.L)} m`];
       if (stitchCount) metaParts.push(`${stitchCount} stitch patch${stitchCount === 1 ? "" : "es"}`);
       metaParts.push(`roll width ${fmt.m(r.materialWidth / r.n)} m`);
 
-      // Every roll this lift draws from, shown as the same fill bar used on the Roll schedule tab —
-      // a roll's leftover space here often belongs to a DIFFERENT lift (that's the whole point of
-      // pooling rolls to avoid waste), so this shows the true, complete picture for each roll, not
-      // just this lift's slice of it.
+      /* WHICH ROLLS, NOT THE WHOLE ROLL SCHEDULE.
+       *
+       * This used to print the full card for every roll the lift touches — and because rolls are
+       * pooled across lifts to avoid waste, the same card came out again on the next lift's sheet.
+       * Three lifts turned "one page per lift" into twenty-four pages, most of them repeats. The
+       * numbers are what a sheet needs; the cutting list for each roll is the Roll schedule sheet,
+       * printed once, and this says so. */
       const rollsSection = rollsUsed.size
         ? `
             <div class="cutplan-print-page__rolls">
-              <h4>Rolls used on this page</h4>
-              ${Array.from(rollsUsed)
+              <h4>Rolls this lift draws from</h4>
+              <p class="cutplan-print-page__rollline">${Array.from(rollsUsed)
                 .sort((a, b) => a - b)
-                .map((n) => buildRollCardHtml(rolls[n - 1], n - 1))
-                .join("")}
+                .map((n) => `<span class="cutplan-print-page__rollno">${n}</span>`)
+                .join("")}<span class="cutplan-print-page__rollnote">Each roll's own cutting list is on the Roll schedule sheet.</span></p>
             </div>
           `
         : "";
@@ -5439,13 +5479,11 @@ function buildCutPlanPrintPages(results, project) {
             <li>Pin/stake the grid as required, then place and compact fill up to ${fillTarget}.</li>
           </ol>
           ${staggerNote ? `<div class="cutplan-print-page__stagger">${escapeHtml(staggerNote)}</div>` : ""}
-          <div class="cutplan-print-page__body">
+          <div class="cutplan-print-page__body${cols === 1 ? "" : " cutplan-print-page__body--stacked"}">
             ${buildCutPlanSvgMarkup(r.cutPlan, r.w, stripRollNumbers)}
-            <table class="cutplan-print-table">
-              <thead><tr><th>Strip #</th><th>Cut length</th><th>Roll #</th><th>Note</th></tr></thead>
-              <tbody>${rows}</tbody>
-            </table>
+            ${stripTables}
           </div>
+          ${stitchCount ? `<p class="cutplan-print-page__legend">A row in italics is a stitch — a supplementary patch on the same line as the strip above it, starting the figure shown back from the face. Every other row is a straight cut.</p>` : ""}
           ${rollsSection}
         </section>
       `;

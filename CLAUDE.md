@@ -335,6 +335,29 @@ These come from the user directly. Violating them makes output wrong on site.
    the user DROPS has no sheets and could never claim a square of anything, so
    after an import the one move available for closing a gap did nothing. Its seed
    now stands in as a sheet of no length.
+13a. **The print paths have to be looked at, as PDFs, on paper sizes.** Chromium
+   renders them from the same DOM with `@media print`, so anything not explicitly
+   hidden comes out as page one — the product list and project details panel, a
+   form full of empty inputs and an "+ Add product" button, printed at the front
+   of the cut plan, the sequence, the roll schedule AND the labels until it was
+   added to the hidden list. Three more things that only show up on paper:
+   - **"One page per lift" has to be measured, not asserted.** 41 strips plus 13
+     stitches is 54 rows; in one column that is a metre and a half of paper and
+     the sheet ran to five pages, the plan alone at the top of the first and a
+     column of numbers beside a blank half-page on the rest. Under the plan an A4
+     page takes about twenty rows, so the list goes into two or three balanced
+     columns — split by ROW, not by strip, since a strip with a stitch is two
+     rows and splitting by strip left one column half empty and the other over.
+   - **A table that may not wrap must be `table-layout: fixed`.** With `nowrap`
+     cells an auto-layout table takes its min-content width whatever its grid
+     track says: the three columns ran straight over each other and the third
+     was cut off at the edge of the paper. Values hold one line, headings get two.
+   - **Do not reprint the roll schedule on every lift.** Rolls are pooled across
+     lifts, so printing each roll's full card on every sheet that touches it
+     turned three lifts into twenty-four pages, most of them the same cards
+     again. The sheet lists the roll NUMBERS and says where the cutting lists are.
+   Measured on the test wall: cut plan 27 pages → 3, full export 37 → 14,
+   sequence 2 → 1.
 13. **What leaves the app is set out from.** The PDF is a picture of the plan;
    the **cut plan DXF** (`buildCutPlanDxf`, the button under the roll schedule)
    is the plan itself — every strip a closed polyline in the survey coordinates

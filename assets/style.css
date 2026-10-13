@@ -1613,8 +1613,28 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
   padding: 0.2rem 0.5rem; display: inline-block; margin-bottom: 0.6rem;
 }
 .cutplan-print-page__body { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
+/* A long lift puts the plan across the top and the cut list in columns under it — beside a tall
+   single column the plan is squeezed and the list still runs off the page. See
+   buildCutPlanPrintPages, which decides which of the two a sheet gets. */
+.cutplan-print-page__body--stacked { grid-template-columns: minmax(0, 1fr); gap: 0.7rem; }
+.cutplan-print-page__cols { display: grid; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); gap: 0.9rem; align-items: start; }
+/* Three columns on an A4 width is about 57 mm each — enough for the numbers, not enough for the
+   note at full size, which clipped it to "Stit…". Set smaller rather than wrapped: a row that
+   wraps is what pushed the sheet onto a second page in the first place. */
+.cutplan-print-page__cols.is-tight .cutplan-print-table { font-size: var(--fs-xs); }
+.cutplan-print-page__cols.is-tight .cutplan-print-table th,
+.cutplan-print-page__cols.is-tight .cutplan-print-table td { padding: 0.22rem 0.35rem; }
+.cutplan-print-page__body--stacked .cutplan-print-page__plan { max-height: 62mm; }
 .cutplan-print-page__plan { width: 100%; height: auto; max-height: 70mm; border: 1px solid var(--line); border-radius: var(--radius); }
-.cutplan-print-table { width: 100%; border-collapse: collapse; font-size: var(--fs-base); }
+/* FIXED layout, or the columns do not hold. With nowrap cells, an auto-layout table takes its
+   min-content width no matter what its container says — so in a three-column sheet each table ran
+   over the next one and the third was cut off at the edge of the paper. Fixed makes the declared
+   widths the ones that count; every value in here is short by construction. */
+.cutplan-print-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: var(--fs-base); }
+.cutplan-print-table th:nth-child(1), .cutplan-print-table td:nth-child(1) { width: 20%; }
+.cutplan-print-table th:nth-child(2), .cutplan-print-table td:nth-child(2) { width: 30%; }
+.cutplan-print-table th:nth-child(3), .cutplan-print-table td:nth-child(3) { width: 22%; }
+.cutplan-print-table th:nth-child(4), .cutplan-print-table td:nth-child(4) { width: 28%; }
 .cutplan-print-table th, .cutplan-print-table td {
   text-align: left;
   padding: 0.3rem 0.6rem;
@@ -1624,6 +1644,14 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
 }
 .cutplan-print-table th { text-transform: uppercase; font-size: var(--fs-xs); letter-spacing: 0.05em; color: var(--ink-muted); }
 .cutplan-print-table tr.is-stitch td { color: var(--accent-strong); font-style: italic; }
+/* One line per row, in every column: a wrapped "10.9 m" or a four-line note is what turned a
+   one-page sheet into two. Every cell on this table is short by construction — see the print row
+   builder, which writes the stitch note as "Stitch −10.4 m". */
+/* The VALUES hold one line; the headings are allowed two. "Cut length" is wider than the column it
+   labels, and held on one line it printed straight over the heading next to it. */
+.cutplan-print-table td { white-space: nowrap; }
+.cutplan-print-table th { white-space: normal; line-height: 1.15; vertical-align: bottom; }
+.cutplan-print-page__legend { font-size: var(--fs-xs); color: var(--ink-muted); margin: 0.45rem 0 0; }
 
 .cutplan-print-page__rolls { margin-top: 0.9rem; }
 .cutplan-print-page__rolls h4 {
@@ -1631,6 +1659,13 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
   color: var(--ink-muted); margin: 0 0 0.5rem;
 }
 .cutplan-print-page__rolls .roll-card { margin-bottom: 0.5rem; break-inside: avoid; }
+.cutplan-print-page__rollline { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin: 0; }
+.cutplan-print-page__rollno {
+  font-family: var(--font-mono); font-size: var(--fs-sm); font-weight: 700;
+  border: 1px solid var(--line-strong); border-radius: var(--radius);
+  padding: 0.05rem 0.4rem; background: var(--surface-2);
+}
+.cutplan-print-page__rollnote { font-size: var(--fs-xs); color: var(--ink-muted); margin-left: 0.4rem; }
 
 .extents-badge {
   flex: none;
@@ -1880,7 +1915,13 @@ body.show-help .liner-head { margin-bottom: 1.4rem; }
     --critical-tint: #f6dfdb !important;
   }
 
-  .titleblock, .panel--settings, .panel--summary, .panel__headrow, .sequence-controls, .foot, #takeoffView { display: none !important; }
+  /* .panel--products-full is the product list and project details at the top of the screen. It is a
+     form — live number boxes, an empty date picker, "+ Add product" — and it was printing as page
+     ONE of every PDF the app produces: the cut plan sheets, the sequence, the roll schedule and the
+     labels all opened on a page of blank input fields. The sheets below carry the project name and
+     the product spec in their own headings, which is what a printed sheet needs. */
+  .titleblock, .panel--products-full, .panel--settings, .panel--summary, .panel__headrow,
+  .sequence-controls, .foot, #takeoffView { display: none !important; }
   body { background: #fff; }
   .layout { grid-template-columns: 1fr; padding: 0; max-width: none; }
   .panel--lifts { border: none; box-shadow: none; padding: 0; }
@@ -1944,7 +1985,10 @@ body.show-help .liner-head { margin-bottom: 1.4rem; }
 .roll-label__num { font-family: var(--font-mono); font-weight: 700; font-size: var(--fs-xl); line-height: 1.1; }
 .roll-label__len { font-size: var(--fs-xs); color: #555; margin: 0.1rem 0 0.35rem; }
 .roll-label__pieces { font-family: var(--font-mono); font-size: var(--fs-micro); list-style: none; margin: 0; padding: 0; line-height: 1.35; }
+/* The length never breaks away from its number: on a label narrow enough to wrap, "10.7 m" was
+   splitting across two lines with the "m" on its own. The description may wrap; the figure may not. */
 .roll-label__pieces li { display: flex; justify-content: space-between; gap: 0.4rem; }
+.roll-label__pieces li > :last-child { white-space: nowrap; flex: none; }
 
 .full-export-print { display: none; }
 .export-sheet { break-after: page; padding: 0 0 1rem; }
@@ -1954,10 +1998,13 @@ body.show-help .liner-head { margin-bottom: 1.4rem; }
   border-bottom: 1px solid var(--line); padding-bottom: 0.5rem; margin: 0 0 1rem;
 }
 .export-sheet__meta { font-size: var(--fs-sm); color: var(--ink-muted); margin: -0.6rem 0 1rem; }
-.export-sheet__stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.8rem; margin-bottom: 1.5rem; }
+/* minmax(0, 1fr), not 1fr: a plain 1fr track will not shrink below its content, and "1,525.55 m²"
+   set in mono at --fs-lg is wider than a third of an A4 page — so the third card hung off the edge
+   of the paper on the first page of every full export. */
+.export-sheet__stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.8rem; margin-bottom: 1.5rem; }
 .export-sheet__stats div { border: 1px solid var(--line); border-radius: var(--radius); padding: 0.6rem 0.8rem; }
 .export-sheet__stats dt { font-size: var(--fs-xs); text-transform: uppercase; color: var(--ink-muted); letter-spacing: 0.04em; }
-.export-sheet__stats dd { font-family: var(--font-mono); font-size: var(--fs-lg); margin: 0.2rem 0 0; }
+.export-sheet__stats dd { font-family: var(--font-mono); font-size: var(--fs-md); margin: 0.2rem 0 0; overflow-wrap: anywhere; }
 .export-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
 .export-table th, .export-table td {
   text-align: left; padding: 0.3rem 0.5rem; border-bottom: 1px solid var(--line);
