@@ -6720,11 +6720,13 @@ function annotateFaceLine(svg, facePts, W, H, projectedPts = []) {
   const pts = clean(facePts);
   if (pts.length < 2) return;
 
-  // Where the face had to be projected past its surveyed ends so strips could reach a corner jutting
-  // beyond it. Drawn exactly like the surveyed run: one solid blue face line, never dashed. It was
-  // dashed once, to say "projected, not surveyed" — the user's instruction is that the face reads as
-  // one line, so the distinction comes out. The dashed line on these diagrams is the extents
-  // boundary and nothing else.
+  /* Where the face had to be projected past its surveyed ends so strips could reach a corner jutting
+   * beyond it. Drawn exactly like the surveyed run — the user's instruction is that the face reads
+   * as ONE line, so "projected, not surveyed" is not a distinction this drawing makes.
+   *
+   * Both are red and dashed now (asked for). The extents boundary is also dashed, which is why the
+   * two patterns differ: the boundary is near-black at 7,4 and this is red at 9,5. */
+  const FACE_DASH = "9,5";
   projectedPts.forEach((span) => {
     const ext = clean(span);
     if (ext.length < 2) return;
@@ -6733,7 +6735,8 @@ function annotateFaceLine(svg, facePts, W, H, projectedPts = []) {
     extLine.setAttribute("fill", "none");
     extLine.setAttribute("stroke", "var(--face-line)");
     extLine.setAttribute("stroke-width", "3");
-    extLine.setAttribute("stroke-linecap", "round");
+    extLine.setAttribute("stroke-dasharray", FACE_DASH);
+    extLine.setAttribute("stroke-linecap", "butt");
     extLine.setAttribute("stroke-linejoin", "round");
     svg.appendChild(extLine);
   });
@@ -6741,14 +6744,14 @@ function annotateFaceLine(svg, facePts, W, H, projectedPts = []) {
   const line = document.createElementNS(ns, "polyline");
   line.setAttribute("points", pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" "));
   line.setAttribute("fill", "none");
-  // Solid and heavier than the dashed extents outline it sits on top of — this is the one line on
-  // the diagram the strips are actually cut square to, so it has to be separable from the boundary
-  // at a glance rather than reading as just another edge of the same shape. Its own colour, not the
-  // strip green: against a diagram already made of green and clay strips, a green line reads as part
-  // of the fill rather than as a reference line.
+  // Red, dashed and heavier than anything else on the drawing — this is the one line the strips are
+  // actually cut square to, and it has to be separable at a glance from both the strips it crosses
+  // and the extents boundary it sits on top of. Its own colour, never a strip colour: a line in the
+  // fill's own colour reads as fill.
   line.setAttribute("stroke", "var(--face-line)");
   line.setAttribute("stroke-width", "3");
-  line.setAttribute("stroke-linecap", "round");
+  line.setAttribute("stroke-dasharray", FACE_DASH);
+  line.setAttribute("stroke-linecap", "butt");
   line.setAttribute("stroke-linejoin", "round");
   svg.appendChild(line);
 
@@ -6772,7 +6775,7 @@ function annotateFaceLine(svg, facePts, W, H, projectedPts = []) {
   label.setAttribute("stroke", "var(--surface)");
   label.setAttribute("stroke-width", "3");
   label.setAttribute("stroke-linejoin", "round");
-  label.textContent = "FACE — STRIPS SQUARE TO THIS LINE";
+  label.textContent = "FACE OF WALL";
   svg.appendChild(label);
 }
 
@@ -8027,6 +8030,8 @@ function render3D(results) {
   const inkMuted = style.getPropertyValue("--ink-muted").trim();
   const accentPop = style.getPropertyValue("--accent-pop").trim();
   const inkOnAccent = style.getPropertyValue("--ink-on-accent").trim();
+  const accent = style.getPropertyValue("--accent").trim();
+  const clay = style.getPropertyValue("--clay").trim();
 
   ctx.font = "11px " + (style.getPropertyValue("--font-mono").trim() || "monospace");
   ctx.textBaseline = "middle";
@@ -8054,16 +8059,22 @@ function render3D(results) {
     ctx.beginPath();
     screenPts.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
     ctx.closePath();
-    // The spotlit lift always gets the same solid, opaque highlight fill — deliberately ignoring the
-    // alternating-band alpha (0.32 on "alt" lifts) and the installed/pending tint below, both of which
-    // exist to tell neighbouring bland lifts apart from each other, not to compete with "this is the
-    // one you're looking at." One consistent loud colour, at full strength, every time.
-    ctx.fillStyle = isHovered ? accentPop : lift.installed ? goodTint : lineStrong;
-    ctx.globalAlpha = isHovered ? 0.82 : (alt ? 0.32 : 0.96) * (dim ? 0.22 : 1);
+    /* ALTERNATING BLUE AND CLAY, the same two the cut plan bands its strips with — asked for, and
+     * for the same reason: thirty-six grey planes stacked a few pixels apart are one grey mass, and
+     * which edge belongs to which lift is unreadable. Alternating hue separates every neighbour.
+     *
+     * Installed still wins over the alternation. That colour is a fact about the job rather than a
+     * way of telling two layers apart, and it is the same --good green the sequence and the roll
+     * schedule use for "done".
+     *
+     * The spotlit lift ignores all of it — one consistent loud colour at full strength, every time. */
+    const band = alt ? clay : accent;
+    ctx.fillStyle = isHovered ? accentPop : lift.installed ? goodTint : band;
+    ctx.globalAlpha = isHovered ? 0.82 : (lift.installed ? 0.96 : 0.3) * (dim ? 0.3 : 1);
     ctx.fill();
     ctx.globalAlpha = 1;
-    ctx.strokeStyle = isHovered ? accentPop : lift.installed ? good : graphite;
-    ctx.lineWidth = isHovered ? 2.75 : alt ? 1 : 2.25;
+    ctx.strokeStyle = isHovered ? accentPop : lift.installed ? good : band;
+    ctx.lineWidth = isHovered ? 2.75 : 1.4;
     ctx.globalAlpha = isHovered ? 1 : dim ? 0.3 : 1;
     ctx.stroke();
     ctx.globalAlpha = 1;
@@ -8072,88 +8083,34 @@ function render3D(results) {
 
   view3DLastRender = { anchors };
 
-  // Each label sits right at its own lift's corner — no separate list, no leader line, so a label
-  // always visibly IS its grid rather than pointing at it from across the canvas. That works great
-  // when lifts are all roughly the same shape (corners line up in a predictable column) but real
-  // sites have lifts of genuinely different face lengths/shapes, whose corners scatter unpredictably
-  // — showing every label at once then just piles them into an unreadable mess. So: actually measure
-  // whether the resting-state labels would overlap each other, and if enough of them would, stop
-  // showing permanent labels altogether and rely purely on the hover/tap spotlight below — one label
-  // at a time is never ambiguous, no matter how scattered the shapes are.
+  /* ONE LABEL, ON THE LIFT UNDER THE POINTER. NOTHING OTHERWISE.
+   *
+   * Every lift used to carry its RL at its own corner, with a rule that hid them all once enough of
+   * them collided. On a 36-lift wall that rule was the one doing the work and the labels it did
+   * show were a thicket — levels are a few hundred millimetres apart, which at a shallow pitch is a
+   * few pixels, so they stacked on top of each other and over the drawing. Asked for directly, and
+   * right: the RL appears when you hover that level and not before. The alternating blue and clay
+   * bands are what separate the levels at rest now; the label answers "which one is this".
+   */
   const monoFont = style.getPropertyValue("--font-mono").trim() || "monospace";
   ctx.font = "11px " + monoFont;
-  const labelBoxes = anchors.map(({ lift, anchorX, anchorY }) => {
-    const w = ctx.measureText(`RL ${lift.rlLabel}`).width;
-    return { left: anchorX - 6 - w, right: anchorX - 6, top: anchorY - 15, bottom: anchorY - 2 };
-  });
 
-  /* MOVE THEM APART BEFORE GIVING UP ON THEM.
-   *
-   * Lifts in a stack are a few hundred millimetres apart, and at a shallow pitch that is a few
-   * pixels — so "RL 60.00", "RL 60.60" and "RL 61.20" were drawn one on top of another and none of
-   * the three could be read. The rule underneath used to be the only answer: enough collisions and
-   * every resting label disappears, leaving nothing until you hover.
-   *
-   * A label does not have to sit exactly on its corner to belong to it, so each one is nudged UP
-   * until it is clear of the ones already placed (upwards, because a label sits above its own
-   * corner already, and because the stack grows upwards). Only then, if they still cannot be
-   * separated, does the all-or-nothing rule take over.
-   */
-  const LABEL_H = 13;
-  const order = labelBoxes.map((box, i) => ({ i, box })).sort((a, b) => b.box.top - a.box.top);
-  const placedBoxes = [];
-  const shiftY = new Array(labelBoxes.length).fill(0);
-  order.forEach(({ i, box }) => {
-    let top = box.top;
-    for (let guard = 0; guard < 40; guard++) {
-      const clash = placedBoxes.find(
-        (p) => box.left < p.right && box.right > p.left && top < p.bottom && top + LABEL_H > p.top
-      );
-      if (!clash) break;
-      top = clash.top - LABEL_H - 2;
-    }
-    shiftY[i] = top - box.top;
-    placedBoxes.push({ left: box.left, right: box.right, top, bottom: top + LABEL_H });
-  });
-
-  let overlaps = 0;
-  for (let i = 0; i < placedBoxes.length && overlaps <= 2; i++) {
-    for (let j = i + 1; j < placedBoxes.length; j++) {
-      const a = placedBoxes[i], b = placedBoxes[j];
-      if (a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top) overlaps++;
-    }
-  }
-  const showPermanentLabels = overlaps <= 2;
-
-  // Permanent (non-hovered) labels still sit right at their own lift's corner — that's fine for
-  // telling bland, similarly-toned neighbours apart. The spotlit one is a different job: whichever
-  // lift you're on, its label should be the one thing you don't have to hunt for, so it's pinned to
-  // a fixed spot (top-left) instead of wherever that lift's corner happens to have landed, and drawn
-  // as a solid badge instead of small text — same treatment as the shape's own solid highlight fill.
-  const drawLabel = (lift, anchorX, anchorY, dim, shift) => {
-    const dy = shift || 0;
+  // On the lift itself, at the corner — so it names the level the pointer is on, not a level the
+  // reader has to match up — and again as a badge in the corner of the canvas, which is the one
+  // place it can always be found however the view is turned.
+  const drawLabel = (lift, anchorX, anchorY) => {
     ctx.font = "11px " + monoFont;
-    // Moved off its corner to clear a neighbour, it gets a hairline back to the corner it names —
-    // a label floating over a stack of lifts otherwise belongs to whichever one you guess.
-    if (Math.abs(dy) > 3) {
-      ctx.strokeStyle = lift.installed ? good : inkMuted;
-      ctx.globalAlpha = dim ? 0.2 : 0.5;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(anchorX - 4, anchorY - 4);
-      ctx.lineTo(anchorX - 4, anchorY - 4 + dy);
-      ctx.stroke();
-    }
-    ctx.globalAlpha = dim ? 0.4 : 1;
+    ctx.textAlign = "right";
     ctx.fillStyle = lift.installed ? good : ink;
-    ctx.fillText(`RL ${lift.rlLabel}`, anchorX - 6, anchorY - 6 + dy);
-    ctx.globalAlpha = 1;
+    ctx.strokeStyle = style.getPropertyValue("--surface").trim();
+    ctx.lineWidth = 3;
+    ctx.lineJoin = "round";
+    ctx.strokeText(`RL ${lift.rlLabel}`, anchorX - 6, anchorY - 6);
+    ctx.fillText(`RL ${lift.rlLabel}`, anchorX - 6, anchorY - 6);
   };
-  if (showPermanentLabels) {
-    anchors.forEach(({ lift, anchorX, anchorY }, i) => {
-      const isHovered = spotlit && lift.rl === view3DHoveredRL;
-      if (!isHovered) drawLabel(lift, anchorX, anchorY, spotlit, shiftY[i]);
-    });
+  if (spotlit) {
+    const onLift = anchors.find((a) => a.lift.rl === view3DHoveredRL);
+    if (onLift) drawLabel(onLift.lift, onLift.anchorX, onLift.anchorY);
   }
   if (spotlit) {
     const hovered = anchors.find((a) => a.lift.rl === view3DHoveredRL);
@@ -8187,7 +8144,7 @@ function render3D(results) {
   ctx.fillStyle = inkMuted;
   ctx.textAlign = "left";
   ctx.font = "10px " + monoFont;
-  const hint = spotlit ? "" : !showPermanentLabels ? " · hover a level to see its RL" : lifts.length > 8 ? " · hover a level to isolate it" : "";
+  const hint = spotlit ? "" : " · hover a level for its RL";
   ctx.fillText(`${lifts.length} lifts · RL ${lifts[0].rlLabel} → ${lifts[lifts.length - 1].rlLabel}${hint}`, 12, H - 14);
 
   syncCompass();
@@ -10554,6 +10511,97 @@ function dxfOpenPaths(text) {
 }
 
 /**
+ * THE WELD LINES ON THEIR OWN, STRAIGHT OUT OF CAD.
+ *
+ * The layout import below reads a drawing that holds panel boundaries AND the sheets inside them,
+ * and works out the panelling from the sheets. That is the file this job happened to have. The
+ * drawing a designer actually marks up is simpler: the lines the liner is cut and welded on, and
+ * nothing else — open polylines, no sheeting to infer anything from.
+ *
+ * So this reads every path in the file as a weld line, closed or open, and nothing as anything
+ * else. No direction is guessed from it, because a weld line says where the liner stops, not which
+ * way the rolls run.
+ */
+function importWeldLinesDxf(text) {
+  const paths = dxfPaths3D(text);
+  const lines = paths
+    // A closed shape is a line that comes back to where it started: the loop is the weld.
+    .map((p) => (p.closed ? p.pts.concat([p.pts[0]]) : p.pts))
+    .filter((pts) => pts.length >= 2);
+  let length = 0;
+  lines.forEach((pts) => {
+    for (let i = 0; i + 1 < pts.length; i++) length += Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
+  });
+  return { lines, length, closed: paths.filter((p) => p.closed).length };
+}
+
+/**
+ * ONE PANEL IN EACH REGION THE WELD LINES MAKE.
+ *
+ * Weld lines alone are half the job: the engine needs a panel dropped in each region they close off
+ * before it lays anything. Doing that by hand on a cell with eight regions is eight clicks and a
+ * guess at each direction, so the import does it — the same flood fill the engine itself uses to
+ * find a region, then a panel seeded at the point FURTHEST INSIDE each one (a centroid lands
+ * outside an L-shaped region and seeds the neighbour instead).
+ *
+ * Each panel is left with no bearing on purpose. The ground's own fall is a far better first guess
+ * than anything a weld line implies, and the arrows are there to be corrected.
+ */
+function panelsFromWeldRegions(surface, weldLines, minArea) {
+  if (!surface || !surface.triangles || !surface.triangles.length) return [];
+  const tin = makeTinIndex(surface.triangles);
+  const R = rasterCell(tin, weldLines, PANEL_RASTER_M);
+  const claimed = new Uint8Array(R.gw * R.gh);
+  const floor = minArea > 0 ? minArea : 25;
+  const out = [];
+  for (let c = 0; c < R.ground.length; c++) {
+    if (!R.ground[c] || R.wall[c] || claimed[c]) continue;
+    const i0 = c % R.gw, j0 = (c - i0) / R.gw;
+    const cells = floodRegion(R, { x: R.xOf(i0), y: R.yOf(j0) }, claimed);
+    if (!cells || !cells.size) { claimed[c] = 1; continue; }
+    cells.forEach((k) => { claimed[k] = 1; });
+    const area = cells.size * R.cell * R.cell;
+    if (area < floor) continue;
+
+    /* Deepest cell in the region, by eroding it from its own edge — the same trick the gap sweep
+     * uses to measure a patch's thickness. One pass in, one layer at a time; whatever is still
+     * standing at the end is the middle. */
+    let frontier = [];
+    const depth = new Map();
+    cells.forEach((k) => {
+      const i = k % R.gw, j = (k - i) / R.gw;
+      const edge = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([di, dj]) => {
+        const ni = i + di, nj = j + dj;
+        return ni < 0 || nj < 0 || ni >= R.gw || nj >= R.gh || !cells.has(nj * R.gw + ni);
+      });
+      if (edge) { depth.set(k, 1); frontier.push(k); }
+    });
+    let layer = 1, deepest = frontier[0];
+    while (frontier.length && layer < 500) {
+      const next = [];
+      frontier.forEach((k) => {
+        const i = k % R.gw, j = (k - i) / R.gw;
+        [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([di, dj]) => {
+          const ni = i + di, nj = j + dj;
+          if (ni < 0 || nj < 0 || ni >= R.gw || nj >= R.gh) return;
+          const nk = nj * R.gw + ni;
+          if (!cells.has(nk) || depth.has(nk)) return;
+          depth.set(nk, layer + 1);
+          next.push(nk);
+        });
+      });
+      if (next.length) deepest = next[Math.floor(next.length / 2)];
+      frontier = next;
+      layer++;
+    }
+    if (deepest === undefined) continue;
+    const di = deepest % R.gw, dj = (deepest - di) / R.gw;
+    out.push({ seed: { x: R.xOf(di), y: R.yOf(dj) }, bearing: null, sheets: [], sheetCount: 0, areaPlan: area });
+  }
+  return out.sort((a, b) => b.areaPlan - a.areaPlan);
+}
+
+/**
  * READ THE PANELLING OUT OF CAD INSTEAD OF REDRAWING IT.
  *
  * The layout usually exists already — the user's own LINER_LAYOUT.dxf had the four panel
@@ -10770,6 +10818,49 @@ function insidePoint(poly) {
 }
 
 {
+  const weldInput = document.getElementById("panelWeldImportInput");
+  if (weldInput) {
+    weldInput.addEventListener("change", async (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = "";
+      if (!file) return;
+      if (!baseGridSurface) {
+        panelEditorHint("Upload the cell surface first — weld lines need the ground they sit on.", "error");
+        return;
+      }
+      try {
+        const text = await file.text();
+        const got = importWeldLinesDxf(text);
+        if (!got.lines.length) {
+          panelEditorHint(
+            "No lines in that DXF. This one wants the weld lines themselves — polylines along where the liner is cut and welded, drawn on the cell.",
+            "error"
+          );
+          return;
+        }
+        /* The lines REPLACE what was drawn rather than adding to it. Importing a marked-up drawing
+         * on top of a half-drawn layout leaves a cell divided by two sets of lines that were never
+         * meant to be seen together, and no way to tell which is which. Undo puts it back. */
+        panelEditor.weldLines = got.lines;
+        panelEditor.panels = panelsFromWeldRegions(baseGridSurface, got.lines);
+        panelEditorSave();
+        panelEditorArm("idle");
+        const n = panelEditor.panels.length;
+        panelEditorHint(
+          `${got.lines.length} weld line${got.lines.length === 1 ? "" : "s"} from ${file.name}, ${fmt.int(got.length)} m in all. ` +
+            (n
+              ? `They close the cell into ${n} region${n === 1 ? "" : "s"}, and a panel is in each one pointed down its own ground — ` +
+                `nothing in a weld line says which way the rolls run, so check the arrows and set any that are wrong with Add a panel.`
+              : `No region closed off by them is big enough to panel — check the lines reach the edge of the cell, or drop panels in by hand.`),
+          "warn"
+        );
+        renderPanelEditor();
+      } catch (err) {
+        panelEditorHint("Couldn't read that file: " + (err && err.message ? err.message : "unknown error"), "error");
+      }
+    });
+  }
+
   const input = document.getElementById("panelImportInput");
   if (input) {
     input.addEventListener("change", async (e) => {

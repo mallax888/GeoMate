@@ -411,19 +411,11 @@
               </div>
               <div class="cutplan-method__col">
                 <span class="cutplan-method__coltitle">Layout</span>
-                <!-- Wall or floor for the job. Asked here, next to the upload, because that is when
-                     it is known; it stays on afterwards so it can be changed without loading the
-                     file again. The select is the state every other part of the app already reads
-                     (settingsInputs, save/load, reset) — the buttons drive it. -->
-                <div id="dxfTypePrompt" class="cutplan-typeprompt">
-                  <span class="cutplan-typeprompt__q">Wall or floor?</span>
-                  <button type="button" class="btn btn--ghost" data-set-type="wall" aria-pressed="true">Wall</button>
-                  <button type="button" class="btn btn--ghost" data-set-type="floor" aria-pressed="false">Floor</button>
-                  <select id="reinforcementType" class="sr-only" tabindex="-1" aria-hidden="true">
-                    <option value="wall">Wall</option>
-                    <option value="floor">Floor</option>
-                  </select>
-                </div>
+                <!-- Wall or floor used to live here, beside the upload, "because that is when it is
+                     known". It now sits OUTSIDE the folding block (below it), because this card
+                     folds away the moment a file is read and that answer has to stay changeable
+                     without loading the file again — which is what it always said it was for. -->
+                <p class="generator__hint">Wall or floor is set under this card — it stays on screen once your lifts are loaded.</p>
                 <div class="cutplan-upload cutplan-upload--centreline">
                   <label class="btn btn--ghost btn--upload">
                     Upload road centrelines DXF
@@ -517,6 +509,19 @@
           </div>
         </div>
       </details>
+      <!-- Outside the folding block on purpose: this is a property of the JOB, not of the upload,
+           and it has to stay reachable once the cards above have folded away. The select is the
+           state every other part of the app reads (settingsInputs, save/load, reset) — the buttons
+           drive it. -->
+      <div id="dxfTypePrompt" class="cutplan-typeprompt">
+        <span class="cutplan-typeprompt__q">Wall or floor?</span>
+        <button type="button" class="btn btn--ghost" data-set-type="wall" aria-pressed="true">Wall</button>
+        <button type="button" class="btn btn--ghost" data-set-type="floor" aria-pressed="false">Floor</button>
+        <select id="reinforcementType" class="sr-only" tabindex="-1" aria-hidden="true">
+          <option value="wall">Wall</option>
+          <option value="floor">Floor</option>
+        </select>
+      </div>
       <div class="cutplan-list-head">
         <p id="cutPlanEmpty" class="empty-state"><svg class="empty-state__icon" viewBox="0 0 16 16" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 13 8 3l6 10z"/><path d="M2 9.2h12" stroke-dasharray="1.6 1.8"/></svg><br>No extents loaded yet — upload a DXF to see per-strip cut lengths.</p>
         <button id="printCutPlanBtn" class="btn btn--ghost" type="button" hidden>Print / save PDF (one page per lift)</button>
@@ -740,9 +745,16 @@
           <button id="panelSeedBtn" class="btn btn--ghost" type="button">Add a panel</button>
           <button id="panelUndoBtn" class="btn btn--ghost" type="button">Undo</button>
           <button id="panelClearBtn" class="btn btn--ghost btn--danger" type="button">Clear all</button>
-          <!-- The panelling usually already exists in CAD. Reading it beats redrawing it. -->
+          <!-- The panelling usually already exists in CAD. Reading it beats redrawing it.
+               Two different drawings, so two buttons: WELD LINES is the one a designer marks up —
+               the lines the liner is cut on and nothing else — and LAYOUT is the full drawing with
+               every sheet in it, which the panelling can be read back out of. -->
+          <label class="btn btn--primary btn--upload">
+            Import weld lines (DXF)
+            <input type="file" id="panelWeldImportInput" accept=".dxf" hidden />
+          </label>
           <label class="btn btn--ghost btn--upload">
-            Import layout DXF
+            Import full layout DXF
             <input type="file" id="panelImportInput" accept=".dxf" hidden />
           </label>
         </div>

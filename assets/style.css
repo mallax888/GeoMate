@@ -79,10 +79,11 @@
   --accent: #016fa2;
   --accent-strong: #01557c;
   --accent-tint: #e2f0f8;
-  /* The cut-plan face reference line. It has to sit outside the strip palette — a line in the same
-     colour as the strips reads as fill, not as a reference. That used to mean "not green"; with the
-     strips in T+T blue it means a much darker navy, heavy enough to read as a datum under them. */
-  --face-line: #0b3a66;
+  /* The face of wall, red and dashed — asked for directly, and it is the convention the drawings it
+     sits beside already use. It has to sit outside the strip palette (a line in the strips' own
+     colour reads as fill, not as a reference) and outside the extents boundary's dash, which is
+     near-black at 7,4; this one is red at 9,5, so the two never read as the same line. */
+  --face-line: #d2271c;
   /* Gap-filling stitch strips at a corner — outside the green/clay strip run so a narrow piece
      closing a lane never reads as just another strip in the sequence. */
   --stitch: #7b3fb5;
@@ -135,7 +136,7 @@
   --accent: #2f9fd4;
   --accent-strong: #7cc6e9;
   --accent-tint: #07293b;
-  --face-line: #c8dcff;
+  --face-line: #ff7b6f;
   --stitch: #b98ae8;
   --stitch-tint: #2a1f38;
   --clay: #ffb238;
@@ -1318,7 +1319,9 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
   align-items: center;
   gap: 0.5rem;
   flex-wrap: wrap;
-  margin: 0;
+  /* It sits under the load block now, between the folded summary and the cut plan, so it carries
+     its own breathing room instead of inheriting a card's. */
+  margin: 0 0 0.8rem;
   padding: 0.35rem 0;
   width: fit-content;
   max-width: 100%;
@@ -1737,7 +1740,12 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
 }
 .view3d-legend__swatch { width: 0.7rem; height: 0.7rem; border-radius: var(--radius); flex: none; }
 .view3d-legend__swatch--installed { background: var(--good-tint); border: 1px solid var(--good); }
-.view3d-legend__swatch--pending { background: var(--line-strong); border: 1px solid var(--graphite); }
+/* Pending levels alternate blue and clay so neighbours separate (see render3D), so the legend shows
+   both halves of that pair rather than a grey square that appears nowhere on the drawing. */
+.view3d-legend__swatch--pending {
+  background: linear-gradient(135deg, var(--accent) 0 50%, var(--clay) 50% 100%);
+  border: 1px solid var(--line-strong);
+}
 .view3d-canvas {
   width: 100%;
   height: auto;
