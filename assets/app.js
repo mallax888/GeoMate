@@ -9601,12 +9601,43 @@ function bestBaseGridBearing(triangles, poly, rollWidth, minOverlap, maxPanelLen
 /* --- Base geogrid: the tab ------------------------------------------------------------------- */
 
 const baseGridInputs = {
+  product: document.getElementById("baseGridProduct"),
   rollWidth: document.getElementById("baseGridRollWidth"),
   overlap: document.getElementById("baseGridOverlap"),
   rollLength: document.getElementById("baseGridRollLength"),
   bearing: document.getElementById("baseGridBearing"),
   weldRate: document.getElementById("baseGridWeldRate"),
 };
+
+/* TWO PRODUCTS, OPPOSITE RULES, AND THE TAB WAS APPLYING ONE RULE TO BOTH.
+ *
+ * A base geogrid is lapped: neighbouring rolls overlap by the specified minimum and the lap is the
+ * joint. A landfill liner is NOT lapped — the rolls butt and the butt joint is welded, which is the
+ * whole reason there is a weld at all. Laid at a lap this tab was pitching liner runs 300 mm tight,
+ * reporting 18,434 m2 of material over a 17,301 m2 cell: 6.5% of lap allowance that a welded liner
+ * does not carry, and calling the joint between two rolls "lap" when it is a weld.
+ *
+ * So the lap is a property of the PRODUCT, not of the tab. On a liner it is zero and cannot be set.
+ */
+function baseGridIsLiner() {
+  return ((baseGridInputs.product && baseGridInputs.product.value) || "liner") === "liner";
+}
+/** Metres of lap between neighbouring rolls: whatever is set for geogrid, always 0 for a liner. */
+function baseGridLap() {
+  if (baseGridIsLiner()) return 0;
+  return (parseFloat(baseGridInputs.overlap.value) || 0) / 1000;
+}
+/** The overlap box is meaningless on a welded liner, so it is shown as such rather than ignored. */
+function syncBaseGridProduct() {
+  const field = document.getElementById("baseGridOverlapField");
+  const liner = baseGridIsLiner();
+  if (baseGridInputs.overlap) baseGridInputs.overlap.disabled = liner;
+  if (field) {
+    field.classList.toggle("is-disabled", liner);
+    const label = field.querySelector("span");
+    if (label) label.textContent = liner ? "Overlap — none, it is welded" : "Minimum overlap";
+  }
+}
 
 /* The surface stays in memory for the session rather than in localStorage: a cell TIN is megabytes
  * of triangles and would blow the storage quota that every saved project shares. Re-upload after a
@@ -9626,7 +9657,9 @@ function baseGridStatus(message, kind) {
 
 function resetBaseGridInputs() {
   baseGridInputs.rollWidth.value = "7";
+  if (baseGridInputs.product) baseGridInputs.product.value = "liner";
   baseGridInputs.overlap.value = "300";
+  syncBaseGridProduct();
   baseGridInputs.rollLength.value = "100";
   baseGridInputs.bearing.value = "";
   baseGridInputs.weldRate.value = "";
@@ -9716,7 +9749,7 @@ function renderBaseGrid() {
   }
 
   const w = parseFloat(baseGridInputs.rollWidth.value);
-  const oMin = (parseFloat(baseGridInputs.overlap.value) || 0) / 1000;
+  const oMin = baseGridLap();
   const rollLength = parseFloat(baseGridInputs.rollLength.value) || 0;
   // Blank means "work it out per zone" — see computeCellGridPlan.
   const typed = baseGridInputs.bearing.value.trim();
@@ -10075,11 +10108,20 @@ function panelPlanAsLinerPlan(pp, surface) {
       segments.push({ a: { ...line[i], z: zs[i] }, b: { ...line[i + 1], z: zs[i + 1] }, kind: "weld" });
     }
   });
+  /* The generated welds join the drawn ones in the same list, so the 3D view and the CAD export
+   * draw the whole weld drawing rather than only the part somebody typed in. They carry their own
+   * kind so a reader can still tell which lines were a decision and which were a consequence. */
+  (pp.weldSeamLines || []).forEach((line) => {
+    for (let i = 0; i + 1 < line.length; i++) segments.push({ a: line[i], b: line[i + 1], kind: "seam" });
+  });
+  (pp.weldJoinLines || []).forEach((line) => {
+    for (let i = 0; i + 1 < line.length; i++) segments.push({ a: line[i], b: line[i + 1], kind: "join" });
+  });
   return {
     fromEditor: true,
     zones,
     panels: allPanels,
-    hinges: { segments, length: pp.weldAtLines },
+    hinges: { segments, length: pp.weldAtLines + (pp.seamWeld || 0) + (pp.joinWeld || 0) },
     rollWidth: pp.rollWidth,
     minOverlap: pp.minOverlap,
     surface: pp.surfaceArea3D,
@@ -10206,7 +10248,7 @@ function renderPanelEditor() {
 
   const plan = computePanelPlan(baseGridSurface, panelEditor.weldLines, panelEditor.panels, {
     rollWidth: parseFloat(baseGridInputs.rollWidth.value) || 7,
-    minOverlap: (parseFloat(baseGridInputs.overlap.value) || 0) / 1000,
+    minOverlap: baseGridLap(),
     rollLength: parseFloat(baseGridInputs.rollLength.value) || 0,
   });
   panelEditor.plan = plan;
@@ -10237,6 +10279,12 @@ function renderPanelEditor() {
     g += bare;
     plan.panels.forEach((pan) => pan.runs.forEach((r) => { g += `<polyline points="${pts(r.path)}" class="pe-run"/>`; }));
     plan.infill.forEach((r) => { g += `<polyline points="${pts(r.path)}" class="pe-run"/>`; });
+    /* The generated welds, drawn where they actually fall — between the rolls, not down their
+     * middles. Only on a butted liner: a lapped geogrid has a lap there, not a weld. */
+    if (plan.butted) {
+      (plan.weldSeamLines || []).forEach((line) => { g += `<polyline points="${pts(line)}" class="pe-weld-made"/>`; });
+      (plan.weldJoinLines || []).forEach((line) => { g += `<polyline points="${pts(line)}" class="pe-weld-made pe-weld-made--join"/>`; });
+    }
   }
 
   panelEditor.weldLines.forEach((line) => { g += `<polyline points="${pts(line)}" class="pe-weld"/>`; });
@@ -10275,8 +10323,15 @@ function renderPanelEditor() {
       statsEl.className = bare > 1 ? "export-note is-error" : "export-note";
       statsEl.innerHTML =
         `${plan.panels.length} panel${plan.panels.length === 1 ? "" : "s"}, ${plan.runs} runs, ` +
-        `<strong>${fmt.int(plan.material)} m²</strong> of grid over ${fmt.int(plan.surfaceArea3D)} m² of ground. ` +
-        `Weld: ${fmt.int(plan.weldAtLines)} m on your lines plus ${fmt.int(plan.seam)} m of lap. ` +
+        `<strong>${fmt.int(plan.material)} m²</strong> of ${baseGridIsLiner() ? "liner" : "grid"} over ${fmt.int(plan.surfaceArea3D)} m² of ground. ` +
+        /* A butted liner has no lap, so the joint between two rolls is weld and GeoMate works the
+         * lines out itself; a lapped geogrid has no weld at all and saying "weld" there was simply
+         * wrong. One sentence, two products, and it says which it is. */
+        (plan.butted
+          ? `Weld: <strong>${fmt.int(plan.seamWeld + plan.joinWeld)} m generated</strong> — ${fmt.int(plan.seamWeld)} m of seam between rolls and ${fmt.int(plan.joinWeld)} m of end join` +
+            (plan.weldAtLines > 0 ? `, plus ${fmt.int(plan.weldAtLines)} m on your own lines. ` : ". ")
+          : `Lap: ${fmt.int(plan.seam)} m between neighbouring rolls` +
+            (plan.weldAtLines > 0 ? `, and ${fmt.int(plan.weldAtLines)} m of weld on your lines. ` : ". ")) +
         (plan.offcutPieces ? `${plan.offcutPieces} offcut pieces (${fmt.int(plan.offcutArea)} m²). ` : "") +
         (bare > 1
           ? `<strong>${fmt.int(bare)} m² is inside no panel</strong> — shown in red. A liner cannot have gaps: add a panel there, or move a weld line.`
@@ -11079,7 +11134,7 @@ document.getElementById("baseGridBestBtn").addEventListener("click", () => {
     return;
   }
   const w = parseFloat(baseGridInputs.rollWidth.value);
-  const oMin = (parseFloat(baseGridInputs.overlap.value) || 0) / 1000;
+  const oMin = baseGridLap();
   const rollLength = parseFloat(baseGridInputs.rollLength.value) || 0;
   // Only the base is free to choose — a batter's direction is set by the ground it is on.
   const zones = classifyCellZones(baseGridSurface.triangles);
@@ -11156,6 +11211,16 @@ document.getElementById("baseGridResetBtn").addEventListener("click", () => {
 Object.values(baseGridInputs).forEach((el) => {
   if (el) el.addEventListener("input", renderBaseGrid);
 });
+/* A <select> fires change, not input, in every browser worth supporting — wired separately rather
+ * than relying on the line above, which would leave the product switch doing nothing at all. */
+if (baseGridInputs.product) {
+  baseGridInputs.product.addEventListener("change", () => {
+    syncBaseGridProduct();
+    renderBaseGrid();
+    renderPanelEditor();
+  });
+}
+syncBaseGridProduct();
 
 /**
  * The panel layout as CAD geometry, in the survey coordinates the surface arrived on and at the
@@ -12021,7 +12086,9 @@ function layPanel(tin, R, cells, dir, rollWidth, minOverlap, rollLength) {
   for (let t = tmin + pitch / 2; t <= tmax + 1e-9; t += pitch) ts.push(t);
   if (!ts.length) ts.push((tmin + tmax) / 2);
   if (tmax - ts[ts.length - 1] > pitch * 0.15) ts.push(tmax - pitch * 0.35);
-  for (const t of ts) {
+  ts.sort((a, b) => a - b);
+  for (let band = 0; band < ts.length; band++) {
+    const t = ts[band];
     // Start at the up-slope end of this line across the panel: smallest projection along dir,
     // because dir points the way the roll travels.
     /* A PANEL IS NOT A RECTANGLE, SO ONE LINE ACROSS IT CAN ENTER IT MORE THAN ONCE.
@@ -12058,15 +12125,94 @@ function layPanel(tin, R, cells, dir, rollWidth, minOverlap, rollLength) {
       const r = layStraightRun(tin, inPanel, from, dir, rollLength);
       if (!r) break;
       r.continued = piece > 0;
+      // Which line across the panel this roll sits on, so the joint with its neighbour can be
+      // drawn from the two rolls' own geometry rather than guessed at afterwards.
+      r.band = band;
+      r.t = t;
       runs.push(r);
       if (r.stoppedBy !== "length") break;
-      // Next roll starts one lap back up, so the joint is a weldable overlap and not a butt.
+      /* End of the roll. On a lapped product the next one starts a lap back up the slope; on a
+       * welded liner minOverlap is 0, so it starts exactly where this one stopped and the butt
+       * joint across the roll is a weld — see generatePanelWelds. */
       const e = r.path[r.path.length - 1];
       from = { x: e.x - dir.x * minOverlap, y: e.y - dir.y * minOverlap };
     }
     }
   }
   return runs;
+}
+
+/**
+ * THE WELD LINES, WORKED OUT RATHER THAN ASKED FOR.
+ *
+ * A welded liner does not overlap: roll n occupies its own width and roll n+1 starts where it
+ * stops, so every joint between two rolls is a line both of them share — and that line IS the
+ * weld. There is nothing for a user to draw, because the layout already decides it. Two kinds come
+ * out of one panel:
+ *
+ *   SEAM   — the long joint between neighbouring rolls, which is roll n's own path pushed sideways
+ *            by half a roll width. Trimmed to where the neighbour actually has material, so a seam
+ *            is never drawn running past the end of the roll it is welding to.
+ *   JOIN   — the short joint across the roll where one roll ends and the next carries on, which
+ *            only exists when a run is longer than a roll.
+ *
+ * Panel-to-panel welds are NOT generated here: where two panels run different ways the boundary is
+ * a design decision, not a consequence of the layout, and it comes from the user's own weld lines.
+ */
+function generatePanelWelds(runs, dir, rollWidth) {
+  const perp = { x: -dir.y, y: dir.x };
+  const half = rollWidth / 2;
+  const seams = [];
+  const joins = [];
+  let seamLength = 0, joinLength = 0;
+
+  const byBand = new Map();
+  runs.forEach((r) => {
+    if (!Number.isFinite(r.band)) return;
+    if (!byBand.has(r.band)) byBand.set(r.band, []);
+    byBand.get(r.band).push(r);
+  });
+  const bands = [...byBand.keys()].sort((a, b) => a - b);
+
+  bands.forEach((b, bi) => {
+    const next = byBand.get(bands[bi + 1]);
+    if (!next || bands[bi + 1] !== b + 1) return;   // no neighbour, or a band that laid nothing
+    // Points of the neighbouring band, to test that the seam has material on both sides of it.
+    const theirs = [];
+    next.forEach((r) => r.path.forEach((q) => theirs.push(q)));
+    const nearTheirs = (p) => {
+      for (let k = 0; k < theirs.length; k++) {
+        if (Math.hypot(theirs[k].x - p.x, theirs[k].y - p.y) <= rollWidth * 0.75) return true;
+      }
+      return false;
+    };
+    byBand.get(b).forEach((r) => {
+      let open = null;
+      r.path.forEach((q) => {
+        const p = { x: q.x + perp.x * half, y: q.y + perp.y * half, z: q.z };
+        if (!nearTheirs(p)) { if (open && open.length > 1) seams.push(open); open = null; return; }
+        if (!open) open = [];
+        open.push(p);
+      });
+      if (open && open.length > 1) seams.push(open);
+    });
+  });
+  seams.forEach((line) => {
+    for (let k = 0; k + 1 < line.length; k++) seamLength += Math.hypot(line[k + 1].x - line[k].x, line[k + 1].y - line[k].y);
+  });
+
+  // Across the roll wherever one roll hands over to the next.
+  runs.forEach((r) => {
+    if (!r.continued || !r.path.length) return;
+    const p = r.path[0];
+    joins.push([
+      { x: p.x - perp.x * half, y: p.y - perp.y * half, z: p.z },
+      { x: p.x + perp.x * half, y: p.y + perp.y * half, z: p.z },
+    ]);
+    joinLength += rollWidth;
+  });
+
+  return { seams, joins, seamLength, joinLength };
 }
 
 /**
@@ -12195,11 +12341,16 @@ function computePanelPlan(surface, weldLines, panels, opts) {
     // n runs side by side lap n-1 times, each lap as long as the shorter of the pair.
     let seam = 0;
     for (let k = 0; k + 1 < runs.length; k++) seam += Math.min(runs[k].draped, runs[k + 1].draped);
+    /* The joints as real lines, not just a length — they are the weld drawing, and on a butted
+     * liner they are the ONLY thing holding the cell together, so they go on the plan, in the 3D
+     * view and into the CAD export like any other piece of the design. */
+    const welds = generatePanelWelds(runs, dir, rollWidth);
     out.push({
       ...panel,
       index: idx,
       cells,
       runs,
+      welds,
       dir,
       bearing: ((Math.atan2(dir.x, dir.y) * 180) / Math.PI + 360) % 360,
       areaPlan: cells.size * R.cell * R.cell,
@@ -12377,6 +12528,14 @@ function computePanelPlan(surface, weldLines, panels, opts) {
     seam: out.reduce((s, p) => s + (p.seam || 0), 0),
     weldAtLines,
     totalWeld: weldAtLines + out.reduce((s, p) => s + (p.seam || 0), 0),
+    /* The generated weld drawing: the joints the layout itself decides, as lines on the ground.
+     * On a butted liner `seamWeld + joinWeld` IS the seam total above, measured from the lines
+     * rather than from the pair of runs, so the drawing and the number cannot disagree. */
+    weldSeamLines: out.flatMap((p) => (p.welds ? p.welds.seams : [])),
+    weldJoinLines: out.flatMap((p) => (p.welds ? p.welds.joins : [])),
+    seamWeld: out.reduce((s, p) => s + (p.welds ? p.welds.seamLength : 0), 0),
+    joinWeld: out.reduce((s, p) => s + (p.welds ? p.welds.joinLength : 0), 0),
+    butted: minOverlap <= 0,
     surfaceArea3D: groundArea3D,
     bareArea3D,
     barePct: groundArea3D > 0 ? (100 * bareArea3D) / groundArea3D : 0,

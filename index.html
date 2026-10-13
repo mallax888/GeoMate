@@ -677,11 +677,20 @@
       </div>
 
       <div class="liner-inputs liner-inputs--specs">
+        <!-- The two products on a cell floor are laid to opposite rules, and were being laid to one:
+             geogrid laps, a landfill liner must not — it butts and the joint is the weld. -->
+        <label class="field field--compact">
+          <span>Product</span>
+          <select id="baseGridProduct">
+            <option value="liner" selected>Landfill liner — welded</option>
+            <option value="geogrid">Base geogrid — lapped</option>
+          </select>
+        </label>
         <label class="field field--compact">
           <span>Roll width</span>
           <div class="field__unit"><input type="number" id="baseGridRollWidth" value="7" min="0.1" step="0.1" /><em>m</em></div>
         </label>
-        <label class="field field--compact">
+        <label class="field field--compact" id="baseGridOverlapField">
           <span>Minimum overlap</span>
           <div class="field__unit"><input type="number" id="baseGridOverlap" value="300" min="0" step="10" /><em>mm</em></div>
         </label>
