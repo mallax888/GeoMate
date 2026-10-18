@@ -6556,7 +6556,11 @@ function renderCutPlan(results) {
         <div class="cutplan-card__plan-scroll" tabindex="0" role="img" aria-label="Strip cut plan diagram, RL ${escapeHtml(r.rl) || "—"}">
           <svg class="cutplan-card__plan" viewBox="0 0 400 260" preserveAspectRatio="xMidYMid meet"></svg>
         </div>
-        <ol class="cutplan-card__strips" tabindex="0"></ol>
+        <div class="cutplan-card__col">
+          <ol class="cutplan-card__strips" tabindex="0"></ol>
+          <!-- Filled below, once the strip list is built. -->
+          <div class="cutplan-card__totals"></div>
+        </div>
       </div>
     `;
     cutPlanList.appendChild(card);
@@ -6611,6 +6615,29 @@ function renderCutPlan(results) {
         stripsList.appendChild(stitchLi);
       });
     });
+
+    /* WHAT THIS LIFT COMES TO — the two figures the strip list was being added up by hand to get.
+     *
+     * Both count the stitch patches, because the Grid area tile and the roll schedule do: a card
+     * that totalled the strips alone would read 541.6 against the schedule's 814.8 for the same
+     * lift, and look like the app disagreed with itself. Roll length is summed from the lengths
+     * rather than derived from the area, because a lift can mix products of different roll widths
+     * and area/width would then be wrong. */
+    const totalsEl = card.querySelector(".cutplan-card__totals");
+    if (totalsEl) {
+      const sum = (arr) => (arr || []).reduce((t, v) => t + (Number.isFinite(v) ? v : 0), 0);
+      const rollMetres = sum(r.stripLengths) + sum(r.stitchLengths);
+      const areaM2 = Number.isFinite(r.area) ? r.area : rollMetres * r.w;
+      totalsEl.innerHTML =
+        `<span class="cutplan-card__total">
+           <span class="cutplan-card__total-label">Total area</span>
+           <span class="cutplan-card__total-value">${fmt.m(areaM2)} m²</span>
+         </span>
+         <span class="cutplan-card__total">
+           <span class="cutplan-card__total-label">Roll length</span>
+           <span class="cutplan-card__total-value">${fmt.m(rollMetres)} m</span>
+         </span>`;
+    }
 
     const svgEl = card.querySelector(".cutplan-card__plan");
     if (isManual) {
