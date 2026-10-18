@@ -84,6 +84,10 @@
           <p id="productSpecWarning" class="warning-text" hidden></p>
         </div>
         <div class="products-panel__side">
+          <!-- Stacked on a phone the summary's "Project details" heading ends up directly above the
+               PRODUCT table, labelling the wrong thing. This one sits with the fields it names and
+               only appears at that width; the summary's copy is hidden there instead. -->
+          <h2 class="panel__heading products-panel__side-heading">Project details</h2>
           <div class="project-details">
             <div class="project-details__grid">
               <label class="field"><span>Site / job name</span><input type="text" id="projSiteJobName" /></label>
@@ -711,16 +715,16 @@
          press — most of a screen below the fold. It opens on a click and says how long it is
          first. See renderRollTable, which keeps the count in the summary. -->
     <details class="tool roll-table-disclosure" id="rollTableBlock">
-      <summary class="tool__summary">Strips by cut length<span id="rollTableCount" class="tool__count"></span></summary>
+      <summary class="tool__summary">Pieces by cut length<span id="rollTableCount" class="tool__count"></span></summary>
       <div class="table-scroll">
         <table class="roll-table" id="rollTable">
           <thead>
-            <tr><th scope="col">Length</th><th scope="col">Strips</th></tr>
+            <tr><th scope="col">Length</th><th scope="col">Pieces</th></tr>
           </thead>
           <tbody id="rollTableBody"></tbody>
         </table>
       </div>
-      <p class="roll-table-note">Rolls to order are packed across all strip lengths together (cut multiple lengths from one 50 m roll where they fit), not one-for-one per length above.</p>
+      <p class="roll-table-note">Every piece that has to be cut, which is the strips <em>and</em> the stitch patches — so this adds up to more than the strip count in the schedule above. Rolls to order are packed across all lengths together (several lengths out of one roll where they fit), not one-for-one per length here.</p>
     </details>
 
     <button id="exportBtn" class="btn btn--primary btn--block" type="button">Export CSV</button>

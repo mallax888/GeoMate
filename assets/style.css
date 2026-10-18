@@ -263,6 +263,8 @@ h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.6rem;
   border-bottom: 1px solid var(--line);
   padding-bottom: 0.6rem;
   margin-bottom: 0.9rem;
@@ -579,13 +581,26 @@ select:disabled { opacity: 0.6; cursor: not-allowed; }
      above nothing, so it's replaced with a plain top border and normal padding instead. */
   .products-panel__side { max-width: none; padding-top: 1.3rem; padding-left: 0; border-left: none; border-top: 1px solid var(--line); }
 }
+/* Hidden by default: the summary's heading labels this column while the two sit side by side. */
+.products-panel__side-heading { display: none; }
+
 @media (max-width: 760px) {
-  .products-panel__add { position: static; display: block; width: calc(100% - 2.4rem); margin: 1rem auto 0; }
+  /* The button is FIRST in the markup, because a <button> inside a <summary> is two interactive
+     controls in one and fails for keyboard and screen reader users. Wide, that does not show: it is
+     taken out of flow and pinned to the panel's top-right corner. Dropped back into flow here it
+     landed above "Product list", so the panel reads "+ Add product / Product list" — the action
+     before the thing it acts on. Ordering it last puts it back under the table where it belongs,
+     and leaves the markup order, which is the accessible one, alone. */
+  .panel--products-full { display: flex; flex-direction: column; }
+  .products-panel__add { order: 2; position: static; display: block; width: calc(100% - 2.4rem); margin: 1rem auto 0; }
   .products-summary { padding-right: 1.2rem; flex-wrap: wrap; }
   /* Once "Project details" wraps onto its own line below "Product list", the divider it borrows
      from .products-panel__side no longer connects to anything beside it — drop the indent/border
      here so it just reads as a second plain heading stacked underneath, same as it appears below. */
-  .products-summary__heading--details { padding-left: 0; border-left: none; max-width: none; }
+  /* Only one of the two "Project details" headings shows at a time: the summary's copy labels the
+     right-hand column while there IS one, and the in-place copy takes over once they stack. */
+  .products-summary__heading--details { display: none; }
+  .products-panel__side-heading { display: block; margin: 0 0 0.9rem; }
 }
 .project-details__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem 0.9rem; }
 .project-details__grid input {
@@ -1013,7 +1028,6 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
 }
 
 /* ---------- Tabs ---------- */
-.panel__headrow { flex-wrap: wrap; gap: 0.6rem; }
 .tabs-wrap { position: relative; min-width: 0; flex: 1 1 auto; }
 .tabs-wrap, .table-scroll {
   /* Edge fade for anything horizontally scrollable, so content sitting just past the visible edge
@@ -1053,8 +1067,8 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
   padding: 2px 0;
   margin: -2px 0;
 }
-.tab { flex: none; }
 .tab {
+  flex: none;
   font-family: var(--font-body);
   font-size: var(--fs-sm);
   font-weight: 600;

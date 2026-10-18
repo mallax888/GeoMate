@@ -4547,7 +4547,12 @@ function renderRowWarnings(issues) {
  * regardless of whether the other one is. */
 function validateProductSpec(p, rollLengthRawStr) {
   const issues = [];
-  if (p.oMin < 0) {
+  /* The width is checked FIRST, and on its own terms. Without this a roll width of -2 m fell
+     through to the overlap test — 0.3 >= -2 is true — and the app complained that the overlap was
+     too big for the roll, which sends you to fix the wrong box. */
+  if (!(p.w > 0)) {
+    issues.push(`Roll width must be greater than zero — "${p.label}" is set to ${p.w} m, so nothing can be laid out until it's fixed.`);
+  } else if (p.oMin < 0) {
     issues.push(`Minimum overlap can't be negative — every ${p.label} lift will show as blank until it's fixed.`);
   } else if (p.oMin >= p.w) {
     issues.push(`Minimum overlap (${fmt.mm(p.oMin)} mm) must be smaller than the roll width (${p.w} m).`);
@@ -5302,7 +5307,9 @@ function setupScrollFade(scrollEl, fadeEl) {
 setupScrollFade(document.querySelector(".tabs"), document.querySelector(".tabs-wrap"));
 document.querySelectorAll(".table-scroll").forEach((el) => setupScrollFade(el, el));
 staggerToggle.addEventListener("change", computeAndRender);
-document.getElementById("printSequenceBtn").addEventListener("click", () => window.print());
+// The sequence prints the page as it stands, so it wants NO sheet mode — but it still has to say
+// so, or it inherits whatever the last print left on the body.
+document.getElementById("printSequenceBtn").addEventListener("click", () => { setPrintMode(null); window.print(); });
 
 /**
  * Reverse-map each roll's pieces back to "which roll did this strip come from", keyed by each
@@ -5491,16 +5498,27 @@ document.getElementById("printCutPlanBtn").addEventListener("click", () => {
   const results = window.__geogridCutPlanResults || [];
   const project = document.getElementById("projectName").value || "GeoMate";
   document.getElementById("cutPlanPrintView").innerHTML = buildCutPlanPrintPages(results, project);
-  document.body.classList.add("printing-cutplan");
+  setPrintMode("printing-cutplan");
   window.print();
 });
 
-window.addEventListener("afterprint", () => {
-  document.body.classList.remove("printing-cutplan");
-  document.body.classList.remove("printing-full");
-  document.body.classList.remove("printing-rolls");
-  document.body.classList.remove("printing-roll-labels");
-});
+/* WHICH SHEET IS BEING PRINTED — exactly one, and never two.
+ *
+ * Each print button used to ADD its own class and rely on afterprint to take it off again. Two
+ * things go wrong with that. afterprint does not always fire — cancel the dialog in the wrong way,
+ * or print from a preview, and the class stays on — after which the next print carries both, and
+ * the stylesheet shows both sheets. And the Installation sequence button added no class at all, so
+ * it printed whatever the last button had left behind rather than the sequence.
+ *
+ * So the mode is set, not accumulated: everything else comes off first, every time. afterprint
+ * still clears up, and is now simply the same call with no mode. */
+const PRINT_MODES = ["printing-cutplan", "printing-full", "printing-rolls", "printing-roll-labels"];
+function setPrintMode(mode) {
+  document.body.classList.remove(...PRINT_MODES);
+  if (mode) document.body.classList.add(mode);
+}
+
+window.addEventListener("afterprint", () => setPrintMode(null));
 
 document.getElementById("exportFullPdfBtn").addEventListener("click", () => {
   const results = window.__geogridResults || [];
@@ -5607,7 +5625,7 @@ document.getElementById("exportFullPdfBtn").addEventListener("click", () => {
     : "";
 
   document.getElementById("fullExportPrintView").innerHTML = coverSheet + takeoffSheet + sequenceSheet + cutPlanSheets + view3dSheet + rollSheet;
-  document.body.classList.add("printing-full");
+  setPrintMode("printing-full");
   window.print();
 });
 
@@ -8470,7 +8488,7 @@ document.getElementById("printRollLabelsBtn").addEventListener("click", () => {
   const project = document.getElementById("projectName").value || "GeoMate";
   const rolls = window.__geogridRolls || [];
   document.getElementById("rollLabelsPrintView").innerHTML = buildRollLabelsHtml(rolls, project);
-  document.body.classList.add("printing-roll-labels");
+  setPrintMode("printing-roll-labels");
   window.print();
 });
 
@@ -8482,7 +8500,7 @@ document.getElementById("printRollScheduleBtn").addEventListener("click", () => 
     <h2 class="roll-print-heading">${escapeHtml(project)} — Roll cutting schedule</h2>
     <div class="roll-schedule-list">${cards}</div>
   `;
-  document.body.classList.add("printing-rolls");
+  setPrintMode("printing-rolls");
   window.print();
 });
 
