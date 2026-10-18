@@ -667,7 +667,35 @@ body.show-help .cutplan-method ul { display: flex; flex-direction: column; }
 body:not(.show-help) .panel--settings > .checkbox,
 body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
 .generator > .field { margin-bottom: 0.7rem; }
-.generator__btnrow { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+/* ONE GAP, EVERYWHERE INSIDE A TOOL.
+ *
+ * These blocks were spaced by each child's own margin, which added up to five different gaps in the
+ * same panel — 0px under the project picker, 8px under one heading, 11px as the usual rhythm, 13px
+ * before a hint and 16px before the paste button. Laying the open block out as a flex column with a
+ * single gap makes every space in every tool identical, and takes the spacing away from whichever
+ * element happens to be next. Empty status paragraphs are dropped out of the flow so a tool with
+ * nothing to report does not carry a gap for it. */
+/* Not flex: a <details> wraps everything after its <summary> in an anonymous slot box, so a flex
+   gap lands once, between the summary and the slot, and never between the children themselves.
+   One top margin on each child, no bottom margins to collapse against, does it properly. */
+details.tool > *:not(summary) { margin-top: 0.7rem; margin-bottom: 0; }
+details.tool > p:empty { display: none; }
+
+/* EVERY BUTTON THE SAME WIDTH, OR NONE OF THEM.
+ *
+ * As a wrapping flex row these sized to their own text, so one tool's pair came out 169 and 192
+ * wide, the next 122/61/71 with "Delete" dropped onto a line of its own, and the next 94/96 — three
+ * tools, eight buttons, seven different widths and no two left edges agreeing below the first row.
+ * A grid of equal columns instead: at the sidebar's width that resolves to one full-width column,
+ * so every button in the panel is the same size with the same gap above and below it, and on a
+ * wider container they pair up evenly rather than raggedly. */
+.generator__btnrow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10.5rem, 1fr));
+  gap: 0.5rem;
+  align-items: stretch;
+}
+.generator__btnrow > .btn { width: 100%; justify-content: center; text-align: center; }
 .btn--danger { color: var(--critical); border-color: var(--critical); }
 .btn--danger:hover { background: var(--critical-tint); }
 
@@ -825,6 +853,10 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
 }
 .mode-toggle:hover { background: var(--accent-tint); border-color: var(--accent); }
 .face-coords, .bulk-paste-textarea {
+  /* A textarea is inline-block by default, so it sits on a text baseline and carries the line's
+     descender space underneath — 7px of it, which is why the paste button sat lower than every
+     other control in the panel. */
+  display: block;
   width: 100%;
   min-height: 2.2rem;
   font-family: var(--font-mono);
@@ -835,7 +867,6 @@ body:not(.show-help) .panel--settings > .field { margin-bottom: 0.9rem; }
   padding: 0.35rem 0.5rem;
   resize: vertical;
 }
-.bulk-paste-textarea { margin-bottom: 0.6rem; }
 .row-remove {
   background: transparent;
   border: none;

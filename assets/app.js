@@ -8013,8 +8013,21 @@ function writeCutPlanGeometry(doc, lifts, rollLookup) {
        * without every roll layer switched on. Geometry is not duplicated — only the tag moves.
        */
       if (roll) {
+        /* OFF THE CENTRELINE, or it lands on top of the cut length.
+         *
+         * Both labels were written at `mid`. On screen the roll tag is a separate layer you can
+         * freeze, so it looked fine; plotted with the text layer on, every one of 496 strip labels
+         * had its roll tag printed through it — "R1" over "1  15.00m" reads as "B1.00m" and the
+         * drawing is unusable. Measured on a real export: 496 collisions, all at distance 0.
+         *
+         * Pushed across the strip rather than along it, so it stays beside its own cut length
+         * instead of drifting toward the neighbouring strip's. The offset is driven by the text
+         * height so it clears at any scale, and capped against the roll width so a narrow product
+         * cannot throw the tag outside the strip it belongs to. */
+        const across = { x: -q.dir.y, y: q.dir.x };
+        const off = Math.min(height * 1.6, q.width * 0.38);
         rollLayerFor(roll).forEach((layer) => {
-          doc.text(layer, { x: mid.x, y: mid.y, z: rl }, `R${roll}`, height, rot);
+          doc.text(layer, { x: mid.x + across.x * off, y: mid.y + across.y * off, z: rl }, `R${roll}`, height, rot);
         });
       }
     });
