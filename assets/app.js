@@ -7703,6 +7703,27 @@ const DXF_LAYER_COLORS = [1, 2, 3, 4, 5, 6, 8, 9];
  *
  * R12 (AC1009) — the plainest ASCII dialect every CAD package reads.
  */
+/* LAYER NAMES ARE A SYMBOL TABLE, NOT A STRING.
+ *
+ * These files are written as DXF R12 ($ACADVER AC1009), whose table entry names take letters,
+ * digits, $, _ and - and nothing else, up to 31 characters. A lift at RL 49.70 was being turned
+ * into the layer EXT_RL_49.70 — the sanitiser that built it listed "." among the characters to
+ * KEEP — and AutoCAD rejects the whole file on the first one it meets:
+ *
+ *     Improper table entry name EXT_RL_49.70 on line 62.
+ *     Invalid or incomplete DXF input -- drawing discarded.
+ *
+ * Not a layer dropped, the drawing discarded: one decimal point anywhere lost the entire export.
+ * So the rule lives in dxfDoc().layer() rather than at the call sites, because a call site that
+ * forgets it produces a file that opens nowhere, and there is no partial failure to notice. */
+function dxfLayerName(raw) {
+  const cleaned = String(raw == null ? "" : raw)
+    .replace(/[^A-Za-z0-9_$-]+/g, "_")   // a decimal point, a degree sign, a space: all illegal
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 31);
+  return cleaned || "LAYER";             // never empty: an unnamed table entry is also a reject
+}
+
 function dxfDoc() {
   const layers = [];
   const ents = [];
@@ -7719,8 +7740,9 @@ function dxfDoc() {
     /** Declares a layer once, whoever asks and however often. Returns the name, so call sites read
      *  as `doc.polyline(doc.layer("OUTLINE", 7), ...)`. */
     layer(name, color) {
-      if (!layers.some((l) => l.name === name)) layers.push({ name, color });
-      return name;
+      const safe = dxfLayerName(name);
+      if (!layers.some((l) => l.name === safe)) layers.push({ name: safe, color });
+      return safe;
     },
 
     /**
@@ -7840,7 +7862,7 @@ function buildLiftsDxf(results) {
   const doc = dxfDoc();
   lifts.forEach((lift, i) => {
     const layer = doc.layer(
-      `GRID_RL_${String(lift.rlLabel).replace(/[^A-Za-z0-9_.-]+/g, "_")}`,
+      `GRID_RL_${lift.rlLabel}`,
       DXF_LAYER_COLORS[i % DXF_LAYER_COLORS.length]
     );
     doc.polyline(layer, lift.footprint, { z: lift.rl });
@@ -7904,7 +7926,7 @@ function cutPlanLifts(results) {
  *  export can put it in a document alongside the liner instead of in one of its own. */
 function writeCutPlanGeometry(doc, lifts, rollLookup) {
   const layerFor = (kind, rlLabel, color) =>
-    doc.layer(`${kind}_RL_${rlLabel.replace(/[^A-Za-z0-9_.-]+/g, "_")}`, color);
+    doc.layer(`${kind}_RL_${rlLabel}`, color);
   // A strip can be cut from two rolls ("3,4"), so it gets a tag on each of their layers.
   const rollLayerFor = (rollStr) =>
     String(rollStr)
@@ -11033,7 +11055,7 @@ function writeLinerGeometry(doc, surface, plan, rollLength) {
   const PANEL_EDGES = doc.layer("PANEL_EDGES", 3);
   const PANEL_CL = doc.layer("PANEL_CL", 1);
   const PANEL_TEXT = doc.layer("PANEL_TEXT", 2);
-  const WELD_HINGE = doc.layer("WELD_HINGE", 6);
+  const WELD_HINGE = doc.layer("PANEL_BOUNDARY", 6);
 
   // Outline vertices are triangle corners, so they already carry their own true level — no lookup.
   poly3d(OUTLINE, surface.outline.map((p) => ({ x: p.x, y: p.y, z: p.z || 0 })), true);
@@ -11075,7 +11097,7 @@ function writeLinerGeometry(doc, surface, plan, rollLength) {
      * somebody to go and find one roll. */
     const rn = rollIndexOf.get(p);
     if (rn) {
-      doc.text(doc.layer(`LINER_ROLL_${String(rn).padStart(2, "0")}`, DXF_LAYER_COLORS[rn % DXF_LAYER_COLORS.length]),
+      doc.text(doc.layer(`GRID_ROLL_${String(rn).padStart(2, "0")}`, DXF_LAYER_COLORS[rn % DXF_LAYER_COLORS.length]),
                mid, `R${rn}`, size, rot);
     }
   });
