@@ -9606,7 +9606,7 @@ function refreshLinerOutputs() {
   };
   label("baseGridStatPlanLabel", drawn ? "Panels drawn" : "Zones");
   label("baseGridStatPanelsLabel", drawn ? "Rolls laid" : "Panels");
-  label("baseGridStatHingeLabel", drawn ? "Weld on your lines" : "Weld at grade changes");
+  label("baseGridStatHingeLabel", drawn ? "On your boundaries" : "Joins at grade changes");
 
   /* A surface built from an extents drawing is right on its outlines and a guess in between, and
    * every number on this tab leans on the levels. It says so, every time, not just on upload. */
