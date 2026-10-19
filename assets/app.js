@@ -173,7 +173,7 @@ function updateProgressStats() {
  * round the loop debugging a bug that was already fixed, because nothing on screen said which
  * version it was. It does now, next to the title, and it is read straight off the same constant
  * the cache is keyed on, so the two cannot drift apart. */
-const APP_VERSION = "v210";
+const APP_VERSION = "v211";
 (function showVersion() {
   const el = document.getElementById("appVersion");
   if (el) el.textContent = APP_VERSION;
@@ -7642,6 +7642,16 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
      lift with a corner in it does not spread its strips evenly across the frame. The median, so one
      odd pair at a bend does not size the whole lift's labels. */
   const nearPts = stripGeoms.map((gm) => screenOf(gm.centerNear));
+  /* WHICH END IS THE TOP OF THE PAGE.
+   *
+   * The roll number goes on top and the strip number underneath — that is how it is read, and it
+   * has to hold on a plan as much as on the elevation. On the elevation the strips stand up off the
+   * face, so "top" is always their far end; on a plan the lift sits at its surveyed bearing and the
+   * far end can be at the bottom of the page just as easily. Decided from the drawing itself, once
+   * for the whole lift so the two rows never swap sides halfway along it. */
+  const farPts = stripGeoms.map((gm) => screenOf(gm.farCenter));
+  const avgY = (pts) => (pts.length ? pts.reduce((t, q) => t + q.y, 0) / pts.length : 0);
+  const nearIsTop = avgY(nearPts) < avgY(farPts);
   const gaps = [];
   for (let gi = 1; gi < nearPts.length; gi++) {
     gaps.push(Math.hypot(nearPts[gi].x - nearPts[gi - 1].x, nearPts[gi].y - nearPts[gi - 1].y));
@@ -7749,21 +7759,27 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
     /* Which way is OUT of this strip, in screen terms: from its far end towards its near end and
      * on past it. Every label on this strip hangs off that one direction, so they stay in the same
      * order and the same place whatever bearing the lift was surveyed on. */
-    const nearOut = screenOf(g.centerNear);
-    const farMid = screenOf(g.farCenter);
-    const axLen = Math.hypot(nearOut.x - farMid.x, nearOut.y - farMid.y) || 1;
-    const outAxis = { x: (nearOut.x - farMid.x) / axLen, y: (nearOut.y - farMid.y) / axLen };
+    const nearPt = screenOf(g.centerNear);
+    const farPt = screenOf(g.farCenter);
+    const axLen = Math.hypot(nearPt.x - farPt.x, nearPt.y - farPt.y) || 1;
+    const towardsNear = { x: (nearPt.x - farPt.x) / axLen, y: (nearPt.y - farPt.y) / axLen };
+    const towardsFar = { x: -towardsNear.x, y: -towardsNear.y };
+    // The strip number hangs off the lower end, the roll number off the upper one.
+    const nearOut = nearIsTop ? farPt : nearPt;
+    const outAxis = nearIsTop ? towardsFar : towardsNear;
+    const farMid = nearIsTop ? nearPt : farPt;
+    const rollAxis = nearIsTop ? towardsNear : towardsFar;
     let stripChipOut = 0; // how far out the strip number ended up, so the roll circle can clear it.
 
     {
-      /* THE NUMBER BELONGS OUTSIDE THE STRIP, AT THE END THE ROLL STARTS FROM.
+      /* THE STRIP NUMBER BELONGS OUTSIDE THE STRIP, UNDER IT.
        *
        * It was offset eight pixels UP THE PAGE from the strip's far end. On the flat diagram, where
        * every strip stands vertically, up the page is out of the strip. On a true plan it is not:
        * the lift sits at whatever bearing it was surveyed on, so "up" runs along the strip, and the
        * number landed inside it — which is where the user saw it.
        *
-       * Offset along the strip's OWN axis instead, past the near edge, in a chip so it reads as a
+       * Offset along the strip's OWN axis instead, past its lower end, in a chip so it reads as a
        * label rather than as part of the drawing. Same place on every lift whatever its bearing. */
       const margin = 6;
       const digits = String(i + 1).length;
@@ -7828,7 +7844,7 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
       // chipped just outside the near edge. One label at each end means each has the full pitch to
       // itself, so both rows stay side by side at any strip count.
       const out = rollCircleR + 2;
-      const cn = { x: farMid.x - outAxis.x * out, y: farMid.y - outAxis.y * out };
+      const cn = { x: farMid.x + rollAxis.x * out, y: farMid.y + rollAxis.y * out };
       const ccx = Math.max(margin + rollCircleR, Math.min(W - margin - rollCircleR, cn.x));
       const baseCcy = Math.max(margin + rollCircleR, Math.min(H - margin - rollCircleR, cn.y));
       // Same tight-corner-cluster problem as the strip-number labels above (several short segments
@@ -7852,8 +7868,8 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
       ) {
         ccLane++;
         const d = out + ccLane * (rollCircleR * 2 + circlePad);
-        ccxPos = Math.max(margin + rollCircleR, Math.min(W - margin - rollCircleR, farMid.x - outAxis.x * d));
-        ccy = Math.max(margin + rollCircleR, Math.min(H - margin - rollCircleR, farMid.y - outAxis.y * d));
+        ccxPos = Math.max(margin + rollCircleR, Math.min(W - margin - rollCircleR, farMid.x + rollAxis.x * d));
+        ccy = Math.max(margin + rollCircleR, Math.min(H - margin - rollCircleR, farMid.y + rollAxis.y * d));
       }
       // Lanes step from each circle's OWN near-edge baseline, and along a curving face no two
       // baselines are quite the same — so two circles can each take a lane and still come to rest
