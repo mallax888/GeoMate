@@ -173,7 +173,7 @@ function updateProgressStats() {
  * round the loop debugging a bug that was already fixed, because nothing on screen said which
  * version it was. It does now, next to the title, and it is read straight off the same constant
  * the cache is keyed on, so the two cannot drift apart. */
-const APP_VERSION = "v209";
+const APP_VERSION = "v210";
 (function showVersion() {
   const el = document.getElementById("appVersion");
   if (el) el.textContent = APP_VERSION;
@@ -5627,11 +5627,15 @@ function buildCutPlanPrintPages(results, project) {
   const rollLookup = buildRollLookup(rolls);
   const allResults = window.__geogridResults || results;
   const stagger = document.getElementById("staggerToggle").checked;
+  const printFillVolumes = fillVolumesByLift(allResults.filter((x) => x.cutPlan));
   return results
     .map((r) => {
       const buildIndex = allResults.indexOf(r);
       const next = buildIndex >= 0 ? allResults[buildIndex + 1] : null;
       const fillTarget = next ? `RL ${escapeHtml(next.rl)}` : "final design surface";
+      // How much fill that step is asking for, by the same measure the lift card shows.
+      const fill = printFillVolumes.get(r);
+      const fillNote = fill ? ` — about ${fmt.m(fill.volume)} m³ of fill` : "";
       let staggerNote = "";
       if (stagger && r.n > 1 && buildIndex >= 0 && r.overlap != null) {
         const pitch = r.w - r.overlap;
@@ -5765,7 +5769,7 @@ function buildCutPlanPrintPages(results, project) {
             <li>Roll out ${r.n} strip${r.n === 1 ? "" : "s"} per the cut lengths below${
               r.n > 1 ? (r.overlap != null ? `, lapping each by ${fmt.mm(r.overlap)} mm` : ", lapping each strip by its own product's overlap — mixed products on this lift, see the strip list") : ""
             }.</li>
-            <li>Pin/stake the grid as required, then place and compact fill up to ${fillTarget}.</li>
+            <li>Pin/stake the grid as required, then place and compact fill up to ${fillTarget}${fillNote}.</li>
           </ol>
           ${staggerNote ? `<div class="cutplan-print-page__stagger">${escapeHtml(staggerNote)}</div>` : ""}
           <div class="cutplan-print-page__body${stacked ? " cutplan-print-page__body--stacked" : ""}" style="--plan-h:${planMm}mm">
@@ -6672,6 +6676,37 @@ function updateLoadBlock(extentsResults) {
   }
 }
 
+/* FILL BETWEEN ONE GRID LAYER AND THE NEXT.
+ *
+ * What a lift actually costs to build on top of the grid just laid: the fill placed from this RL up
+ * to the RL of the layer above it. Taken as the average of the two layers' plan areas times the rise
+ * between them — the trapezoidal rule, which is the right one for a battered wall, where every lift
+ * sits on a slightly different footprint and a single-area prism would be out by half the batter.
+ *
+ * The polygon's own area, never the grid area: grid laps count material twice, and a lap of grid
+ * does not take up a cubic metre of fill.
+ *
+ * The topmost lift has no layer above it to measure to, so it has no figure here — only a design
+ * surface could say, and the app is not given one.
+ */
+function fillVolumesByLift(results) {
+  const vols = new Map();
+  results.forEach((r, i) => {
+    const next = results[i + 1];
+    if (!next) return;
+    const rl = parseFloat(r.rl), rlNext = parseFloat(next.rl);
+    if (!Number.isFinite(rl) || !Number.isFinite(rlNext)) return;
+    const rise = rlNext - rl;
+    if (!(rise > 0)) return;
+    const a0 = r.cutPlan && Number.isFinite(r.cutPlan.polygonArea) ? r.cutPlan.polygonArea : null;
+    const a1 = next.cutPlan && Number.isFinite(next.cutPlan.polygonArea) ? next.cutPlan.polygonArea : null;
+    if (a0 == null && a1 == null) return;
+    const area = a0 == null ? a1 : a1 == null ? a0 : (a0 + a1) / 2;
+    vols.set(r, { volume: area * rise, rise, toRl: next.rl });
+  });
+  return vols;
+}
+
 function renderCutPlan(results) {
   const extentsResults = results.filter((r) => r.mode === "extents" && r.cutPlan);
   cutPlanEmpty.hidden = extentsResults.length > 0;
@@ -6685,6 +6720,7 @@ function renderCutPlan(results) {
   // forever for the life of the tab.
   window.__geogridRowsById = new Map();
   const rollLookup = buildRollLookup(window.__geogridRolls || []);
+  const fillVolumes = fillVolumesByLift(extentsResults);
   const productSpecs = readProductSpecs();
 
   extentsResults.forEach((r) => {
@@ -6913,6 +6949,7 @@ function renderCutPlan(results) {
     if (totalsEl) {
       const sum = (arr) => (arr || []).reduce((t, v) => t + (Number.isFinite(v) ? v : 0), 0);
       const rollMetres = sum(r.stripLengths) + sum(r.stitchLengths);
+      const fill = fillVolumes.get(r);
       const areaM2 = Number.isFinite(r.area) ? r.area : rollMetres * r.w;
       totalsEl.innerHTML =
         `<span class="cutplan-card__total">
@@ -6922,7 +6959,13 @@ function renderCutPlan(results) {
          <span class="cutplan-card__total">
            <span class="cutplan-card__total-label">Roll length</span>
            <span class="cutplan-card__total-value">${fmt.m(rollMetres)} m</span>
-         </span>`;
+         </span>` +
+        (fill
+          ? `<span class="cutplan-card__total">
+               <span class="cutplan-card__total-label">Fill to RL ${escapeHtml(fill.toRl)}</span>
+               <span class="cutplan-card__total-value">${fmt.m(fill.volume)} m³</span>
+             </span>`
+          : "");
     }
 
     const svgEl = card.querySelector(".cutplan-card__plan");
@@ -7105,6 +7148,104 @@ function annotateFaceLine(svg, facePts, W, H, projectedPts = []) {
   svg.appendChild(label);
 }
 
+/* ONE ROW EACH, SIDE BY SIDE, WHATEVER THE STRIP COUNT.
+ *
+ * Both numbers are sized from the room there actually is between neighbouring strips, instead of a
+ * fixed scale that then has to stack the overflow into lanes. A 32-strip lift was putting its
+ * numbers into four stepped rows and dropping its roll numbers to grey dots; sized this way it
+ * prints one number per strip in a single row, which is how a crew reads along a lift.
+ *
+ * Nothing is ever skipped or thinned: a denser lift gets smaller type, never a gap in the sequence.
+ */
+function planLabelSizing(pitchPx, stripDigits, rollChars) {
+  const chipFont = Math.max(3.1, Math.min(7, (pitchPx - 2.2) / (0.62 * Math.max(1, stripDigits))));
+  const rollR = Math.max(2.4, Math.min(7.5, pitchPx / 2 - 0.3));
+  const rollFont = Math.max(2.9, Math.min(rollR * 1.15, (rollR * 1.72) / (0.62 * Math.max(1, rollChars))));
+  return { chipFont, chipH: chipFont + 3, rollR, rollFont };
+}
+
+/* WHAT THE TWO NUMBERS ON EVERY STRIP MEAN.
+ *
+ * Each strip carries two: its own number, in a chip off the end it starts from, and the number of
+ * the roll it gets cut from, circled beyond that. Nothing on the drawing said which was which, and
+ * they are read by someone who did not build the plan. One small key in the corner, on both the
+ * screen diagram and the printed sheet, because they are the same drawing.
+ *
+ * Drawn last so it sits over the plan, with its own panel behind it — a lift can reach into any
+ * corner, and a key that is readable only on the lifts that happen to leave the corner free is not
+ * a key. */
+function appendPlanLegend(svg, ns, W, H) {
+  const fs = 8.2;
+  const padX = 7, padY = 6, rowH = fs + 6.5;
+  const items = [
+    { kind: "chip", text: "Strip no. \u2014 the order they go down" },
+    { kind: "circle", text: "Roll no. \u2014 which roll to cut it from" },
+  ];
+  const textW = Math.max(...items.map((it) => it.text.length)) * fs * 0.5;
+  const boxW = Math.min(W - 12, padX * 2 + 18 + textW);
+  const boxH = padY * 2 + rowH * items.length;
+  const x0 = W - 6 - boxW, y0 = 6;
+
+  const g = document.createElementNS(ns, "g");
+  const panel = document.createElementNS(ns, "rect");
+  panel.setAttribute("x", x0.toFixed(1));
+  panel.setAttribute("y", y0.toFixed(1));
+  panel.setAttribute("width", boxW.toFixed(1));
+  panel.setAttribute("height", boxH.toFixed(1));
+  panel.setAttribute("rx", "4");
+  panel.setAttribute("fill", "var(--surface)");
+  panel.setAttribute("fill-opacity", "0.93");
+  panel.setAttribute("stroke", "var(--line-strong)");
+  panel.setAttribute("stroke-width", "0.7");
+  g.appendChild(panel);
+
+  items.forEach((it, i) => {
+    const cy = y0 + padY + rowH * i + rowH / 2;
+    const sx = x0 + padX + 8;
+    if (it.kind === "chip") {
+      const chip = document.createElementNS(ns, "rect");
+      chip.setAttribute("x", (sx - 7).toFixed(1));
+      chip.setAttribute("y", (cy - (fs + 3.4) / 2).toFixed(1));
+      chip.setAttribute("width", "14");
+      chip.setAttribute("height", (fs + 3.4).toFixed(1));
+      chip.setAttribute("rx", "2.2");
+      chip.setAttribute("fill", "var(--surface)");
+      chip.setAttribute("stroke", "var(--line-strong)");
+      chip.setAttribute("stroke-width", "0.6");
+      g.appendChild(chip);
+    } else {
+      const c = document.createElementNS(ns, "circle");
+      c.setAttribute("cx", sx.toFixed(1));
+      c.setAttribute("cy", cy.toFixed(1));
+      c.setAttribute("r", ((fs + 3.4) / 2).toFixed(1));
+      c.setAttribute("fill", "var(--surface)");
+      c.setAttribute("stroke", "var(--ink-muted)");
+      c.setAttribute("stroke-width", "0.8");
+      g.appendChild(c);
+    }
+    const swatchNo = document.createElementNS(ns, "text");
+    swatchNo.setAttribute("x", sx.toFixed(1));
+    swatchNo.setAttribute("y", (cy + fs * 0.34).toFixed(1));
+    swatchNo.setAttribute("font-size", (fs * 0.85).toFixed(1));
+    swatchNo.setAttribute("font-family", "var(--font-mono)");
+    swatchNo.setAttribute("font-weight", "700");
+    swatchNo.setAttribute("fill", "var(--ink)");
+    swatchNo.setAttribute("text-anchor", "middle");
+    swatchNo.textContent = "1";
+    g.appendChild(swatchNo);
+
+    const label = document.createElementNS(ns, "text");
+    label.setAttribute("x", (sx + 12).toFixed(1));
+    label.setAttribute("y", (cy + fs * 0.34).toFixed(1));
+    label.setAttribute("font-size", fs.toFixed(1));
+    label.setAttribute("font-family", "var(--font-sans, system-ui)");
+    label.setAttribute("fill", "var(--ink-muted)");
+    label.textContent = it.text;
+    g.appendChild(label);
+  });
+  svg.appendChild(g);
+}
+
 /**
  * The extents boundary, as every diagram draws it. Bold and dashed, not the strip colours' thin
  * solid outline — this is the one line on the whole drawing that means "this is the true design
@@ -7150,13 +7291,25 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
   // Scale is driven by X alone (never clamped down by depth) so a dense lift actually gets to use
   // the wider canvas above instead of the old width/height minimum silently cancelling it back out —
   // depth grows the canvas's height to match instead of the true shape being squashed to fit 260px.
+  // Both labels sized from the gap between neighbouring strips, so every one of them fits in a
+  // single row — see planLabelSizing.
+  const avgStripPx = (W - pad * 2) / Math.max(cutLengths.length, 1);
+  const maxStripDigits = String(cutLengths.length).length;
+  const maxRollChars = Math.max(1, ...(stripRollNumbers || []).map((t) => String(t || "").length));
+  const sizing = planLabelSizing(avgStripPx, maxStripDigits, maxRollChars);
+  const labelFontSize = sizing.chipFont;
+  const rollCircleR = sizing.rollR;
+  /* A band under the face line, kept clear for the row of strip numbers. They hang below the face —
+     outside the strips, which is where they belong — and the face caption lives in the padding under
+     that, so without its own band the two printed straight through each other. */
+  const bottomBand = sizing.chipH + 9;
   const scale = (W - pad * 2) / xExtent;
-  const H = Math.max(260, pad * 2 + yExtent * scale);
+  const H = Math.max(260, pad * 2 + bottomBand + yExtent * scale);
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   svg.setAttribute("width", W);
   svg.setAttribute("height", H);
   const tx = (x) => pad + (x - minX) * scale;
-  const ty = (y) => H - pad - (y - minY) * scale; // flip Y so deeper into the fill reads as "up"
+  const ty = (y) => H - pad - bottomBand - (y - minY) * scale; // flip Y so deeper into the fill reads as "up"
 
   const poly2d = localPoly.map((p) => `${tx(p.x).toFixed(1)},${ty(p.y).toFixed(1)}`).join(" ");
   const polyEl = extentsBoundaryPolygon(ns, poly2d);
@@ -7177,15 +7330,6 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
   const seamAfter = (i) => (stripStarts[i] + stripWidths[i] + stripStarts[i + 1]) / 2;
   // Strip count doesn't shrink the font below this, so numbers stay every-strip and legible without
   // ever skipping one — dense diagrams get a smaller font instead of thinned labels.
-  const labelFontSize = Math.max(4.5, Math.min(7, 165 / Math.max(cutLengths.length, 1)));
-  // Roll-number circles are sized off the actual on-screen strip width, not a fixed size — but the
-  // margin subtracted has to leave room for the circles' own 1px stroke too, not just clear space
-  // between their centres, or a dense lift (40+ strips) ends up with barely a fraction of a pixel
-  // of true gap: technically not touching, but reading as one solid overlapping blob on screen. The
-  // lower floor (was 3, now 2.2) matters just as much — without it, an even denser lift hits the
-  // floor and overlaps outright instead of continuing to shrink.
-  const avgStripPx = (W - pad * 2) / Math.max(cutLengths.length, 1);
-  const rollCircleR = Math.max(2.2, Math.min(7.5, avgStripPx / 2 - 1.3));
 
   cutLengths.forEach((len, i) => {
     const station = stationOf(i);
@@ -7330,10 +7474,25 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
     // Sits just OUTSIDE the strip, above its far end. Tried inside the strip once — it was wrong on
     // site, so leave it out here.
     {
+      // Strip number at the BOTTOM, outside the strip, just below the end the roll starts from;
+      // the roll number circled on TOP, past the far end. One at each end, so each gets the full
+      // pitch to itself and both read as a straight row along the lift.
       const margin = 6;
-      const label = document.createElementNS(ns, "text");
+      const chipH = sizing.chipH;
       const lx = Math.max(margin, Math.min(W - margin, tx(station)));
-      const ly = Math.max(margin, Math.min(H - margin, yFar - 8));
+      const ly = Math.max(margin, Math.min(H - margin, yNear + chipH * 0.95 + 1.5));
+      const chipW = labelFontSize * 0.62 * String(i + 1).length + 3.6;
+      const chip = document.createElementNS(ns, "rect");
+      chip.setAttribute("x", (lx - chipW / 2).toFixed(1));
+      chip.setAttribute("y", (ly - chipH * 0.78).toFixed(1));
+      chip.setAttribute("width", chipW.toFixed(1));
+      chip.setAttribute("height", chipH.toFixed(1));
+      chip.setAttribute("rx", "2.2");
+      chip.setAttribute("fill", "var(--surface)");
+      chip.setAttribute("stroke", "var(--line-strong)");
+      chip.setAttribute("stroke-width", "0.6");
+      svg.appendChild(chip);
+      const label = document.createElementNS(ns, "text");
       label.setAttribute("x", lx.toFixed(1));
       label.setAttribute("y", ly.toFixed(1));
       label.setAttribute("font-size", labelFontSize.toFixed(1));
@@ -7353,7 +7512,7 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
     if (rollLabel) {
       const margin = 6;
       const ccx = Math.max(margin + rollCircleR, Math.min(W - margin - rollCircleR, tx(station)));
-      const ccy = Math.max(margin + rollCircleR, Math.min(H - margin - rollCircleR, yNear - rollCircleR - 2));
+      const ccy = Math.max(margin + rollCircleR, Math.min(H - margin - rollCircleR, yFar - rollCircleR - 2));
 
       // Longer roll numbers (rolls run into the hundreds on a big job) need a smaller font to still
       // fit inside a small circle — sized relative to digit count, not a single fixed size. But once
@@ -7363,8 +7522,10 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
       // above). Below that floor, fall back to a small plain dot instead: the strip list alongside
       // this diagram (stripsList in renderCutPlan) always spells the roll number out in full, at any
       // strip count, so nothing is actually lost — it just isn't crammed into the diagram itself.
-      const rollFontSize = rollLabel.length >= 3 ? rollCircleR * 0.82 : rollLabel.length === 2 ? rollCircleR * 0.98 : rollCircleR * 1.15;
-      const MIN_LEGIBLE_FONT = 4.2;
+      // One size for the whole lift, from the longest roll number on it, so the row reads evenly
+      // rather than every circle setting its own type size.
+      const rollFontSize = sizing.rollFont;
+      const MIN_LEGIBLE_FONT = 2.8;
       const circle = document.createElementNS(ns, "circle");
       circle.setAttribute("cx", ccx.toFixed(1));
       circle.setAttribute("cy", ccy.toFixed(1));
@@ -7408,6 +7569,8 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
     const toPt = (s) => ({ x: tx(s), y: ty(faceDepthAtStation(face, inward, s)) });
     annotateFaceLine(svg, spans.core.map(toPt), W, H, spans.projected.map((span) => span.map(toPt)));
   }
+
+  appendPlanLegend(svg, ns, W, H);
 }
 
 /**
@@ -7453,7 +7616,11 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
   const minU = Math.min(...us), maxU = Math.max(...us);
   const minV = Math.min(...vs), maxV = Math.max(...vs);
 
-  const pad = 16;
+  /* Room for the label band. Every strip now carries its number and its roll number OUTSIDE it, off
+     the end it starts from, and at 16 the chips were clamped back onto the drawing — and at 30 the
+     roll circle beyond the chip still was, on the strip that sits hard against the top of the
+     frame, which put the circle back on top of the number it is supposed to sit beyond. */
+  const pad = 38;
   const W = Math.max(400, cutLengths.length * 14);
   const uExtent = Math.max(maxU - minU, 1e-6), vExtent = Math.max(maxV - minV, 1e-6);
   const scale = (W - pad * 2) / uExtent;
@@ -7470,9 +7637,22 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
   svg.innerHTML = "";
   svg.appendChild(polyEl);
 
-  const labelFontSize = Math.max(4.5, Math.min(7, 165 / Math.max(cutLengths.length, 1)));
-  const avgStripPx = (W - pad * 2) / Math.max(cutLengths.length, 1);
-  const rollCircleR = Math.max(2.2, Math.min(7.5, avgStripPx / 2 - 1.3));
+  /* The pitch here is the real on-screen gap between one strip's start and the next one's, measured
+     off the drawing rather than assumed from the canvas width: a plan can sit at any bearing, and a
+     lift with a corner in it does not spread its strips evenly across the frame. The median, so one
+     odd pair at a bend does not size the whole lift's labels. */
+  const nearPts = stripGeoms.map((gm) => screenOf(gm.centerNear));
+  const gaps = [];
+  for (let gi = 1; gi < nearPts.length; gi++) {
+    gaps.push(Math.hypot(nearPts[gi].x - nearPts[gi - 1].x, nearPts[gi].y - nearPts[gi - 1].y));
+  }
+  gaps.sort((a, b) => a - b);
+  const pitchPx = gaps.length ? gaps[Math.floor(gaps.length / 2)] : (W - pad * 2) / Math.max(cutLengths.length, 1);
+  const maxStripDigits = String(cutLengths.length).length;
+  const maxRollChars = Math.max(1, ...(stripRollNumbers || []).map((t) => String(t || "").length));
+  const sizing = planLabelSizing(pitchPx, maxStripDigits, maxRollChars);
+  const labelFontSize = sizing.chipFont;
+  const rollCircleR = sizing.rollR;
 
   // Unlike the flat diagram (an even grid where neighbouring labels never fight for the same spot),
   // strips either side of a real corner can land with near-identical screen positions — one segment's
@@ -7566,49 +7746,68 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
       }
     });
 
+    /* Which way is OUT of this strip, in screen terms: from its far end towards its near end and
+     * on past it. Every label on this strip hangs off that one direction, so they stay in the same
+     * order and the same place whatever bearing the lift was surveyed on. */
+    const nearOut = screenOf(g.centerNear);
+    const farMid = screenOf(g.farCenter);
+    const axLen = Math.hypot(nearOut.x - farMid.x, nearOut.y - farMid.y) || 1;
+    const outAxis = { x: (nearOut.x - farMid.x) / axLen, y: (nearOut.y - farMid.y) / axLen };
+    let stripChipOut = 0; // how far out the strip number ended up, so the roll circle can clear it.
+
     {
-      // Just outside the strip, off its far end — same as the flat diagram, and the placement that
-      // reads correctly on site.
+      /* THE NUMBER BELONGS OUTSIDE THE STRIP, AT THE END THE ROLL STARTS FROM.
+       *
+       * It was offset eight pixels UP THE PAGE from the strip's far end. On the flat diagram, where
+       * every strip stands vertically, up the page is out of the strip. On a true plan it is not:
+       * the lift sits at whatever bearing it was surveyed on, so "up" runs along the strip, and the
+       * number landed inside it — which is where the user saw it.
+       *
+       * Offset along the strip's OWN axis instead, past the near edge, in a chip so it reads as a
+       * label rather than as part of the drawing. Same place on every lift whatever its bearing. */
       const margin = 6;
-      const fc = screenOf(g.farCenter);
-      const lx = Math.max(margin, Math.min(W - margin, fc.x));
-      const baseLy = Math.max(margin, Math.min(H - margin, fc.y - 8));
       const digits = String(i + 1).length;
       const halfW = (labelFontSize * 0.62 * digits) / 2 + 1.2;
-      const laneStep = labelFontSize + 2;
+      const chipH = sizing.chipH;
+      const laneStep = chipH + 1;
+      const at = (d) => ({
+        x: Math.max(margin + halfW, Math.min(W - margin - halfW, nearOut.x + outAxis.x * d)),
+        y: Math.max(margin + chipH / 2, Math.min(H - margin - chipH / 2, nearOut.y + outAxis.y * d)),
+      });
+      const baseD = chipH / 2 + 2;
       // A pair of tight corners close together (several short segments back to back) can pack more
       // than a handful of labels into a narrow span — a short lookback window or a low lane cap both
       // let a label past the 4th or 5th nearby one land right back on top of an earlier one. Padding
       // the required gap (not just "don't literally touch") also keeps every number legibly separated,
       // not just non-overlapping by a fraction of a pixel.
       const gapPad = 1.5;
-      const collidesAt = (y) =>
-        recentStripLabels.some((b) => Math.abs(b.x - lx) < b.halfW + halfW + gapPad && Math.abs(b.y - y) < labelFontSize + 2);
-      let lane = 0;
-      let ly = baseLy;
-      while (lane < 10 && collidesAt(ly)) {
-        lane++;
-        ly = Math.max(margin, baseLy - lane * laneStep);
+      const collidesAt = (q) =>
+        recentStripLabels.some((b) => Math.abs(b.x - q.x) < b.halfW + halfW + gapPad && Math.abs(b.y - q.y) < chipH + 1);
+      // A clash is cleared by stepping FURTHER OUT along the same axis — away from the strip, the
+      // one direction that is guaranteed to be off the drawing rather than deeper into it.
+      let placedD = baseD;
+      let spot = at(placedD);
+      for (let lane = 1; lane <= 6 && collidesAt(spot); lane++) {
+        placedD = baseD + lane * laneStep;
+        spot = at(placedD);
       }
-      // Those lanes clamp at the top margin, so once a label is pushed to the ceiling further lanes
-      // move it nowhere and the next one lands on top of it — two numbers stacked on the same pixel
-      // row at the very top of the diagram. Fall back to stepping DOWN from the strip's own far edge
-      // instead, which reads just as clearly as this strip's number and has no ceiling to hit.
-      if (collidesAt(ly)) {
-        for (let down = 1; down <= 10; down++) {
-          const candidate = Math.min(H - margin, baseLy + down * laneStep);
-          if (!collidesAt(candidate)) {
-            ly = candidate;
-            break;
-          }
-        }
-      }
-      recentStripLabels.push({ x: lx, y: ly, halfW });
+      recentStripLabels.push({ x: spot.x, y: spot.y, halfW });
       if (recentStripLabels.length > 8) recentStripLabels.shift();
 
+      const chip = document.createElementNS(ns, "rect");
+      chip.setAttribute("x", (spot.x - halfW - 1.4).toFixed(1));
+      chip.setAttribute("y", (spot.y - chipH / 2).toFixed(1));
+      chip.setAttribute("width", (halfW * 2 + 2.8).toFixed(1));
+      chip.setAttribute("height", chipH.toFixed(1));
+      chip.setAttribute("rx", "2.2");
+      chip.setAttribute("fill", "var(--surface)");
+      chip.setAttribute("stroke", "var(--line-strong)");
+      chip.setAttribute("stroke-width", "0.6");
+      svg.appendChild(chip);
+
       const label = document.createElementNS(ns, "text");
-      label.setAttribute("x", lx.toFixed(1));
-      label.setAttribute("y", ly.toFixed(1));
+      label.setAttribute("x", spot.x.toFixed(1));
+      label.setAttribute("y", (spot.y + labelFontSize * 0.36).toFixed(1));
       label.setAttribute("font-size", labelFontSize.toFixed(1));
       label.setAttribute("font-family", "var(--font-mono)");
       label.setAttribute("font-weight", "700");
@@ -7616,14 +7815,22 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
       label.setAttribute("text-anchor", "middle");
       label.textContent = String(i + 1);
       svg.appendChild(label);
+      // Where it ACTUALLY ended up, not where it was first offered: a chip pushed out a lane to clear
+      // its neighbour was landing exactly where the roll circle then went, which put the circle on
+      // top of the number it is meant to sit beyond.
+      stripChipOut = placedD + chipH / 2;
     }
 
     const rollLabel = (stripRollNumbers && stripRollNumbers[i]) || "";
     if (rollLabel) {
       const margin = 6;
-      const cn = screenOf(g.centerNear);
+      // At the OTHER end of the strip: the roll number circled past the far edge, the strip number
+      // chipped just outside the near edge. One label at each end means each has the full pitch to
+      // itself, so both rows stay side by side at any strip count.
+      const out = rollCircleR + 2;
+      const cn = { x: farMid.x - outAxis.x * out, y: farMid.y - outAxis.y * out };
       const ccx = Math.max(margin + rollCircleR, Math.min(W - margin - rollCircleR, cn.x));
-      const baseCcy = Math.max(margin + rollCircleR, Math.min(H - margin - rollCircleR, cn.y - rollCircleR - 2));
+      const baseCcy = Math.max(margin + rollCircleR, Math.min(H - margin - rollCircleR, cn.y));
       // Same tight-corner-cluster problem as the strip-number labels above (several short segments
       // back to back can pack more roll circles into a narrow span than their fixed radius leaves
       // room for side by side) — lane-stack a colliding circle further from the strip's near edge
@@ -7636,12 +7843,17 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
       const maxCcLane = 2;
       let ccLane = 0;
       let ccy = baseCcy;
+      let ccxPos = ccx;
+      // Stepped FURTHER OUT along the strip's own axis, like the strip numbers above it — stepping
+      // up the page instead used to walk a circle back across the chip it was meant to sit beyond.
       while (
         ccLane < maxCcLane &&
-        recentRollCircles.some((b) => Math.abs(b.x - ccx) < b.r + rollCircleR + circlePad && Math.abs(b.y - ccy) < b.r + rollCircleR + circlePad)
+        recentRollCircles.some((b) => Math.abs(b.x - ccxPos) < b.r + rollCircleR + circlePad && Math.abs(b.y - ccy) < b.r + rollCircleR + circlePad)
       ) {
         ccLane++;
-        ccy = Math.max(margin + rollCircleR, baseCcy - ccLane * (rollCircleR * 2 + circlePad));
+        const d = out + ccLane * (rollCircleR * 2 + circlePad);
+        ccxPos = Math.max(margin + rollCircleR, Math.min(W - margin - rollCircleR, farMid.x - outAxis.x * d));
+        ccy = Math.max(margin + rollCircleR, Math.min(H - margin - rollCircleR, farMid.y - outAxis.y * d));
       }
       // Lanes step from each circle's OWN near-edge baseline, and along a curving face no two
       // baselines are quite the same — so two circles can each take a lane and still come to rest
@@ -7652,7 +7864,7 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
       // as part of its row rather than drifting off on its own.
       for (let guard = 0; guard < 6; guard++) {
         const blockers = recentRollCircles.filter(
-          (b) => Math.abs(b.x - ccx) < b.r + rollCircleR + circlePad && Math.abs(b.y - ccy) < b.r + rollCircleR + circlePad
+          (b) => Math.abs(b.x - ccxPos) < b.r + rollCircleR + circlePad && Math.abs(b.y - ccy) < b.r + rollCircleR + circlePad
         );
         if (!blockers.length) break;
         const highest = Math.min(...blockers.map((b) => b.y));
@@ -7660,13 +7872,15 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
         if (lifted >= ccy) break; // already at the top margin — nothing further to gain
         ccy = lifted;
       }
-      recentRollCircles.push({ x: ccx, y: ccy, r: rollCircleR });
+      recentRollCircles.push({ x: ccxPos, y: ccy, r: rollCircleR });
       if (recentRollCircles.length > 8) recentRollCircles.shift();
 
-      const rollFontSize = rollLabel.length >= 3 ? rollCircleR * 0.82 : rollLabel.length === 2 ? rollCircleR * 0.98 : rollCircleR * 1.15;
-      const MIN_LEGIBLE_FONT = 4.2;
+      // One size for the whole lift, from the longest roll number on it, so the row reads evenly
+      // rather than every circle setting its own type size.
+      const rollFontSize = sizing.rollFont;
+      const MIN_LEGIBLE_FONT = 2.8;
       const circle = document.createElementNS(ns, "circle");
-      circle.setAttribute("cx", ccx.toFixed(1));
+      circle.setAttribute("cx", ccxPos.toFixed(1));
       circle.setAttribute("cy", ccy.toFixed(1));
       const titleEl = document.createElementNS(ns, "title");
       titleEl.textContent = `Roll ${rollLabel}`;
@@ -7680,7 +7894,7 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
         svg.appendChild(circle);
 
         const rollText = document.createElementNS(ns, "text");
-        rollText.setAttribute("x", ccx.toFixed(1));
+        rollText.setAttribute("x", ccxPos.toFixed(1));
         rollText.setAttribute("y", ccy.toFixed(1));
         rollText.setAttribute("font-size", rollFontSize.toFixed(1));
         rollText.setAttribute("font-family", "var(--font-mono)");
@@ -7725,6 +7939,8 @@ function renderCutPlanSvgCornered(svg, cutPlan, w, stripRollNumbers) {
     const toPt = (s) => screenOf(pointAtStation(face, s));
     annotateFaceLine(svg, spans.core.map(toPt), W, H, spans.projected.map((span) => span.map(toPt)));
   }
+
+  appendPlanLegend(svg, ns, W, H);
 }
 
 /**
