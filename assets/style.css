@@ -1709,7 +1709,10 @@ details.tool > p:empty { display: none; }
   font-size: var(--fs-sm); color: var(--clay); background: var(--clay-tint); border-radius: var(--radius);
   padding: 0.2rem 0.5rem; display: inline-block; margin-bottom: 0.6rem;
 }
-.cutplan-print-page__body { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 1rem; align-items: start; }
+/* The plan's own column is sized by the drawing (see .cutplan-print-page__plan), so it is given
+   min-content and the strip list takes everything left over. A fractional split cannot do this: the
+   plan is sized from its HEIGHT, so only the drawing knows how wide its column needs to be. */
+.cutplan-print-page__body { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 1rem; align-items: start; }
 /* A long lift puts the plan across the top and the cut list in columns under it — beside a tall
    single column the plan is squeezed and the list still runs off the page. See
    buildCutPlanPrintPages, which decides which of the two a sheet gets. */
@@ -1721,8 +1724,21 @@ details.tool > p:empty { display: none; }
 .cutplan-print-page__cols.is-tight .cutplan-print-table { font-size: var(--fs-xs); }
 .cutplan-print-page__cols.is-tight .cutplan-print-table th,
 .cutplan-print-page__cols.is-tight .cutplan-print-table td { padding: 0.22rem 0.35rem; }
-.cutplan-print-page__body--stacked .cutplan-print-page__plan { max-height: 62mm; }
-.cutplan-print-page__plan { width: 100%; height: auto; max-height: 70mm; border: 1px solid var(--line); border-radius: var(--radius); }
+/* THE DRAWING IS THE SHEET, SO GIVE IT THE PAPER.
+   Sized from its HEIGHT with the width following the drawing's own ratio (--plan-aspect, stamped on
+   by buildCutPlanSvgMarkup), so the bordered box hugs the plan instead of being a full-width frame
+   with the plan stranded in the middle. It was the other way round — a height cap inside a 100%-wide
+   box — which printed a tall lift 63 mm wide on a 190 mm page over half a sheet of blank paper.
+   max-width keeps a very wide lift on the page; the ratio then pulls the height down to match. */
+.cutplan-print-page__plan {
+  display: block;
+  width: min(100%, calc(var(--plan-h, 110mm) * var(--plan-aspect-n, 1.54)));
+  height: auto;
+  aspect-ratio: var(--plan-aspect, 400 / 260);
+  margin-inline: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
 /* FIXED layout, or the columns do not hold. With nowrap cells, an auto-layout table takes its
    min-content width no matter what its container says — so in a three-column sheet each table ran
    over the next one and the third was cut off at the edge of the paper. Fixed makes the declared
@@ -1732,6 +1748,11 @@ details.tool > p:empty { display: none; }
 .cutplan-print-table th:nth-child(2), .cutplan-print-table td:nth-child(2) { width: 30%; }
 .cutplan-print-table th:nth-child(3), .cutplan-print-table td:nth-child(3) { width: 22%; }
 .cutplan-print-table th:nth-child(4), .cutplan-print-table td:nth-child(4) { width: 28%; }
+/* No stitch patch on this lift, so no fourth column — its share goes back to the three that carry
+   something, and "Strip #" stops wrapping onto two lines. */
+.cutplan-print-table--nostitch th:nth-child(1), .cutplan-print-table--nostitch td:nth-child(1) { width: 26%; }
+.cutplan-print-table--nostitch th:nth-child(2), .cutplan-print-table--nostitch td:nth-child(2) { width: 40%; }
+.cutplan-print-table--nostitch th:nth-child(3), .cutplan-print-table--nostitch td:nth-child(3) { width: 34%; }
 .cutplan-print-table th, .cutplan-print-table td {
   text-align: left;
   padding: 0.3rem 0.6rem;
@@ -2007,8 +2028,11 @@ body.show-help .liner-head { margin-bottom: 1.4rem; }
      ONE of every PDF the app produces: the cut plan sheets, the sequence, the roll schedule and the
      labels all opened on a page of blank input fields. The sheets below carry the project name and
      the product spec in their own headings, which is what a printed sheet needs. */
+  /* .cutplan-typeprompt is the Wall/Floor switch. It is a control, and it was printing at the top of
+     page one of the cut plan — a crew cannot press it, and which of the two this job is is already
+     settled by the time anything is printed. */
   .titleblock, .panel--products-full, .panel--settings, .panel--summary, .panel__headrow,
-  .sequence-controls, .foot, #takeoffView { display: none !important; }
+  .sequence-controls, .foot, #takeoffView, .cutplan-typeprompt { display: none !important; }
   body { background: #fff; }
   .layout { grid-template-columns: 1fr; padding: 0; max-width: none; }
   .panel--lifts { border: none; box-shadow: none; padding: 0; }

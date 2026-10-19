@@ -173,7 +173,7 @@ function updateProgressStats() {
  * round the loop debugging a bug that was already fixed, because nothing on screen said which
  * version it was. It does now, next to the title, and it is read straight off the same constant
  * the cache is keyed on, so the two cannot drift apart. */
-const APP_VERSION = "v208";
+const APP_VERSION = "v209";
 (function showVersion() {
   const el = document.getElementById("appVersion");
   if (el) el.textContent = APP_VERSION;
@@ -5591,7 +5591,12 @@ function stripRollNumbersFor(r, rollLookup) {
   return r.stripLengths.map((_, i) => rollNumbersForLabel(`${liftId}::strip${i + 1}`, rollLookup));
 }
 
-/** Renders the same small plan diagram as the on-screen Cut Plan card, as a standalone SVG string. */
+/** Renders the same plan diagram as the on-screen Cut Plan card, as a standalone SVG string.
+ *  Returns its SHAPE as well: the renderers rewrite the viewBox to the drawing's own extent, so
+ *  until one has run nothing knows whether this lift draws tall or wide — and that decides how the
+ *  sheet should be laid out. A tall plan belongs beside the strip list; a wide one across the page.
+ *  The ratio also goes onto the element, so its box hugs the drawing instead of being a full-width
+ *  frame with the plan stranded in the middle of it. */
 function buildCutPlanSvgMarkup(cutPlan, w, stripRollNumbers) {
   const ns = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(ns, "svg");
@@ -5603,7 +5608,14 @@ function buildCutPlanSvgMarkup(cutPlan, w, stripRollNumbers) {
   } else {
     renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers);
   }
-  return svg.outerHTML;
+  const vb = (svg.getAttribute("viewBox") || "0 0 400 260").split(/[\s,]+/).map(Number);
+  const vw = vb[2] > 0 ? vb[2] : 400;
+  const vh = vb[3] > 0 ? vb[3] : 260;
+  // Both forms: the ratio for aspect-ratio, and the same thing as a plain number, because a width
+  // has to be CALCULATED from it — an auto width on an SVG has no intrinsic size to give a grid
+  // track, and the drawing came out zero wide.
+  svg.setAttribute("style", `--plan-aspect:${vw} / ${vh}; --plan-aspect-n:${(vw / vh).toFixed(4)}`);
+  return { markup: svg.outerHTML, aspect: vw / vh };
 }
 
 /** One <section class="cutplan-print-page"> per extents lift — shared by the Cut Plan print button and the full export.
@@ -5641,7 +5653,7 @@ function buildCutPlanPrintPages(results, project) {
           rollNums.split(",").filter(Boolean).forEach((n) => rollsUsed.add(+n));
           // The old fourth column said "Cut" on every ordinary row — a column of the same word,
           // paid for in width the stitch rows then could not fit their own note into.
-          const mainRow = `<tr><td>${i + 1}</td><td>${fmt.m(len)} m</td><td>${rollNums}</td><td></td></tr>`;
+          const mainRow = `<tr><td>${i + 1}</td><td>${fmt.m(len)} m</td><td>${rollNums}</td>${stitchCount ? "<td></td>" : ""}</tr>`;
           const stitchRows = (r.cutPlan.stitches[i] || [])
             .map((s, si) => {
               const suffix = r.cutPlan.stitches[i].length > 1 ? `.${si + 1}` : "";
@@ -5662,19 +5674,42 @@ function buildCutPlanPrintPages(results, project) {
        * half of paper: the sheet ran to five pages, the plan sat alone at the top of the first and
        * pages three and four were a column of numbers beside a blank half-page. Past about thirty
        * rows the list goes into columns under a full-width plan instead of beside a tall one. */
-      /* Measured, not guessed: under the plan and the steps, an A4 page takes about twenty rows in
-       * a column. Two columns of 27 ran onto a second page; three of 18 fit. Three columns are
-       * narrow, so the type in them is set smaller (.is-tight) to keep every row on one line. */
-      const PER_COL = 20;
       /* Split by ROWS, not by strips. A strip with a stitch against it is two rows, so chunking the
        * per-strip blocks put 19 strips (19 rows) in one column against 11 strips (22 rows) in the
        * next — one column ended halfway up the page while the other ran onto the next one. */
       const allRows = rowList.join("").split(/(?=<tr)/).filter(Boolean);
-      const cols = Math.min(3, Math.max(1, Math.ceil(allRows.length / PER_COL)));
-      const head = `<thead><tr><th>Strip #</th><th>Cut length</th><th>Roll #</th><th>Stitch</th></tr></thead>`;
+
+      /* WHICH SHAPE OF SHEET, AND HOW MUCH OF IT THE DRAWING GETS.
+       *
+       * The drawing is what a crew sets out from, so it takes whatever the strip list does not need.
+       * A tall lift puts the list in the column beside it and the plan takes the cap; a wide one
+       * runs the full width with the list under it.
+       *
+       * The row counts are measured off the printed sheet, not guessed: a row is 8.7 mm (6.6 mm in
+       * the narrow three-and-four-column form), and the heading, the two steps and the roll strip at
+       * the foot come to 58-70 mm depending on how many rolls the lift draws from, against the
+       * 273 mm an A4 page gives once its margins are off. 188 mm is what that leaves for the plan
+       * and the list together, and every sheet of the user's eight-lift job measures inside 273. Short columns rather
+       * than a tall one: a lift with 18 rows in a single column left the plan at its 50 mm floor and
+       * still ran 9 mm onto a second page, where the same rows in two columns fit with a 115 mm
+       * plan above them. */
+      const BESIDE_MAX_ROWS = 20;
+      const PER_COL = 12;
+      const plan = buildCutPlanSvgMarkup(r.cutPlan, r.w, stripRollNumbers);
+      const stacked = plan.aspect >= 1 || allRows.length > BESIDE_MAX_ROWS;
+      const cols = stacked ? Math.min(4, Math.max(1, Math.ceil(allRows.length / PER_COL))) : 1;
+      const rowsPerCol = stacked ? Math.ceil(allRows.length / cols) : 0;
+      const listMm = rowsPerCol ? rowsPerCol * (cols >= 3 ? 6.6 : 8.7) + 12 : 0;
+      const planMm = Math.round(Math.max(50, Math.min(125, 188 - listMm)));
+      /* A column of blank cells is not a column. Most lifts raise no stitch patch at all, and the
+       * empty fourth column was taking a quarter of the table's width on every one of them — width
+       * the three columns that do carry something had to give up, with "Strip #" wrapping onto two
+       * lines to pay for it. */
+      const tableClass = `cutplan-print-table${stitchCount ? "" : " cutplan-print-table--nostitch"}`;
+      const head = `<thead><tr><th>Strip #</th><th>Cut length</th><th>Roll #</th>${stitchCount ? "<th>Stitch</th>" : ""}</tr></thead>`;
       let stripTables;
       if (cols === 1) {
-        stripTables = `<table class="cutplan-print-table">${head}<tbody>${allRows.join("")}</tbody></table>`;
+        stripTables = `<table class="${tableClass}">${head}<tbody>${allRows.join("")}</tbody></table>`;
       } else {
         const per = Math.ceil(allRows.length / cols);
         const chunks = [];
@@ -5683,7 +5718,7 @@ function buildCutPlanPrintPages(results, project) {
           `<div class="cutplan-print-page__cols${cols >= 3 ? " is-tight" : ""}" style="--cols:${cols}">` +
           chunks
             .filter((chunk) => chunk.length)
-            .map((chunk) => `<table class="cutplan-print-table">${head}<tbody>${chunk.join("")}</tbody></table>`)
+            .map((chunk) => `<table class="${tableClass}">${head}<tbody>${chunk.join("")}</tbody></table>`)
             .join("") +
           `</div>`;
       }
@@ -5712,6 +5747,7 @@ function buildCutPlanPrintPages(results, project) {
         : "";
 
       const orderBadge = buildIndex >= 0 ? `<span class="cutplan-print-page__order">${buildIndex + 1}</span>` : "";
+
       return `
         <section class="cutplan-print-page">
           <div class="cutplan-print-page__head">
@@ -5732,8 +5768,8 @@ function buildCutPlanPrintPages(results, project) {
             <li>Pin/stake the grid as required, then place and compact fill up to ${fillTarget}.</li>
           </ol>
           ${staggerNote ? `<div class="cutplan-print-page__stagger">${escapeHtml(staggerNote)}</div>` : ""}
-          <div class="cutplan-print-page__body${cols === 1 ? "" : " cutplan-print-page__body--stacked"}">
-            ${buildCutPlanSvgMarkup(r.cutPlan, r.w, stripRollNumbers)}
+          <div class="cutplan-print-page__body${stacked ? " cutplan-print-page__body--stacked" : ""}" style="--plan-h:${planMm}mm">
+            ${plan.markup}
             ${stripTables}
           </div>
           ${stitchCount ? `<p class="cutplan-print-page__legend">A row in italics is a stitch — a supplementary patch on the same line as the strip above it, starting the figure shown back from the face. Every other row is a straight cut.</p>` : ""}
