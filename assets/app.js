@@ -173,7 +173,7 @@ function updateProgressStats() {
  * round the loop debugging a bug that was already fixed, because nothing on screen said which
  * version it was. It does now, next to the title, and it is read straight off the same constant
  * the cache is keyed on, so the two cannot drift apart. */
-const APP_VERSION = "v205";
+const APP_VERSION = "v206";
 (function showVersion() {
   const el = document.getElementById("appVersion");
   if (el) el.textContent = APP_VERSION;
@@ -1063,9 +1063,14 @@ function stripBoundaryReach(station, w, poly, face, inward, vertexStations, avoi
    * Measured on the user's own lift: the 40-45 m band is 27 m deep and came out 33, because the
    * sample at station 40.000 belongs to the band beyond it.
    *
-   * A millimetre inside each edge keeps every sample on this strip's own ground. Real kinks inside
-   * the lane are still sampled exactly — they come in through vertexStations below, which is a
-   * strict interval and so never includes the shared edges either. */
+   * A millimetre inside each edge keeps every sample on this strip's own ground — the vertex
+   * samples below included. A strict "inside the lane" test is not enough for those: a station is a
+   * dot product of survey coordinates, so the vertex ON the shared line comes back as
+   * 9.99999999853882 against a lane ending at 10, passes the test by a nanometre, and the ray there
+   * is collinear with the step's own edge and returns the band beyond it. That is the whole 33-for-27
+   * strip on the user's lift. Measured against the same millimetre as the sweep, it is excluded with
+   * everything else that belongs to the neighbour, and a real kink a millimetre inside a 5 m lane is
+   * its neighbour's to cover anyway. */
   const EDGE_INSET = 1e-3;
   const laneMin = Math.max(0, station - w / 2), laneMax = Math.min(face.length, station + w / 2);
   const inset = Math.min(EDGE_INSET, (laneMax - laneMin) / 4);
@@ -1077,7 +1082,7 @@ function stripBoundaryReach(station, w, poly, face, inward, vertexStations, avoi
     edgeStations.push(sweepLo + t * (sweepHi - sweepLo));
   }
   vertexStations.forEach((s) => {
-    if (s > laneMin && s < laneMax) edgeStations.push(s);
+    if (s > sweepLo && s < sweepHi) edgeStations.push(s);
   });
   let farReach = 0, nearReach = 0, anyMain = false;
   // The shallowest sample as well as the deepest. One extra comparison in a loop that already runs,
