@@ -173,7 +173,7 @@ function updateProgressStats() {
  * round the loop debugging a bug that was already fixed, because nothing on screen said which
  * version it was. It does now, next to the title, and it is read straight off the same constant
  * the cache is keyed on, so the two cannot drift apart. */
-const APP_VERSION = "v214";
+const APP_VERSION = "v215";
 (function showVersion() {
   const el = document.getElementById("appVersion");
   if (el) el.textContent = APP_VERSION;
@@ -5650,7 +5650,7 @@ function buildCutPlanSvgMarkup(cutPlan, w, stripRollNumbers) {
  *  Folds in the installation-sequence steps (build order, stagger note, next fill target) and the
  *  "Installed" checkbox too, so this one sheet is everything a crew needs for that level — no need to
  *  separately print the Installation sequence tab and flip between two sheets on site. */
-function buildCutPlanPrintPages(results, project) {
+function buildCutPlanPrintPages(results, project, numberPages = false) {
   const rolls = window.__geogridRolls || [];
   const rollLookup = buildRollLookup(rolls);
   const allResults = window.__geogridResults || results;
@@ -5738,9 +5738,9 @@ function buildCutPlanPrintPages(results, project) {
       const cols = Math.min(3, Math.max(allRows.length > 6 ? 2 : 1, Math.ceil(allRows.length / PER_COL)));
       const rowsPerCol = Math.ceil(allRows.length / cols);
       const listMm = rowsPerCol ? rowsPerCol * (cols >= 3 ? 6.6 : 8.7) + 12 : 0;
-      // 24 mm of that budget is the 12 mm of clear paper around the plan inside its frame
-      // (see .cutplan-print-page__plan).
-      const planMm = Math.round(Math.max(50, Math.min(125, 188 - 24 - listMm)));
+      // 24 mm of that budget is the 12 mm of clear paper either side of the plan (see
+      // .cutplan-print-page__plan), and 8 mm of it is the page number at the foot.
+      const planMm = Math.round(Math.max(50, Math.min(125, 180 - 24 - listMm)));
       /* A column of blank cells is not a column. Most lifts raise no stitch patch at all, and the
        * empty fourth column was taking a quarter of the table's width on every one of them — width
        * the three columns that do carry something had to give up, with "Strip #" wrapping onto two
@@ -5814,6 +5814,12 @@ function buildCutPlanPrintPages(results, project) {
           </div>
           ${stitchCount ? `<p class="cutplan-print-page__legend">A row in italics is a stitch — a supplementary patch on the same line as the strip above it, starting the figure shown back from the face. Every other row is a straight cut.</p>` : ""}
           ${rollsSection}
+          ${
+            /* One page per lift, so the page number is the lift's place in the set — which is also
+             * its build order. Only on the per-lift print: the full export is a longer document
+             * whose pages are not one per lift, and numbering these inside it would be a lie. */
+            numberPages ? `<p class="cutplan-print-page__pageno">Page ${results.indexOf(r) + 1} of ${results.length}</p>` : ""
+          }
         </section>
       `;
     })
@@ -5823,7 +5829,7 @@ function buildCutPlanPrintPages(results, project) {
 document.getElementById("printCutPlanBtn").addEventListener("click", () => {
   const results = window.__geogridCutPlanResults || [];
   const project = document.getElementById("projectName").value || "GeoMate";
-  document.getElementById("cutPlanPrintView").innerHTML = buildCutPlanPrintPages(results, project);
+  document.getElementById("cutPlanPrintView").innerHTML = buildCutPlanPrintPages(results, project, true);
   setPrintMode("printing-cutplan");
   window.print();
 });
