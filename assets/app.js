@@ -173,7 +173,7 @@ function updateProgressStats() {
  * round the loop debugging a bug that was already fixed, because nothing on screen said which
  * version it was. It does now, next to the title, and it is read straight off the same constant
  * the cache is keyed on, so the two cannot drift apart. */
-const APP_VERSION = "v206";
+const APP_VERSION = "v207";
 (function showVersion() {
   const el = document.getElementById("appVersion");
   if (el) el.textContent = APP_VERSION;
@@ -1132,10 +1132,26 @@ function stripBoundaryReach(station, w, poly, face, inward, vertexStations, avoi
   // A strip that starts at the face is cut to its far reach; one measured entry-to-exit off an
   // extended face line starts partway in, so it is cut to the stretch it actually spans.
   const cutLength = roundToPracticalLength(anyMain ? farReach : farReach - nearReach, ROUND_STEP);
+  /* A STITCH IS ONLY FOR GROUND THE STRIP ITSELF CANNOT REACH.
+   *
+   * A patch exists for a pocket past a gap, beyond where the strip's own single square cut stops.
+   * The test for that was "any segment that is not the main one", which is not the same thing, and
+   * on an extended face it is badly not the same thing: where the face line has been prolonged past
+   * the end of the real wall (extendFaceToFullExtent) the ray starts OUTSIDE the boundary, so there
+   * is no main segment at all, and every segment on the ray matched. Each one got a patch of its
+   * own laid on top of the strip that already covers exactly that ground — the cut length is
+   * measured entry-to-exit in that case, so the strip IS the pocket.
+   *
+   * That was the whole raked end of the user's RL 41.50: five 15 m strips, each also billed as a
+   * 15 m patch. 75 m of roll and 375 m2 of grid on ground already covered once.
+   *
+   * Measured against the stretch the strip actually spans instead. A pocket past a gap still ends
+   * beyond that and still gets its patch; anything the strip already lies over does not. */
+  const stripSpanEnd = anyMain ? farReach : Math.max(farReach, lastExit);
   const stitches = avoidStitches
     ? []
     : segments
-        .filter((s) => s !== main && s.end - s.start > STITCH_MIN)
+        .filter((s) => s !== main && s.end - s.start > STITCH_MIN && s.end > stripSpanEnd + 1e-6)
         .map((s) => ({ offset: roundUpToStep(s.start, ROUND_STEP), length: roundToPracticalLength(s.end - s.start, ROUND_STEP) }));
 
   return { cutLength, farReach, nearReach, stitches, farReachMin: Number.isFinite(farReachMin) ? farReachMin : farReach };
@@ -1673,11 +1689,14 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     cutLengths[idx] = roundToPracticalLength(turned.farReach, ROUND_STEP);
     // Recomputed against the turned ray — a pocket past a gap sits somewhere else entirely once the
     // strip changes bearing, so the old segment's patches no longer describe this strip.
+    // Measured against the stretch this strip now spans, exactly as stripBoundaryReach does it: a
+    // patch is for ground past where the strip's own cut stops, and a segment the turned strip
+    // already lies over would be the same material billed twice.
     const mainSeg = mainSegmentAt(turned.centerSegments);
     stitches[idx] = avoidStitches
       ? []
       : turned.centerSegments
-          .filter((s) => s !== mainSeg && s.end - s.start > STITCH_MIN)
+          .filter((s) => s !== mainSeg && s.end - s.start > STITCH_MIN && s.end > turned.farReach + 1e-6)
           .map((s) => ({ offset: roundUpToStep(s.start, ROUND_STEP), length: roundToPracticalLength(s.end - s.start, ROUND_STEP) }));
     return true;
   };
