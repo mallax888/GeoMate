@@ -173,7 +173,7 @@ function updateProgressStats() {
  * round the loop debugging a bug that was already fixed, because nothing on screen said which
  * version it was. It does now, next to the title, and it is read straight off the same constant
  * the cache is keyed on, so the two cannot drift apart. */
-const APP_VERSION = "v216";
+const APP_VERSION = "v217";
 (function showVersion() {
   const el = document.getElementById("appVersion");
   if (el) el.textContent = APP_VERSION;
@@ -3398,6 +3398,7 @@ function computeParallelCutPlan(rawPoints, w, oMin, faceCycle, stripSide = null)
   const cutLengths = [], stitches = [], extentsReach = [], frontReach = [], stripWidths = [];
   const stripStarts = [], stripLocalStarts = [], stripSegmentIndex = [], stripDirs = [], stripIsStitch = [];
   const chainStart = sMin - w;
+  let lastStation = null;
 
   /* THE RUN ENDS WHEN THERE IS GROUND LEFT, NOT WHEN THERE IS NONE.
    *
@@ -3412,40 +3413,140 @@ function computeParallelCutPlan(rawPoints, w, oMin, faceCycle, stripSide = null)
     // The last strip is pulled back to finish flush with the end of the lift instead of hanging past
     // it, so the run ends on covered ground rather than on an offcut.
     const station = Math.min(s, Math.max(w / 2, runLength - w / 2));
-    // Clamping can land two consecutive strips on the same station; the second covers nothing the
-    // first does not.
-    if (stripStarts.length && Math.abs(stripStarts[stripStarts.length - 1] - (station - w / 2)) < FIT_SNAP * w) continue;
+    /* A STRIP THAT ADDS NO GROUND IS NOT A STRIP.
+     *
+     * The clamp above pulls the last strip back to finish flush with the end of the lift. Where the
+     * run is very nearly a whole number of strips long, that clamped strip lands a few centimetres
+     * from the one before it and covers the same ground twice: on the user's RL 44.50 the run is
+     * 125.054 m, so the 26th strip sat 54 mm from the 25th — a full 5 m wide strip, 10 m long,
+     * 50 m2 of grid, for 54 mm of new ground.
+     *
+     * Nothing narrower than MIN_PIECE_WIDTH can be laid as a piece of its own, so a strip that adds
+     * less than that is not worth its own roll. The few centimetres it would have covered stay for
+     * the lap to take care of — and with no lap set, they are a few centimetres of a surveyed line
+     * nobody grades to the millimetre. */
+    if (lastStation != null && station - lastStation < MIN_PIECE_WIDTH) continue;
+    lastStation = station;
     chordsAt(station).forEach(([lo0, hi0]) => {
-      // The chord is measured at the strip's centre, but the strip is w wide: sampling across its
-      // width and taking the widest reach means a tapering edge is covered to its true extent rather
-      // than to whatever the centreline of the strip happened to catch. Floors have the leeway for
-      // it; the alternative is a sliver of bare ground down every taper.
-      let lo = lo0, hi = hi0;
-      // Same rule as stripBoundaryReach: +/- half a width lands on the line shared with the next
-      // strip, so a step there reads back as this strip's depth. Held a millimetre inside.
-      [-w / 2 + 1e-3, -w / 4, w / 4, w / 2 - 1e-3].forEach((off) => {
-        const at = station + off;
-        if (at < 0 || at > runLength) return;
-        chordsAt(at).forEach(([a, b]) => {
-          if (b > lo0 && a < hi0) { lo = Math.min(lo, a); hi = Math.max(hi, b); }
+      /* A STRIP IS CUT TO ITS DEEPEST POINT, AND A STEP MAKES THAT THE WRONG NUMBER — ON A FLOOR TOO.
+       *
+       * The chord is measured at the strip's centre, then widened by sampling across the strip's
+       * width, because a tapering edge has to be covered to its true extent rather than to whatever
+       * the centreline happened to catch. Taking the widest reach is right for a taper. It is wrong
+       * for a STEP: where the ground under one strip drops 12.5 m partway across it, the whole strip
+       * was cut to the deep side and half of it ran out past the extents. On the user's RL 44.50,
+       * strips 5 and 6 each straddled a 12.5 m step and were cut 26.5 m and 39.0 m for ground that
+       * is 14.4 m and 26.9 m deep over half their width.
+       *
+       * The wall layout has split strips at a step since the beginning (stripPiecesAcrossSteps).
+       * This is the same rule in this layout's own terms: sample right across the lane, group the
+       * samples that agree on depth, and lay one piece per group, each cut to its own depth. The
+       * same guards as the wall: a step, never a taper; nothing narrower than MIN_PIECE_WIDTH; the
+       * pieces lap each other by the minimum overlap; and it only happens if it saves material. */
+      const laneLo = Math.max(0, station - w / 2), laneHi = Math.min(runLength, station + w / 2);
+      const inset = Math.min(1e-3, (laneHi - laneLo) / 4);
+      const n = Math.max(5, Math.min(21, Math.round(w / 0.25) + 1));
+      const samples = [];
+      for (let k = 0; k < n; k++) {
+        const at = laneLo + inset + (k / (n - 1)) * (laneHi - laneLo - 2 * inset);
+        let a = null, bb = null;
+        chordsAt(at).forEach(([c, d]) => {
+          if (d > lo0 && c < hi0) { a = a == null ? c : Math.min(a, c); bb = bb == null ? d : Math.max(bb, d); }
         });
+        samples.push({ at, lo: a, hi: bb });
+      }
+      let covered = samples.filter((q) => q.lo != null);
+      if (!covered.length) return;
+
+      /* A SLIVER AT THE EDGE OF A LANE IS NOT THIS STRIP'S GROUND.
+       *
+       * The lanes are set out from the start of the run at the roll's pitch; the steps in the
+       * boundary are wherever the survey put them. On the user's RL 44.50 they miss each other by
+       * 50 mm, so the first 50 mm of several lanes sits in the band BEYOND the step — 12.5 m deeper
+       * than the rest of the lane.
+       *
+       * Reading that as the lane's depth was costing 1.5 m on each of those strips (the overrun cap
+       * is all that stopped it costing 12.5) and buying nothing: 50 mm of ground cannot be covered
+       * by a piece of its own — nothing that narrow can be laid — so the sliver stayed bare anyway.
+       * The strip was cut longer AND the hole was still there. Measured on that lift: three strips,
+       * 22.5 m2 of grid, 0.6 m2 still uncovered.
+       *
+       * So a depth that holds across less than MIN_PIECE_WIDTH of the lane is not what this strip is
+       * cut to. A taper has every sample at its own depth and so loses them all, which is why the
+       * fallback keeps the widest reading: a taper must still be covered to its full extent. */
+      const bandKey = (q) => `${Math.round(q.lo / ROUND_STEP)}:${Math.round(q.hi / ROUND_STEP)}`;
+      const sampleW = (laneHi - laneLo) / Math.max(1, covered.length - 1);
+      const bandWidth = new Map();
+      covered.forEach((q) => bandWidth.set(bandKey(q), (bandWidth.get(bandKey(q)) || 0) + sampleW));
+      const solid = covered.filter((q) => bandWidth.get(bandKey(q)) >= MIN_PIECE_WIDTH);
+      if (solid.length) covered = solid;
+      const cap = (q) => ({ lo: Math.max(q.lo, lo0 - FLOOR_OVERRUN), hi: Math.min(q.hi, hi0 + FLOOR_OVERRUN) });
+      const widest = covered.reduce(
+        (acc, q) => ({ lo: Math.min(acc.lo, q.lo), hi: Math.max(acc.hi, q.hi) }),
+        { lo: covered[0].lo, hi: covered[0].hi }
+      );
+      const whole = { start: laneLo, width: laneHi - laneLo, ...cap(widest) };
+
+      /* Grouped by depth: a sample that agrees with the group beside it within one rounding step
+       * belongs to it, anything else starts a new one.
+       *
+       * A sample that lands IN the step — partway down it, agreeing with neither side — is its own
+       * group of one. It is not a piece; it is the boundary between two pieces, and the pieces
+       * either side meet at it. (Treating a lone sample as a piece in its own right was the first
+       * version of this, and it refused every real step on the user's lift, because a sharp step
+       * nearly always catches one sample on the way down.)
+       *
+       * A TAPER produces nothing but lone samples — every one differs from the last by a little —
+       * so after the lone ones are set aside there is at most one group left and no split happens,
+       * which is the behaviour a taper needs. The flatness check below is the belt to that braces. */
+      const groups = [];
+      covered.forEach((q) => {
+        const last = groups[groups.length - 1];
+        if (last && Math.abs(last.hi - q.hi) <= ROUND_STEP && Math.abs(last.lo - q.lo) <= ROUND_STEP) {
+          last.members.push(q);
+          last.lo = Math.min(last.lo, q.lo);
+          last.hi = Math.max(last.hi, q.hi);
+        } else groups.push({ members: [q], lo: q.lo, hi: q.hi });
       });
-      // Capped, or a strip at the pointed end of a lift takes the whole width of the widest station
-      // it touches and ends up mostly hanging off the ground it is supposed to cover. Past the edge
-      // by an armful is a trim on site; past it by ten metres is a strip cut for nothing.
-      lo = Math.max(lo, lo0 - FLOOR_OVERRUN);
-      hi = Math.min(hi, hi0 + FLOOR_OVERRUN);
-      if (hi - lo < MIN_STRIP_LENGTH) return;
-      cutLengths.push(roundToPracticalLength(hi - lo, ROUND_STEP));
-      stitches.push([]);
-      frontReach.push(lo);
-      extentsReach.push(hi);
-      stripWidths.push(w);
-      stripStarts.push(station);
-      stripLocalStarts.push(station + (sMin - chainStart) - w / 2);
-      stripSegmentIndex.push(0);
-      stripDirs.push({ x: run.x, y: run.y });
-      stripIsStitch.push(false);
+      const plateaus = groups.filter((g) => g.members.length > 1);
+
+      let pieces = [whole];
+      if (plateaus.length > 1) {
+        const flat = plateaus.every(
+          (g) =>
+            Math.max(...g.members.map((q) => q.hi)) - Math.min(...g.members.map((q) => q.hi)) <= ROUND_STEP &&
+            Math.max(...g.members.map((q) => q.lo)) - Math.min(...g.members.map((q) => q.lo)) <= ROUND_STEP
+        );
+        // Pieces meet midway between the last sample of one plateau and the first of the next — the
+        // step itself — and lap each other there by the minimum overlap, half from each side, since
+        // butted exactly they leave a hairline of ground between them.
+        const lap = Math.max(0, oMin) / 2;
+        const built = [];
+        plateaus.forEach((g, gi) => {
+          const prev = plateaus[gi - 1], next = plateaus[gi + 1];
+          const a = prev ? (prev.members[prev.members.length - 1].at + g.members[0].at) / 2 - lap : laneLo;
+          const bq = next ? (g.members[g.members.length - 1].at + next.members[0].at) / 2 + lap : laneHi;
+          built.push({ start: a, width: bq - a, ...cap(g) });
+        });
+        const areaOf = (list) => list.reduce((t, q) => t + q.width * Math.max(0, q.hi - q.lo), 0);
+        const layable = built.every((q) => q.width >= MIN_PIECE_WIDTH);
+        if (flat && layable && built.length > 1 && areaOf(built) < areaOf(pieces) - 1e-9) pieces = built;
+      }
+
+      pieces.forEach((pc) => {
+        if (pc.hi - pc.lo < MIN_STRIP_LENGTH) return;
+        const centre = pc.start + pc.width / 2;
+        cutLengths.push(roundToPracticalLength(pc.hi - pc.lo, ROUND_STEP));
+        stitches.push([]);
+        frontReach.push(pc.lo);
+        extentsReach.push(pc.hi);
+        stripWidths.push(pc.width);
+        stripStarts.push(centre);
+        stripLocalStarts.push(centre + (sMin - chainStart) - pc.width / 2);
+        stripSegmentIndex.push(0);
+        stripDirs.push({ x: run.x, y: run.y });
+        stripIsStitch.push(false);
+      });
     });
     if (station >= runLength - w / 2) break;
   }
