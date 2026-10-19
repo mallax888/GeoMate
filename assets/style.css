@@ -93,6 +93,10 @@
   --ink-on-accent: #ffffff;
   --clay: #8f4a07;
   --clay-tint: #fdead2;
+  /* The spotlit version of a clay band — see render3D. A hovered level is pulled forward by going
+     DEEPER in its own colour, not by changing colour: switching it to the blue accent made half the
+     levels on a stack answer "which one am I on?" with the wrong hue. */
+  --clay-pop: #7a3d05;
   --graphite: #3c433f;
   --good: #256040;
   --good-tint: #e1efe6;
@@ -141,6 +145,7 @@
   --stitch-tint: #2a1f38;
   --clay: #ffb238;
   --clay-tint: #3a2a0a;
+  --clay-pop: #e08a10;
   --graphite: #a3aca6;
   --good: #7dc199;
   --good-tint: #1c3226;
@@ -830,8 +835,14 @@ details.tool > p:empty { display: none; }
 /* Strips+overlap and area+fill-volume are each two related numbers sharing one column now (a
    primary figure and a smaller muted one underneath) instead of four separate columns — the same
    values, just denser, so the table needs meaningfully less width for them. */
+/* Wide enough for the longest figure either column actually holds — a five-digit fill volume with
+   its unit, and a three-digit strip count over an overlap in millimetres. At 5.5rem the two columns
+   ran into each other and into Embedment beside them, which is what made the right-hand end of the
+   table read as one bunched block of digits. */
+.col-strips { padding-left: 1.1rem; }
+.col-area { padding-left: 1.1rem; }
 .col-strips, .col-area {
-  min-width: 5.5rem;
+  min-width: 7.2rem;
   text-align: right;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
@@ -1734,12 +1745,18 @@ details.tool > p:empty { display: none; }
    max-width keeps a very wide lift on the page; the ratio then pulls the height down to match. */
 .cutplan-print-page__plan {
   display: block;
-  width: min(100%, calc(var(--plan-h, 110mm) * var(--plan-aspect-n, 1.54)));
+  width: min(calc(100% - 20mm), calc(var(--plan-h, 110mm) * var(--plan-aspect-n, 1.54)));
   height: auto;
   aspect-ratio: var(--plan-aspect, 400 / 260);
   margin-inline: auto;
   border: 1px solid var(--line);
   border-radius: var(--radius);
+  /* 10 mm of clear paper inside the frame — asked for. content-box, so --plan-h still means the
+     DRAWING's own height and the ratio still fits the drawing exactly; the 20 mm the border adds in
+     each direction is taken out of the page budget in buildCutPlanPrintPages instead. Sized the
+     other way round, the padding ate into the drawing and letterboxed it inside its own frame. */
+  box-sizing: content-box;
+  padding: 10mm;
 }
 /* FIXED layout, or the columns do not hold. With nowrap cells, an auto-layout table takes its
    min-content width no matter what its container says — so in a three-column sheet each table ran
@@ -2014,6 +2031,7 @@ body.show-help .liner-head { margin-bottom: 1.4rem; }
     --ink-on-accent: #ffffff !important;
     --clay: #8f4a07 !important;
     --clay-tint: #fdead2 !important;
+    --clay-pop: #7a3d05 !important;
     --graphite: #3c433f !important;
     --good: #256040 !important;
     --good-tint: #e1efe6 !important;

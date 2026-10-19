@@ -173,7 +173,7 @@ function updateProgressStats() {
  * round the loop debugging a bug that was already fixed, because nothing on screen said which
  * version it was. It does now, next to the title, and it is read straight off the same constant
  * the cache is keyed on, so the two cannot drift apart. */
-const APP_VERSION = "v212";
+const APP_VERSION = "v213";
 (function showVersion() {
   const el = document.getElementById("appVersion");
   if (el) el.textContent = APP_VERSION;
@@ -4575,8 +4575,14 @@ function renderDiagram(svg, L, result, w, W = 240, H = 34) {
   // Origin/scale computed off the real drawn extent, not assumed to start at 0 — packStripsFromSide's
   // "right" side mirrors the overshooting strip to a negative start, which would otherwise clip off
   // the left edge of the diagram.
-  const minStart = Math.min(0, ...starts);
-  const maxEnd = Math.max(L, ...starts.map((s, i) => s + widths[i]));
+  /* A FLOOR is drawn against its own run, not against a face line it does not have: its strips are
+     stationed along a centreline that begins half a strip before the first of them, so anchoring
+     the frame at station 0 left a gap at one end between the dimension line and the first strip.
+     A wall keeps station 0 — that is the face, and an end strip overhanging it is worth seeing. */
+  const floorRun = settingsInputs.reinforcementType && settingsInputs.reinforcementType.value === "floor";
+  const ends = starts.map((s, i) => s + widths[i]);
+  const minStart = floorRun ? Math.min(...starts) : Math.min(0, ...starts);
+  const maxEnd = floorRun ? Math.max(...ends) : Math.max(L, ...ends);
   const scale = usableW / Math.max(maxEnd - minStart, 1e-6);
 
   for (let i = 0; i < n; i++) {
@@ -4611,10 +4617,17 @@ function renderDiagram(svg, L, result, w, W = 240, H = 34) {
     }
   }
 
-  // Face-length dimension line beneath the strips
+  /* Dimension line beneath the strips.
+   *
+   * On a WALL it is the face: 0 to L, and the strips are set out against it, so the two line up.
+   * A FLOOR has no face. Its run is stationed along its own centreline, which starts half a strip
+   * before the first strip and is not the same datum as the lift's extents at all — so drawing 0
+   * to L under it put a line that reached 2.5 m past the strips at one end and stopped 2.5 m short
+   * at the other, as if the lift carried on past the grid. It measures the run the strips actually
+   * make instead. */
   const dimY = 28;
-  const lineX1 = pad + (0 - minStart) * scale;
-  const lineX2 = pad + (L - minStart) * scale;
+  const lineX1 = floorRun ? pad : pad + (0 - minStart) * scale;
+  const lineX2 = floorRun ? pad + (maxEnd - minStart) * scale : pad + (L - minStart) * scale;
   const line = document.createElementNS(ns, "line");
   line.setAttribute("x1", lineX1.toFixed(2));
   line.setAttribute("x2", lineX2.toFixed(2));
@@ -5155,20 +5168,34 @@ function computeAndRender() {
     });
   });
 
-  // Fill volume per lift = its own footprint (theoreticalArea — the net area, not counting overlap
-  // waste) times how much fill it took to reach it: the RL gap up from the lift below, or from
-  // Base level for the very bottom one. A separate pass over the finished liftResults, not folded
-  // into the loop above, because "the lift below" only exists once every row's already been through.
+  /* Fill volume per lift: the fill it took to get up to it — the RL gap from the lift below, or
+   * from Base level for the very bottom one — over the ground it covers.
+   *
+   * ONE METHOD, so one interval is one number wherever it is shown. This took the upper lift's own
+   * footprint times the gap, while the lift card and the printed sheet took the average of the two
+   * footprints (the trapezoidal rule). On a battered wall every lift sits on a different footprint,
+   * so the two disagreed by half the batter: the fill between RL 39.40 and 40.00 read 1,410 m³ in
+   * this table and 1,250 m³ on the card for the same stretch of wall. Averaged here too, which is
+   * also the more accurate of the two — a prism on either end's area is out by the same half-batter
+   * whichever end it is taken from.
+   *
+   * The bottom lift has no lift below it to average with, only a level, so it keeps its own area.
+   *
+   * Rounded up to the nearest 50 for DISPLAY only (see FILL_ROUND_M3): r.fillVolume stays exact, so
+   * the project total adds the real volumes rather than compounding eight roundings. */
   let prevRL = baseLevel;
+  let prevArea = null;
   liftResults.forEach((r) => {
     const curRL = parseFloat(r.rl);
     const thickness = Number.isFinite(curRL) && Number.isFinite(prevRL) ? curRL - prevRL : null;
     r.liftThickness = thickness;
-    r.fillVolume = thickness > 0 && r.theoreticalArea > 0 ? r.theoreticalArea * thickness : null;
+    const area =
+      prevArea != null && prevArea > 0 && r.theoreticalArea > 0 ? (prevArea + r.theoreticalArea) / 2 : r.theoreticalArea;
+    r.fillVolume = thickness > 0 && area > 0 ? area * thickness : null;
     const volCell = r.row.querySelector(".volume-value");
     if (volCell) {
       if (r.fillVolume != null) {
-        volCell.innerHTML = `${fmt.m(r.fillVolume)}<small> m³</small>`;
+        volCell.innerHTML = `${fmt.int(Math.ceil(r.fillVolume / FILL_ROUND_M3) * FILL_ROUND_M3)}<small> m³</small>`;
         volCell.classList.remove("is-empty");
       } else {
         volCell.textContent = "—";
@@ -5176,6 +5203,7 @@ function computeAndRender() {
       }
     }
     if (Number.isFinite(curRL)) prevRL = curRL;
+    if (r.theoreticalArea > 0) prevArea = r.theoreticalArea;
   });
 
   window.__geogridResults = liftResults; // exposed for CSV export + progress tracking, set before renderSummary needs it
@@ -5704,7 +5732,8 @@ function buildCutPlanPrintPages(results, project) {
       const cols = stacked ? Math.min(4, Math.max(1, Math.ceil(allRows.length / PER_COL))) : 1;
       const rowsPerCol = stacked ? Math.ceil(allRows.length / cols) : 0;
       const listMm = rowsPerCol ? rowsPerCol * (cols >= 3 ? 6.6 : 8.7) + 12 : 0;
-      const planMm = Math.round(Math.max(50, Math.min(125, 188 - listMm)));
+      // 20 mm of that budget is the 10 mm border around the plan (see .cutplan-print-page__plan).
+      const planMm = Math.round(Math.max(50, Math.min(125, 188 - 20 - listMm)));
       /* A column of blank cells is not a column. Most lifts raise no stitch patch at all, and the
        * empty fourth column was taking a quarter of the table's width on every one of them — width
        * the three columns that do carry something had to give up, with "Strip #" wrapping onto two
@@ -8656,6 +8685,7 @@ function render3D(results) {
   const inkOnAccent = style.getPropertyValue("--ink-on-accent").trim();
   const accent = style.getPropertyValue("--accent").trim();
   const clay = style.getPropertyValue("--clay").trim();
+  const clayPop = style.getPropertyValue("--clay-pop").trim() || clay;
 
   ctx.font = "11px " + (style.getPropertyValue("--font-mono").trim() || "monospace");
   ctx.textBaseline = "middle";
@@ -8693,11 +8723,15 @@ function render3D(results) {
      *
      * The spotlit lift ignores all of it — one consistent loud colour at full strength, every time. */
     const band = alt ? clay : accent;
-    ctx.fillStyle = isHovered ? accentPop : lift.installed ? goodTint : band;
+    /* Spotlit means DEEPER IN ITS OWN COLOUR, not a different colour. Every hovered lift used to go
+     * blue, so hovering a clay level changed the one thing the eye was tracking it by — and on a
+     * stack where neighbours alternate, a clay level turning blue reads as the level next to it. */
+    const bandPop = alt ? clayPop : accentPop;
+    ctx.fillStyle = isHovered ? bandPop : lift.installed ? goodTint : band;
     ctx.globalAlpha = isHovered ? 0.82 : (lift.installed ? 0.96 : 0.3) * (dim ? 0.3 : 1);
     ctx.fill();
     ctx.globalAlpha = 1;
-    ctx.strokeStyle = isHovered ? accentPop : lift.installed ? good : band;
+    ctx.strokeStyle = isHovered ? bandPop : lift.installed ? good : band;
     ctx.lineWidth = isHovered ? 2.75 : 1.4;
     ctx.globalAlpha = isHovered ? 1 : dim ? 0.3 : 1;
     ctx.stroke();
