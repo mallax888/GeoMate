@@ -173,7 +173,7 @@ function updateProgressStats() {
  * round the loop debugging a bug that was already fixed, because nothing on screen said which
  * version it was. It does now, next to the title, and it is read straight off the same constant
  * the cache is keyed on, so the two cannot drift apart. */
-const APP_VERSION = "v203";
+const APP_VERSION = "v204";
 (function showVersion() {
   const el = document.getElementById("appVersion");
   if (el) el.textContent = APP_VERSION;
@@ -3353,10 +3353,22 @@ function computeParallelCutPlan(rawPoints, w, oMin, faceCycle) {
   const stripStarts = [], stripLocalStarts = [], stripSegmentIndex = [], stripDirs = [], stripIsStitch = [];
   const chainStart = sMin - w;
 
-  for (let s = w / 2; s - w / 2 <= runLength + 1e-9; s += pitch) {
+  /* THE RUN ENDS WHEN THERE IS GROUND LEFT, NOT WHEN THERE IS NONE.
+   *
+   * `<=` with a one-nanometre tolerance let a strip start exactly where the run finishes. A 50.00 m
+   * run drawn at a bearing arrives as 50.00000000230898 — two nanometres over, bigger than the
+   * tolerance — so the loop took one more turn, and the clamp below pulled that extra strip back
+   * onto the position of the one before it. A duplicate: the same 12 m strip listed twice, its
+   * material counted twice, on a lift that was already fully covered without it.
+   *
+   * Strictly less than, against the same five-micron snap the strip fitters use. */
+  for (let s = w / 2; s - w / 2 < runLength - FIT_SNAP * w; s += pitch) {
     // The last strip is pulled back to finish flush with the end of the lift instead of hanging past
     // it, so the run ends on covered ground rather than on an offcut.
     const station = Math.min(s, Math.max(w / 2, runLength - w / 2));
+    // Clamping can land two consecutive strips on the same station; the second covers nothing the
+    // first does not.
+    if (stripStarts.length && Math.abs(stripStarts[stripStarts.length - 1] - (station - w / 2)) < FIT_SNAP * w) continue;
     chordsAt(station).forEach(([lo0, hi0]) => {
       // The chord is measured at the strip's centre, but the strip is w wide: sampling across its
       // width and taking the widest reach means a tapering edge is covered to its true extent rather
