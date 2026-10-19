@@ -173,7 +173,7 @@ function updateProgressStats() {
  * round the loop debugging a bug that was already fixed, because nothing on screen said which
  * version it was. It does now, next to the title, and it is read straight off the same constant
  * the cache is keyed on, so the two cannot drift apart. */
-const APP_VERSION = "v213";
+const APP_VERSION = "v214";
 (function showVersion() {
   const el = document.getElementById("appVersion");
   if (el) el.textContent = APP_VERSION;
@@ -5725,15 +5725,22 @@ function buildCutPlanPrintPages(results, project) {
        * than a tall one: a lift with 18 rows in a single column left the plan at its 50 mm floor and
        * still ran 9 mm onto a second page, where the same rows in two columns fit with a 115 mm
        * plan above them. */
-      const BESIDE_MAX_ROWS = 20;
-      const PER_COL = 12;
+      /* EVERY SHEET THE SAME SHAPE. The plan across the top, the strip list in columns under it.
+       * It used to depend on the lift: a tall plan took the column beside the list, a wide one the
+       * full width, so two sheets out of the same job did not look like the same document. Asked
+       * for, and right — a crew reads these one after another, and the one thing that should change
+       * from sheet to sheet is the lift. */
+      const PER_COL = 8;
       const plan = buildCutPlanSvgMarkup(r.cutPlan, r.w, stripRollNumbers);
-      const stacked = plan.aspect >= 1 || allRows.length > BESIDE_MAX_ROWS;
-      const cols = stacked ? Math.min(4, Math.max(1, Math.ceil(allRows.length / PER_COL))) : 1;
-      const rowsPerCol = stacked ? Math.ceil(allRows.length / cols) : 0;
+      const stacked = true;
+      /* Short columns rather than one long one: the list is what the plan has to share the page
+       * with, so splitting it in two leaves room for a drawing worth setting out from. */
+      const cols = Math.min(3, Math.max(allRows.length > 6 ? 2 : 1, Math.ceil(allRows.length / PER_COL)));
+      const rowsPerCol = Math.ceil(allRows.length / cols);
       const listMm = rowsPerCol ? rowsPerCol * (cols >= 3 ? 6.6 : 8.7) + 12 : 0;
-      // 20 mm of that budget is the 10 mm border around the plan (see .cutplan-print-page__plan).
-      const planMm = Math.round(Math.max(50, Math.min(125, 188 - 20 - listMm)));
+      // 24 mm of that budget is the 12 mm of clear paper around the plan inside its frame
+      // (see .cutplan-print-page__plan).
+      const planMm = Math.round(Math.max(50, Math.min(125, 188 - 24 - listMm)));
       /* A column of blank cells is not a column. Most lifts raise no stitch patch at all, and the
        * empty fourth column was taking a quarter of the table's width on every one of them — width
        * the three columns that do carry something had to give up, with "Strip #" wrapping onto two

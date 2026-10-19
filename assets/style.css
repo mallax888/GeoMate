@@ -1745,18 +1745,18 @@ details.tool > p:empty { display: none; }
    max-width keeps a very wide lift on the page; the ratio then pulls the height down to match. */
 .cutplan-print-page__plan {
   display: block;
-  width: min(calc(100% - 20mm), calc(var(--plan-h, 110mm) * var(--plan-aspect-n, 1.54)));
+  width: min(calc(100% - 24mm), calc(var(--plan-h, 110mm) * var(--plan-aspect-n, 1.54)));
   height: auto;
   aspect-ratio: var(--plan-aspect, 400 / 260);
   margin-inline: auto;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  /* 10 mm of clear paper inside the frame — asked for. content-box, so --plan-h still means the
+  /* 12 mm of clear paper inside the frame — asked for. content-box, so --plan-h still means the
      DRAWING's own height and the ratio still fits the drawing exactly; the 20 mm the border adds in
      each direction is taken out of the page budget in buildCutPlanPrintPages instead. Sized the
      other way round, the padding ate into the drawing and letterboxed it inside its own frame. */
   box-sizing: content-box;
-  padding: 10mm;
+  padding: 12mm;
 }
 /* FIXED layout, or the columns do not hold. With nowrap cells, an auto-layout table takes its
    min-content width no matter what its container says — so in a three-column sheet each table ran
