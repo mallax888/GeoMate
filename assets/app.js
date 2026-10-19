@@ -173,7 +173,7 @@ function updateProgressStats() {
  * round the loop debugging a bug that was already fixed, because nothing on screen said which
  * version it was. It does now, next to the title, and it is read straight off the same constant
  * the cache is keyed on, so the two cannot drift apart. */
-const APP_VERSION = "v215";
+const APP_VERSION = "v216";
 (function showVersion() {
   const el = document.getElementById("appVersion");
   if (el) el.textContent = APP_VERSION;
@@ -3348,7 +3348,7 @@ function computeCentrelineCutPlan(rawPoints, centrelines, w, oMin) {
  * An armful of grid trimmed on site; anything more is material cut for nothing. */
 const FLOOR_OVERRUN = 1.5;
 
-function computeParallelCutPlan(rawPoints, w, oMin, faceCycle) {
+function computeParallelCutPlan(rawPoints, w, oMin, faceCycle, stripSide = null) {
   if (!(w > 0) || !(oMin >= 0) || oMin >= w) return null;
   const poly = ensureCCW(rawPoints.map((p) => ({ x: p.x, y: p.y })));
   const runs = candidateFaceChains(poly);
@@ -3457,6 +3457,26 @@ function computeParallelCutPlan(rawPoints, w, oMin, faceCycle) {
   const chainLength = runLength + 2 * w;
   const to = { x: from.x + run.x * chainLength, y: from.y + run.y * chainLength };
   const chain = { edges: [{ x: run.x, y: run.y, len: chainLength, from, to }], length: chainLength, dir: run };
+
+  /* WHICH END IS STRIP 1 — "Strip 1 starts from Left/Right", which this layout ignored entirely.
+   *
+   * A wall numbers from one end of its face, and the face is drawn left to right, so left means
+   * left. A floor has no face: its strips are numbered along whichever direction the run happens to
+   * have come out of the boundary, and the plan is drawn in true orientation, so on this lift the
+   * run points right-to-left across the page and strip 1 landed on the right with the setting on
+   * Left.
+   *
+   * Read off the drawing instead: strip 1 is the one furthest LEFT on the page (or furthest right,
+   * if that is what is asked). Where the run is vertical there is no left and right, so it numbers
+   * top to bottom, which is how the page is read. Only the labels move — same strips, same
+   * geometry, same lengths, just counted from the other end. */
+  const runsRightward = Math.abs(run.x) > 1e-9 ? run.x > 0 : run.y < 0;
+  const wantRight = stripSide === "right";
+  if (runsRightward === wantRight && cutLengths.length > 1) {
+    [cutLengths, stitches, extentsReach, frontReach, stripWidths, stripStarts, stripLocalStarts, stripSegmentIndex, stripDirs, stripIsStitch].forEach(
+      (arr) => arr && arr.reverse()
+    );
+  }
 
   return {
     poly,
@@ -4917,7 +4937,7 @@ function computeAndRender() {
         // No alignments supplied: the lift's own longest run sets the bearing instead, so a floor
         // still gets parallel strips without anyone having to draw a centreline for every lift.
         if (!cp && floorMode && p.oMin < p.w) {
-          cp = computeParallelCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle);
+          cp = computeParallelCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle, stripSide);
         }
         if (!cp) cp = p.oMin < p.w ? computeCutPlan(row._extentsPoints, p.w, p.oMin, row._faceCycle, refDir, packSide, stripSide, avoidStitches, neighborDir, floorMode, row._endOverrides) : null;
         // How many stitch patches EVERY candidate face would produce, not just the active one — lets
@@ -5392,7 +5412,10 @@ function renderSummary(results, productSpecs, rollGroupSize, installRate, baseLe
   // computeAndRender) — the hint fires on that alone, not on whether the total below is zero, so a
   // partial total (every lift but the bottom one) doesn't quietly read as a complete one.
   const totalFillVolume = results.reduce((s, r) => s + (r.fillVolume || 0), 0);
-  document.getElementById("statVolume").innerHTML = totalFillVolume > 0 ? `${fmt.m(totalFillVolume)}<small> m³</small>` : "—";
+  // To the nearest 50 like every other fill figure (see FILL_ROUND_M3) — the total of eight exact
+  // volumes rounded once, not eight rounded volumes added up.
+  document.getElementById("statVolume").innerHTML =
+    totalFillVolume > 0 ? `${fmt.int(Math.ceil(totalFillVolume / FILL_ROUND_M3) * FILL_ROUND_M3)}<small> m³</small>` : "—";
   document.getElementById("statVolumeHint").textContent = baseLevel != null || results.length === 0 ? "" : "enter base level";
 
   const wasteOverlapEl = document.getElementById("wasteOverlap");
