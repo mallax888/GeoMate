@@ -173,7 +173,7 @@ function updateProgressStats() {
  * round the loop debugging a bug that was already fixed, because nothing on screen said which
  * version it was. It does now, next to the title, and it is read straight off the same constant
  * the cache is keyed on, so the two cannot drift apart. */
-const APP_VERSION = "v217";
+const APP_VERSION = "v218";
 (function showVersion() {
   const el = document.getElementById("appVersion");
   if (el) el.textContent = APP_VERSION;
@@ -8535,7 +8535,7 @@ function dxfDoc() {
       ent(40, height.toFixed(3));
       ent(1, label);
       ent(50, rot.toFixed(2));
-      ent(7, "STANDARD");
+      ent(7, "ARIAL");
       ent(72, 1);
       ent(11, at.x.toFixed(4)); ent(21, at.y.toFixed(4)); ent(31, z.toFixed(4));
       ent(73, 2);
@@ -8581,10 +8581,19 @@ function dxfDoc() {
       });
       put(0, "ENDTAB");
 
-      put(0, "TABLE"); put(2, "STYLE"); put(70, 1);
+      /* Two styles: STANDARD, because a file that names it has to define it, and ARIAL, which is
+         what every label is actually written in. STANDARD means txt.shx — the blocky stick font CAD
+         has shipped since the plotter days — and next to a consultant's drawing set, which is laid
+         out in Arial, the export read as a different kind of document. A .ttf in the font-file field
+         is how a DXF asks for a TrueType face; a reader without it substitutes, which is the normal
+         fallback and still lands closer than txt.shx. */
+      put(0, "TABLE"); put(2, "STYLE"); put(70, 2);
       put(0, "STYLE"); put(2, "STANDARD"); put(70, 0);
       put(40, "0.0"); put(41, "1.0"); put(50, "0.0"); put(71, 0); put(42, "0.2");
       put(3, "txt"); put(4, "");
+      put(0, "STYLE"); put(2, "ARIAL"); put(70, 0);
+      put(40, "0.0"); put(41, "1.0"); put(50, "0.0"); put(71, 0); put(42, "0.2");
+      put(3, "arial.ttf"); put(4, "");
       put(0, "ENDTAB");
 
       put(0, "ENDSEC");
@@ -9153,8 +9162,13 @@ function buildRollCardHtml(roll, index) {
   // gives the crew a simple cut sequence to follow roll by roll.
   const pieceRows = roll.pieces
     .map((p, i) => {
-      const detail = p.extra > 1e-6 ? `${fmt.m(p.length + p.extra)} m (+${fmt.m(p.extra)} m to fill roll)` : `${fmt.m(p.length)} m`;
-      return `<li><span class="roll-piece__label"><span class="roll-piece__num">${i + 1}.</span> ${escapeHtml(p.label)}</span><span class="roll-piece__value">${detail}</span></li>`;
+      /* The cut length is the figure; the "and the rest of the roll goes down with it" note is an
+       * aside, so it is marked as one. Run together as a single value, the pair was long enough to
+       * push the piece's own label out of its column and leave it as an ellipsis — the one thing on
+       * the row a crew cannot do without. */
+      const fill = p.extra > 1e-6 ? ` <span class="roll-piece__fill">+${fmt.m(p.extra)} m to fill roll</span>` : "";
+      const detail = `${fmt.m(p.length + (p.extra > 1e-6 ? p.extra : 0))} m${fill}`;
+      return `<li${p.extra > 1e-6 ? ' class="is-filled"' : ""}><span class="roll-piece__label"><span class="roll-piece__num">${i + 1}.</span> ${escapeHtml(p.label)}</span><span class="roll-piece__value">${detail}</span></li>`;
     })
     .join("");
   const cut = isRollCut(index + 1);

@@ -1983,7 +1983,7 @@ details.tool > p:empty { display: none; }
   font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
   gap: 0.15rem 1rem;
 }
 /* Every row must stay exactly one line tall, or its border-bottom drops below its neighbours'
@@ -1995,9 +1995,18 @@ details.tool > p:empty { display: none; }
    minimum size is still driven by its content's min-content width (the nowrap value span) unless
    this is set directly on the item, which silently overrides the 1fr track and pushes the whole
    grid (and page, on a narrow phone) wider than intended. */
-.roll-card__pieces li { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; padding: 0.15rem 0; border-bottom: 1px solid var(--line); min-width: 0; }
-.roll-piece__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.roll-piece__value { flex: none; white-space: nowrap; }
+/* The length sits NEXT TO the piece it belongs to, not pushed to the far side of the column.
+   Spread apart by space-between, "RL 39.40 · Strip 2" and "13 m" were a hand's width apart with
+   nothing in between, and on a card six pieces wide the eye had to re-find which length went with
+   which piece on every row. Packed left, the pair reads as one thing; the room left over goes to
+   the end of the row, where it costs nothing. */
+.roll-card__pieces li { display: flex; align-items: baseline; gap: 0.45rem; padding: 0.15rem 0; border-bottom: 1px solid var(--line); min-width: 0; }
+.roll-piece__label { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.roll-piece__value { flex: none; white-space: nowrap; font-weight: 700; color: var(--ink); }
+/* The roll-filling note is an aside, not part of the length — and the row carrying it takes the
+   full width of the card so neither it nor the piece's own label has to be truncated for it. */
+.roll-piece__fill { font-weight: 400; color: var(--ink-muted); }
+.roll-card__pieces li.is-filled { grid-column: 1 / -1; }
 .roll-schedule-print-view { display: none; }
 .roll-labels-print-view { display: none; }
 
@@ -2106,7 +2115,7 @@ body.show-help .liner-head { margin-bottom: 1.4rem; }
      down to "RL 4…" — the one thing a piece can't be identified without. A printed page is much
      wider than that panel column, so give it far more room per piece and let a label wrap onto a
      second line in the rare case even that isn't enough, rather than ever hiding it. */
-  .roll-card__pieces { grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+  .roll-card__pieces { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
   .roll-piece__label { overflow: visible; text-overflow: clip; white-space: normal; }
 
   body.printing-roll-labels .roll-schedule-head,
