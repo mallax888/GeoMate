@@ -173,7 +173,7 @@ function updateProgressStats() {
  * round the loop debugging a bug that was already fixed, because nothing on screen said which
  * version it was. It does now, next to the title, and it is read straight off the same constant
  * the cache is keyed on, so the two cannot drift apart. */
-const APP_VERSION = "v202";
+const APP_VERSION = "v203";
 (function showVersion() {
   const el = document.getElementById("appVersion");
   if (el) el.textContent = APP_VERSION;
@@ -1065,6 +1065,11 @@ function stripBoundaryReach(station, w, poly, face, inward, vertexStations, avoi
     if (s > laneMin && s < laneMax) edgeStations.push(s);
   });
   let farReach = 0, nearReach = 0, anyMain = false;
+  // The shallowest sample as well as the deepest. One extra comparison in a loop that already runs,
+  // and it is what tells a caller whether the ground under this strip steps at all — see
+  // stripPiecesAcrossSteps, which uses it to skip the whole expensive split search on the strips
+  // (nearly all of them) that have nothing to split.
+  let farReachMin = Infinity;
   // Where the ray starts OUTSIDE the lift, there is no segment at the face to measure from. That is
   // not an empty strip: the face has been extended in a straight line to span the whole extents (see
   // extendFaceToFullExtent), so past the wall's real end the line can run outside the boundary while
@@ -1082,6 +1087,7 @@ function stripBoundaryReach(station, w, poly, face, inward, vertexStations, avoi
     if (m) {
       anyMain = true;
       farReach = Math.max(farReach, m.end);
+      farReachMin = Math.min(farReachMin, m.end);
       nearReach = Math.min(nearReach, m.start);
     }
     if (segs.length) {
@@ -1112,7 +1118,7 @@ function stripBoundaryReach(station, w, poly, face, inward, vertexStations, avoi
         .filter((s) => s !== main && s.end - s.start > STITCH_MIN)
         .map((s) => ({ offset: roundUpToStep(s.start, ROUND_STEP), length: roundToPracticalLength(s.end - s.start, ROUND_STEP) }));
 
-  return { cutLength, farReach, nearReach, stitches };
+  return { cutLength, farReach, nearReach, stitches, farReachMin: Number.isFinite(farReachMin) ? farReachMin : farReach };
 }
 
 /* A STRIP IS CUT TO ITS DEEPEST POINT, AND A STEP MAKES THAT THE WRONG NUMBER.
@@ -1146,6 +1152,19 @@ function stripPiecesAcrossSteps(start, width, poly, face, inward, vertexStations
   }];
   if (!(hi - lo > MIN_PIECE_WIDTH * 2)) return whole();
 
+  /* MEASURE ONCE, AND USUALLY STOP THERE.
+   *
+   * Searching for a split costs a reach measurement per candidate lane plus two probes to test it
+   * for flatness, and a reach measurement samples the boundary up to fifteen times. Run on every
+   * strip that was 195 SECONDS of compute on an eight-lift job — for an answer that is "no step
+   * here" on nearly all of them.
+   *
+   * The strip's own measurement already knows: it sampled the boundary right across the width, so
+   * the spread between its deepest and shallowest sample is the step, if there is one. No spread,
+   * nothing to split, and the search never starts. */
+  const base = whole()[0];
+  if (!(base.r.farReach - base.r.farReachMin > ROUND_STEP)) return [base];
+
   // Where the boundary could change depth inside this strip: its own vertices, far enough in to
   // leave a layable piece on both sides, and inside the face it is measured against.
   const cutLo = Math.max(lo, 0) + MIN_PIECE_WIDTH;
@@ -1154,7 +1173,7 @@ function stripPiecesAcrossSteps(start, width, poly, face, inward, vertexStations
   vertexStations.forEach((v) => {
     if (v > cutLo && v < cutHi && !cuts.some((c) => Math.abs(c - v) < 1e-6)) cuts.push(v);
   });
-  if (!cuts.length) return whole();
+  if (!cuts.length) return [base];
   cuts.sort((a, b) => a - b);
 
   // Measure each elementary sub-lane on its own.
@@ -1165,7 +1184,7 @@ function stripPiecesAcrossSteps(start, width, poly, face, inward, vertexStations
     if (b - a < 1e-9) continue;
     lanes.push({ start: a, width: b - a, r: stripBoundaryReach(stationFor(a, b), b - a, poly, face, inward, vertexStations, avoidStitches) });
   }
-  if (lanes.length < 2) return whole();
+  if (lanes.length < 2) return [base];
 
   /* SPLIT A STEP, NEVER A SLOPE.
    *
@@ -1177,7 +1196,7 @@ function stripPiecesAcrossSteps(start, width, poly, face, inward, vertexStations
   const depthAt = (st) => stripBoundaryReach(Math.max(0, Math.min(face.length, st)), 0.01, poly, face, inward, vertexStations, avoidStitches).farReach;
   const EPS = 0.02;
   const flat = lanes.every((l) => Math.abs(depthAt(l.start + EPS) - depthAt(l.start + l.width - EPS)) <= ROUND_STEP + 1e-9);
-  if (!flat) return whole();
+  if (!flat) return [base];
 
   // Neighbours that come out the same length are one strip. Only a real change in depth splits.
   const groups = [[lanes[0]]];
@@ -1196,7 +1215,7 @@ function stripPiecesAcrossSteps(start, width, poly, face, inward, vertexStations
     groups.splice(i, 1);
     i = -1;
   }
-  if (groups.length < 2) return whole();
+  if (groups.length < 2) return [base];
 
   /* Each surviving group is measured once more across its own full width, so its single square cut
    * clears everything under it — the same rule as before, applied to a piece that no step crosses.
@@ -1228,10 +1247,9 @@ function stripPiecesAcrossSteps(start, width, poly, face, inward, vertexStations
    * material from 1,865 m2 up to 2,122 m2 while removing less trim than that. So the layout it
    * produces is costed against the one it replaces, and the strip is only split when the answer is
    * less material than leaving it whole. */
-  const whole0 = whole()[0];
-  const wholeArea = whole0.width * whole0.r.cutLength;
+  const wholeArea = base.width * base.r.cutLength;
   const splitArea = pieces.reduce((t, q) => t + q.width * q.r.cutLength, 0);
-  return splitArea < wholeArea - 1e-9 ? pieces : whole();
+  return splitArea < wholeArea - 1e-9 ? pieces : [base];
 }
 
 /**
@@ -4843,6 +4861,20 @@ function computeAndRender() {
         if (cp && cp.centrelineMode) {
           row._faceStitchCounts = null;
           row._faceLengths = cp.parallelRun ? candidateFaceChains(row._extentsPoints).map((c) => c.length) : null;
+        } else if (cp && !row._toolsOpen) {
+          /* NOT UNTIL SOMEBODY OPENS THE PICKER.
+           *
+           * The loop below lays out the lift AGAIN for every candidate face it has, so the Face
+           * dropdown can show what each option would cost in stitch patches. The dropdown lives
+           * inside the card's Adjust panel and is not rendered at all while that panel is shut.
+           *
+           * On a real job that was the whole compute budget: eight lifts of 18 to 39 vertices meant
+           * about 160 extra full cut plans on EVERY recalculation, and a file took three minutes to
+           * come back. Deferred to the moment the panel is opened — which re-renders that one lift
+           * — the same numbers appear when they can first be seen, and nothing is spent on the lifts
+           * nobody is looking at. */
+          row._faceStitchCounts = null;
+          row._faceLengths = null;
         } else if (cp) {
           const chains = candidateFaceChains(row._extentsPoints);
           // With nothing explicitly clicked (_faceCycle null), cp comes from pickFaceAndBack, which
