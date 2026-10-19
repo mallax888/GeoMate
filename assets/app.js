@@ -173,7 +173,7 @@ function updateProgressStats() {
  * round the loop debugging a bug that was already fixed, because nothing on screen said which
  * version it was. It does now, next to the title, and it is read straight off the same constant
  * the cache is keyed on, so the two cannot drift apart. */
-const APP_VERSION = "v211";
+const APP_VERSION = "v212";
 (function showVersion() {
   const el = document.getElementById("appVersion");
   if (el) el.textContent = APP_VERSION;
@@ -5635,7 +5635,7 @@ function buildCutPlanPrintPages(results, project) {
       const fillTarget = next ? `RL ${escapeHtml(next.rl)}` : "final design surface";
       // How much fill that step is asking for, by the same measure the lift card shows.
       const fill = printFillVolumes.get(r);
-      const fillNote = fill ? ` — about ${fmt.m(fill.volume)} m³ of fill` : "";
+      const fillNote = fill ? ` — about ${fmt.int(fill.volume)} m³ of fill` : "";
       let staggerNote = "";
       if (stagger && r.n > 1 && buildIndex >= 0 && r.overlap != null) {
         const pitch = r.w - r.overlap;
@@ -6689,6 +6689,7 @@ function updateLoadBlock(extentsResults) {
  * The topmost lift has no layer above it to measure to, so it has no figure here — only a design
  * surface could say, and the app is not given one.
  */
+const FILL_ROUND_M3 = 50;
 function fillVolumesByLift(results) {
   const vols = new Map();
   results.forEach((r, i) => {
@@ -6702,7 +6703,13 @@ function fillVolumesByLift(results) {
     const a1 = next.cutPlan && Number.isFinite(next.cutPlan.polygonArea) ? next.cutPlan.polygonArea : null;
     if (a0 == null && a1 == null) return;
     const area = a0 == null ? a1 : a1 == null ? a0 : (a0 + a1) / 2;
-    vols.set(r, { volume: area * rise, rise, toRl: next.rl });
+    /* Reported up to the nearest 50 m3. A fill volume is ordered by the truckload off a surveyed
+     * surface that will not be laid to the centimetre, so 5,962.76 m3 states a precision the number
+     * does not have; 6,000 is what gets ordered. Always UP, never down — the rounding should not be
+     * the reason a lift runs short of fill. The raw figure is kept alongside it for anything that
+     * wants to total several lifts without compounding the rounding. */
+    const raw = area * rise;
+    vols.set(r, { volume: Math.ceil(raw / FILL_ROUND_M3) * FILL_ROUND_M3, raw, rise, toRl: next.rl });
   });
   return vols;
 }
@@ -6963,7 +6970,7 @@ function renderCutPlan(results) {
         (fill
           ? `<span class="cutplan-card__total">
                <span class="cutplan-card__total-label">Fill to RL ${escapeHtml(fill.toRl)}</span>
-               <span class="cutplan-card__total-value">${fmt.m(fill.volume)} m³</span>
+               <span class="cutplan-card__total-value">${fmt.int(fill.volume)} m³</span>
              </span>`
           : "");
     }
@@ -7177,9 +7184,11 @@ function planLabelSizing(pitchPx, stripDigits, rollChars) {
 function appendPlanLegend(svg, ns, W, H) {
   const fs = 8.2;
   const padX = 7, padY = 6, rowH = fs + 6.5;
+  // In the order they sit on the drawing — the roll number is the row along the top, the strip
+  // number the row along the bottom.
   const items = [
-    { kind: "chip", text: "Strip no. \u2014 the order they go down" },
     { kind: "circle", text: "Roll no. \u2014 which roll to cut it from" },
+    { kind: "chip", text: "Strip no. \u2014 the order they go down" },
   ];
   const textW = Math.max(...items.map((it) => it.text.length)) * fs * 0.5;
   const boxW = Math.min(W - 12, padX * 2 + 18 + textW);
@@ -8013,17 +8022,24 @@ function renderCutPlanSvgManual(svg, cutPlan, productSpecs, activeProductId, row
   const stitchEnds = (cutPlan.stitches || []).flatMap((group) => (group || []).map((s) => s.offset + s.length));
   const minY = Math.min(0, ...ys, ...frontReach, ghostNear);
   const maxY = Math.max(0, ...extentsReach, ...ys, ghostFar, ...stitchEnds);
+  /* Strip numbers go under the strips here too, so one convention holds across every diagram the
+     app draws — see planLabelSizing and renderCutPlanSvg. The band under the face line is theirs. */
   const W = 400, H = 260, pad = 16;
-  const scale = Math.min((W - pad * 2) / Math.max(maxX - minX, 1e-6), (H - pad * 2) / Math.max(maxY - minY, 1e-6));
+  const manualSizing = planLabelSizing((W - pad * 2) / Math.max(stripStarts.length, 1), String(stripStarts.length).length, 1);
+  const bottomBand = manualSizing.chipH + 9;
+  const scale = Math.min(
+    (W - pad * 2) / Math.max(maxX - minX, 1e-6),
+    (H - pad * 2 - bottomBand) / Math.max(maxY - minY, 1e-6)
+  );
   const tx = (x) => pad + (x - minX) * scale;
-  const ty = (y) => H - pad - (y - minY) * scale;
+  const ty = (y) => H - pad - bottomBand - (y - minY) * scale;
 
   svg.innerHTML = "";
   const poly2d = localPoly.map((p) => `${tx(p.x).toFixed(1)},${ty(p.y).toFixed(1)}`).join(" ");
   const polyEl = extentsBoundaryPolygon(ns, poly2d);
   svg.appendChild(polyEl);
 
-  const labelFontSize = Math.max(4.5, Math.min(7, 165 / Math.max(stripStarts.length, 1)));
+  const labelFontSize = manualSizing.chipFont;
 
   stripStarts.forEach((start, i) => {
     const end = stripEnds[i];
@@ -8110,9 +8126,21 @@ function renderCutPlanSvgManual(svg, cutPlan, productSpecs, activeProductId, row
       svg.appendChild(stitchShape);
     });
 
-    const label = document.createElementNS(ns, "text");
     const lx = Math.max(6, Math.min(W - 6, tx((start + end) / 2)));
-    const ly = Math.max(6, Math.min(H - 6, yFar - 8));
+    const chipH = manualSizing.chipH;
+    const ly = Math.max(6, Math.min(H - 6, yNear + chipH * 0.95 + 1.5));
+    const chipW = labelFontSize * 0.62 * String(i + 1).length + 3.6;
+    const chip = document.createElementNS(ns, "rect");
+    chip.setAttribute("x", (lx - chipW / 2).toFixed(1));
+    chip.setAttribute("y", (ly - chipH * 0.78).toFixed(1));
+    chip.setAttribute("width", chipW.toFixed(1));
+    chip.setAttribute("height", chipH.toFixed(1));
+    chip.setAttribute("rx", "2.2");
+    chip.setAttribute("fill", "var(--surface)");
+    chip.setAttribute("stroke", "var(--line-strong)");
+    chip.setAttribute("stroke-width", "0.6");
+    svg.appendChild(chip);
+    const label = document.createElementNS(ns, "text");
     label.setAttribute("x", lx.toFixed(1));
     label.setAttribute("y", ly.toFixed(1));
     label.setAttribute("font-size", labelFontSize.toFixed(1));
