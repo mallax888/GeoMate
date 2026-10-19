@@ -18,7 +18,7 @@
  * CACHE_NAME is still bumped on a deploy — activate() drops every other cache, which clears
  * anything an older version of this file left behind.
  */
-const CACHE_NAME = "geomate-v201";
+const CACHE_NAME = "geomate-v202";
 
 const ASSETS = [
   "./",
@@ -106,10 +106,25 @@ async function cacheFirstThenRefresh(request, watchForUpdates) {
     })
     .catch(() => cached);
 
-  if (cached) {
+  /* THE CODE ITSELF IS FETCHED FRESH; EVERYTHING ELSE IS SERVED FROM STORE.
+   *
+   * Cache-first on the app shell means a reload always hands back the PREVIOUS build and stores the
+   * new one for next time, so a single refresh can never show a fix — you need two, and nothing on
+   * screen says so. Three rounds of a real bug report were spent on a fix that was already live and
+   * simply not being served.
+   *
+   * So the shell — the page, the script, the stylesheet — goes to the network first and falls back
+   * to the stored copy only when the network cannot answer. That costs one request on a warm start
+   * and makes "I reloaded and it is still wrong" impossible. Everything else stays cache-first,
+   * which is what makes the app work offline at all. */
+  if (cached && !watchForUpdates) {
     // Deliberately not awaited: the point is that the answer does not wait for it.
     refresh.catch(() => {});
     return cached;
+  }
+  if (cached) {
+    const fresh = await refresh.catch(() => null);
+    return fresh && fresh.ok ? fresh : cached;
   }
 
   // Nothing stored yet — the very first visit, or a URL never seen. This one has to wait.

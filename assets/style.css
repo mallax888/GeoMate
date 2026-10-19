@@ -208,6 +208,16 @@ h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
   font-weight: 700;
   letter-spacing: -0.01em;
 }
+.app-version {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--ink-muted);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0 0.3rem;
+  margin-left: 0.4rem;
+  white-space: nowrap;
+}
 .titleblock__sub {
   margin: 0.15rem 0 0;
   font-size: var(--fs-sm);

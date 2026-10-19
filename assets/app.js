@@ -166,6 +166,19 @@ function updateProgressStats() {
   document.getElementById("progressRollsBar").style.width = `${rollsPct}%`;
 }
 
+/* WHICH BUILD IS ACTUALLY RUNNING IN THIS BROWSER.
+ *
+ * A service worker serves the last copy it cached, so a fix can be deployed, verified green, and
+ * still not be what the person in front of the app is looking at — twice now a session has gone
+ * round the loop debugging a bug that was already fixed, because nothing on screen said which
+ * version it was. It does now, next to the title, and it is read straight off the same constant
+ * the cache is keyed on, so the two cannot drift apart. */
+const APP_VERSION = "v202";
+(function showVersion() {
+  const el = document.getElementById("appVersion");
+  if (el) el.textContent = APP_VERSION;
+})();
+
 /* ============================================================
    Core geogrid strip-layout math
    ============================================================ */
