@@ -173,7 +173,7 @@ function updateProgressStats() {
  * round the loop debugging a bug that was already fixed, because nothing on screen said which
  * version it was. It does now, next to the title, and it is read straight off the same constant
  * the cache is keyed on, so the two cannot drift apart. */
-const APP_VERSION = "v204";
+const APP_VERSION = "v205";
 (function showVersion() {
   const el = document.getElementById("appVersion");
   if (el) el.textContent = APP_VERSION;
@@ -1054,12 +1054,27 @@ function stripBoundaryReach(station, w, poly, face, inward, vertexStations, avoi
   // ground, so it's rounded up generously and is far less sensitive to this). Combines a modest
   // even sweep with every actual polygon vertex that falls inside this strip's width, so a kink is
   // always sampled exactly rather than only approximately.
+  /* SAMPLE INSIDE THE LANE, NEVER ON ITS EDGE.
+   *
+   * The sweep ran from laneMin to laneMax inclusive, so the first and last sample sat exactly on
+   * the lines this strip shares with its neighbours. Where the extents step on one of those lines
+   * — which is the normal case on a lift drawn in roll-width modules — the ray at that exact
+   * station returns the DEEPER of the two bands, and the strip gets cut to its neighbour's depth.
+   * Measured on the user's own lift: the 40-45 m band is 27 m deep and came out 33, because the
+   * sample at station 40.000 belongs to the band beyond it.
+   *
+   * A millimetre inside each edge keeps every sample on this strip's own ground. Real kinks inside
+   * the lane are still sampled exactly — they come in through vertexStations below, which is a
+   * strict interval and so never includes the shared edges either. */
+  const EDGE_INSET = 1e-3;
   const laneMin = Math.max(0, station - w / 2), laneMax = Math.min(face.length, station + w / 2);
+  const inset = Math.min(EDGE_INSET, (laneMax - laneMin) / 4);
+  const sweepLo = laneMin + inset, sweepHi = laneMax - inset;
   const sampleCount = Math.max(3, Math.min(15, Math.round(w / 0.3) + 1));
   const edgeStations = [];
   for (let k = 0; k < sampleCount; k++) {
     const t = sampleCount === 1 ? 0.5 : k / (sampleCount - 1);
-    edgeStations.push(laneMin + t * (laneMax - laneMin));
+    edgeStations.push(sweepLo + t * (sweepHi - sweepLo));
   }
   vertexStations.forEach((s) => {
     if (s > laneMin && s < laneMax) edgeStations.push(s);
@@ -3375,7 +3390,9 @@ function computeParallelCutPlan(rawPoints, w, oMin, faceCycle) {
       // than to whatever the centreline of the strip happened to catch. Floors have the leeway for
       // it; the alternative is a sliver of bare ground down every taper.
       let lo = lo0, hi = hi0;
-      [-w / 2, -w / 4, w / 4, w / 2].forEach((off) => {
+      // Same rule as stripBoundaryReach: +/- half a width lands on the line shared with the next
+      // strip, so a step there reads back as this strip's depth. Held a millimetre inside.
+      [-w / 2 + 1e-3, -w / 4, w / 4, w / 2 - 1e-3].forEach((off) => {
         const at = station + off;
         if (at < 0 || at > runLength) return;
         chordsAt(at).forEach(([a, b]) => {
