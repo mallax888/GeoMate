@@ -173,7 +173,7 @@ function updateProgressStats() {
  * round the loop debugging a bug that was already fixed, because nothing on screen said which
  * version it was. It does now, next to the title, and it is read straight off the same constant
  * the cache is keyed on, so the two cannot drift apart. */
-const APP_VERSION = "v207";
+const APP_VERSION = "v208";
 (function showVersion() {
   const el = document.getElementById("appVersion");
   if (el) el.textContent = APP_VERSION;
@@ -1427,8 +1427,15 @@ function stripWorldQuads(cutPlan) {
     const center = left + width / 2;
     // Same MIN_STRIP_LENGTH floor as the flat diagram (see renderCutPlanSvg) — a true reach that
     // rounds to (near) zero still draws a real, visible box matching the practical minimum strip.
-    const farReach = Math.max((cutPlan.extentsReach || [])[i] ?? len, MIN_STRIP_LENGTH);
+    //
+    // Floored against the strip's OWN near edge, not against zero. A floor run has no wall to
+    // measure from, so its reaches are measured off the run's centreline and the near half of the
+    // lift is legitimately NEGATIVE: on the user's RL 39.40 every strip starts at -27.22 and the
+    // short ones reach -12.22. Floored against zero, a 15 m strip was drawn from -27.22 to +2 —
+    // 29 m of it, running well past the extents, which is precisely what "the strip just needs to
+    // stop at the end of the extents" is about. The span is what the floor is for.
     const nearReach = (cutPlan.frontReach || [])[i] ?? 0;
+    const farReach = Math.max((cutPlan.extentsReach || [])[i] ?? len, nearReach + MIN_STRIP_LENGTH);
 
     const dirOverride = (cutPlan.stripDirs || [])[i] || null;
     const dir = dirOverride || seg.dir;
@@ -7182,8 +7189,11 @@ function renderCutPlanSvg(svg, cutPlan, w, stripRollNumbers) {
     // (near) zero (the design boundary genuinely pinches out right at this strip) still gets a real,
     // visible box matching the practical minimum strip the crew is actually told to cut and place,
     // instead of collapsing to an invisible sliver while the strip list beside it says "2.0 m".
-    const farReach = Math.max((cutPlan.extentsReach || [])[i] ?? len, MIN_STRIP_LENGTH);
+    // Measured from this strip's own near edge, not from zero — a floor run's reaches are taken off
+    // its centreline and go negative on the near half, and flooring those against zero stretched the
+    // short strips right across the lift. See stripWorldQuads.
     const nearReach = (cutPlan.frontReach || [])[i] ?? 0;
+    const farReach = Math.max((cutPlan.extentsReach || [])[i] ?? len, nearReach + MIN_STRIP_LENGTH);
     const xLeft = tx(leftSeam), xRight = tx(rightSeam);
     const depthLeft = faceDepthAtStation(face, inward, leftSeam);
     const depthRight = faceDepthAtStation(face, inward, rightSeam);
