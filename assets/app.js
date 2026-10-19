@@ -170,6 +170,23 @@ function updateProgressStats() {
    Core geogrid strip-layout math
    ============================================================ */
 
+/* A FACE THAT FITS EXACTLY MUST BE ALLOWED TO FIT EXACTLY.
+ *
+ * These fitters divide the face by the strip pitch and round up. The division is done in floating
+ * point on coordinates in the hundreds of thousands, so a face that is a whole number of strips
+ * long does not arrive as one: a 50.00 m face read off a lift drawn at a 27.24 degrees bearing
+ * came through as 50.00000000230898 — two NANOMETRES over — and ceil(10.0000000005) is 11.
+ *
+ * The cost of that is not a rounding error, it is the whole layout. Eleven 5 m strips on a 50 m
+ * face sit at a 4.50 m pitch instead of 5.00 m, which walks every strip off the 5 m module the
+ * lift was designed to, puts six of the eleven across a step in the extents, and turns a layout
+ * with no waste at all into one that throws away a tenth of itself.
+ *
+ * So the quotient is snapped: a face within a millionth of a strip of fitting exactly, fits.
+ * A millionth of a strip is five microns of ground — far below anything a survey, a roll, or a
+ * crew can tell apart, and far above the noise that caused this. */
+const FIT_SNAP = 1e-6;
+
 /**
  * Fewest full-width strips spanning face length L with overlap >= oMin,
  * with the resulting slack spread evenly across every seam.
@@ -181,7 +198,7 @@ function calcLift(L, w, oMin) {
     return { n: 1, overlap: 0, materialWidth: w, excessWidth: w - L };
   }
   const pitch = w - oMin;
-  const n = Math.max(1, Math.ceil((L - oMin) / pitch));
+  const n = Math.max(1, Math.ceil((L - oMin) / pitch - FIT_SNAP));
   const overlap = n > 1 ? (n * w - L) / (n - 1) : 0;
   const materialWidth = n * w;
   return { n, overlap, materialWidth, excessWidth: materialWidth - L };
@@ -198,7 +215,7 @@ function calcLift(L, w, oMin) {
 function minPitchLift(L, w, oMin) {
   if (!(L > 0) || !(w > 0) || oMin < 0 || oMin >= w) return null;
   const pitch = Math.max(w - oMin, 0.01);
-  const n = L <= w ? 1 : Math.max(1, Math.ceil((L - w) / pitch) + 1);
+  const n = L <= w ? 1 : Math.max(1, Math.ceil((L - w) / pitch - FIT_SNAP) + 1);
   const materialWidth = n * w;
   return { n, overlap: oMin, materialWidth, excessWidth: materialWidth - L };
 }
@@ -227,7 +244,7 @@ function packStripsFromSide(L, w, oMin, side) {
   const pitch = w - oMin;
   const starts = [0];
   let cursor = 0;
-  while (cursor + w < L - 1e-9) {
+  while (cursor + w < L - FIT_SNAP * w) {
     cursor += pitch;
     starts.push(cursor);
   }
@@ -1182,13 +1199,26 @@ function stripPiecesAcrossSteps(start, width, poly, face, inward, vertexStations
    * is exactly the kind of gap this whole change exists to close. Walking a cursor makes the pieces
    * tile the lane by construction, whatever the merging did. */
   let cursor = lo;
-  return groups.map((g, gi) => {
+  const pieces = groups.map((g, gi) => {
     const wsum = g.reduce((t, l) => t + l.width, 0);
     const aRaw = cursor - (gi > 0 ? lap : 0);
     cursor += wsum;
     const bRaw = cursor + (gi < groups.length - 1 ? lap : 0);
     return { start: aRaw, width: bRaw - aRaw, r: stripBoundaryReach(stationFor(aRaw, bRaw), bRaw - aRaw, poly, face, inward, vertexStations, avoidStitches) };
   });
+
+  /* SPLITTING HAS TO PAY FOR ITSELF.
+   *
+   * Each piece carries its own lap onto its neighbour, so a split buys back the trim at the deep
+   * end and spends material on the joint. Usually it wins; where the pieces come out narrow, or the
+   * step is shallow, it does not — measured on a real lift at a 300 mm lap, splitting pushed the
+   * material from 1,865 m2 up to 2,122 m2 while removing less trim than that. So the layout it
+   * produces is costed against the one it replaces, and the strip is only split when the answer is
+   * less material than leaving it whole. */
+  const whole0 = whole()[0];
+  const wholeArea = whole0.width * whole0.r.cutLength;
+  const splitArea = pieces.reduce((t, q) => t + q.width * q.r.cutLength, 0);
+  return splitArea < wholeArea - 1e-9 ? pieces : whole();
 }
 
 /**
