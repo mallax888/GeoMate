@@ -1085,6 +1085,112 @@ function stripBoundaryReach(station, w, poly, face, inward, vertexStations, avoi
   return { cutLength, farReach, nearReach, stitches };
 }
 
+/* A STRIP IS CUT TO ITS DEEPEST POINT, AND A STEP MAKES THAT THE WRONG NUMBER.
+ *
+ * stripBoundaryReach takes the MAXIMUM reach across the strip's whole width, because a strip has
+ * one square cut and that cut must clear the deepest ground under it or leave a gap. On a boundary
+ * that steps partway across the strip, that is a real problem rather than a rounding one: the whole
+ * strip is cut to the deep side and the shallow half runs out past the extents. Measured on two
+ * rectilinear lifts that differ ONLY in where the step falls — on a strip edge, 0.0% wasted; half a
+ * strip over, 9.3% of the lift cut and thrown away. Nothing is oblique in either.
+ *
+ * So where a step crosses a strip, the strip becomes more than one piece: split at the step, each
+ * piece cut to its own depth, every one of them running up to the extents and no further. "At every
+ * change in length that should be another strip of roll."
+ *
+ * Pieces are only split where it pays: a sub-lane narrower than MIN_PIECE_WIDTH is not a strip
+ * anybody can lay, and two neighbours that come out the same length are one strip, not two.
+ */
+const MIN_PIECE_WIDTH = 0.3;
+function stripPiecesAcrossSteps(start, width, poly, face, inward, vertexStations, avoidStitches, oMin = 0) {
+  /* The lane is the strip's OWN span, not the span clipped to the face. An end strip deliberately
+   * overhangs the end of the face chain, and measuring it over the clipped lane shifts the sample
+   * station inwards, past the deepest ground under its outer corner: 0.13 m2 of the lift's far
+   * corner came out with no grid on it. Clipping is only used to decide where a split may fall. */
+  const lo = start;
+  const hi = start + width;
+  const stationFor = (a, b) => Math.max(0, Math.min(face.length, (a + b) / 2));
+  const whole = () => [{
+    start, width,
+    r: stripBoundaryReach(stationFor(lo, hi), width, poly, face, inward, vertexStations, avoidStitches),
+  }];
+  if (!(hi - lo > MIN_PIECE_WIDTH * 2)) return whole();
+
+  // Where the boundary could change depth inside this strip: its own vertices, far enough in to
+  // leave a layable piece on both sides, and inside the face it is measured against.
+  const cutLo = Math.max(lo, 0) + MIN_PIECE_WIDTH;
+  const cutHi = Math.min(hi, face.length) - MIN_PIECE_WIDTH;
+  const cuts = [];
+  vertexStations.forEach((v) => {
+    if (v > cutLo && v < cutHi && !cuts.some((c) => Math.abs(c - v) < 1e-6)) cuts.push(v);
+  });
+  if (!cuts.length) return whole();
+  cuts.sort((a, b) => a - b);
+
+  // Measure each elementary sub-lane on its own.
+  const edges = [lo, ...cuts, hi];
+  const lanes = [];
+  for (let i = 0; i + 1 < edges.length; i++) {
+    const a = edges[i], b = edges[i + 1];
+    if (b - a < 1e-9) continue;
+    lanes.push({ start: a, width: b - a, r: stripBoundaryReach(stationFor(a, b), b - a, poly, face, inward, vertexStations, avoidStitches) });
+  }
+  if (lanes.length < 2) return whole();
+
+  /* SPLIT A STEP, NEVER A SLOPE.
+   *
+   * A step is two flat depths meeting at a corner: split it and each piece runs exactly to the
+   * extents. A continuously angled edge has no two flat sides to split into — every piece still has
+   * a deep end and a shallow end — and splitting it there measured 0.13 m2 of the far corner out of
+   * coverage while saving only a sliver of trim. So the split is only taken when every sub-lane is
+   * flat within itself; anything else is left exactly as it was before this existed. */
+  const depthAt = (st) => stripBoundaryReach(Math.max(0, Math.min(face.length, st)), 0.01, poly, face, inward, vertexStations, avoidStitches).farReach;
+  const EPS = 0.02;
+  const flat = lanes.every((l) => Math.abs(depthAt(l.start + EPS) - depthAt(l.start + l.width - EPS)) <= ROUND_STEP + 1e-9);
+  if (!flat) return whole();
+
+  // Neighbours that come out the same length are one strip. Only a real change in depth splits.
+  const groups = [[lanes[0]]];
+  for (let i = 1; i < lanes.length; i++) {
+    const prev = groups[groups.length - 1];
+    const sameLength = Math.abs(lanes[i].r.cutLength - prev[prev.length - 1].r.cutLength) <= ROUND_STEP + 1e-9;
+    if (sameLength) prev.push(lanes[i]);
+    else groups.push([lanes[i]]);
+  }
+  // A group too narrow to lay is folded into its neighbour rather than cut as a sliver.
+  for (let i = 0; i < groups.length; i++) {
+    const w = groups[i].reduce((t, l) => t + l.width, 0);
+    if (w >= MIN_PIECE_WIDTH || groups.length === 1) continue;
+    const into = i > 0 ? i - 1 : 1;
+    groups[into] = into < i ? groups[into].concat(groups[i]) : groups[i].concat(groups[into]);
+    groups.splice(i, 1);
+    i = -1;
+  }
+  if (groups.length < 2) return whole();
+
+  /* Each surviving group is measured once more across its own full width, so its single square cut
+   * clears everything under it — the same rule as before, applied to a piece that no step crosses.
+   *
+   * And the pieces LAP each other, by the same minimum overlap any two neighbouring strips use.
+   * Butted exactly they leave a hairline on the split line that no sampling can close: measured at
+   * 0.13 m2 of ground with no grid on it, which on a liner would be a leak and on a grid is still a
+   * gap nobody asked for. Half the lap each side of an internal split gives the pair exactly oMin. */
+  const lap = Math.max(0, oMin) / 2;
+  /* Boundaries are walked from the lane's own start, not read back off each group's members. Built
+   * from the members, a merge that reorders them leaves the pieces not quite tiling the lane, and
+   * the sliver that falls between two of them is ground with no grid on it — 0.13 m2 of it, which
+   * is exactly the kind of gap this whole change exists to close. Walking a cursor makes the pieces
+   * tile the lane by construction, whatever the merging did. */
+  let cursor = lo;
+  return groups.map((g, gi) => {
+    const wsum = g.reduce((t, l) => t + l.width, 0);
+    const aRaw = cursor - (gi > 0 ? lap : 0);
+    cursor += wsum;
+    const bRaw = cursor + (gi < groups.length - 1 ? lap : 0);
+    return { start: aRaw, width: bRaw - aRaw, r: stripBoundaryReach(stationFor(aRaw, bRaw), bRaw - aRaw, poly, face, inward, vertexStations, avoidStitches) };
+  });
+}
+
 /**
  * How far a strip of `width` centred on `centerPt` reaches into (and in front of) the boundary if it
  * were laid along `dir`. Same sampling idea as stripBoundaryReach — several points across the
@@ -1318,22 +1424,25 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     const stripWidths = [];
     const stripStarts = [];
     for (let i = 0; i < result.n; i++) {
-      const width = packed.widths[i];
-      const start = packed.starts[i];
-      const station = Math.max(0, Math.min(face.length, start + width / 2));
-      const r = stripBoundaryReach(station, width, poly, face, inward, vertexStations, avoidStitches);
-      cutLengths.push(r.cutLength);
-      stitches.push(r.stitches);
-      extentsReach.push(r.farReach);
-      frontReach.push(r.nearReach);
-      stripWidths.push(width);
-      stripStarts.push(start);
+      // One strip in, one or more out: a step in the boundary partway across this strip splits it,
+      // so each piece is cut to its own depth instead of all of it to the deepest. See
+      // stripPiecesAcrossSteps.
+      stripPiecesAcrossSteps(packed.starts[i], packed.widths[i], poly, face, inward, vertexStations, avoidStitches, oMin)
+        .forEach((piece) => {
+          cutLengths.push(piece.r.cutLength);
+          stitches.push(piece.r.stitches);
+          extentsReach.push(piece.r.farReach);
+          frontReach.push(piece.r.nearReach);
+          stripWidths.push(piece.width);
+          stripStarts.push(piece.start);
+        });
     }
 
     // Only "omit" means anything on a single-segment lift: with one bearing for the whole face,
     // every strip is already parallel to its neighbour AND square to the face, so back-to-back and
     // square-to-face describe the same strip. The UI hides those two here for that reason.
-    let liftN = result.n;
+    // Splitting can turn one strip into several, so the count comes from what was actually laid.
+    let liftN = cutLengths.length;
     const dropFlatStripAt = (idx) => {
       [cutLengths, stitches, extentsReach, frontReach, stripWidths, stripStarts].forEach((arr) => arr.splice(idx, 1));
       liftN--;
@@ -1434,17 +1543,23 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     const station = Math.max(0, Math.min(face.length, start + w / 2));
     const segIdx = segmentAtStation(station);
     const segInward = inwardNormal(cornerSegments[segIdx].dir);
-    const r = stripBoundaryReach(station, w, poly, face, segInward, faceVertexStations, avoidStitches);
-    cutLengths.push(r.cutLength);
-    stitches.push(r.stitches);
-    extentsReach.push(r.farReach);
-    frontReach.push(r.nearReach);
-    stripWidths.push(w);
-    stripStarts.push(start);
-    stripLocalStarts.push(start - segStations[segIdx]);
-    stripSegmentIndex.push(segIdx);
-    stripIsStitch.push(false);
-    overallResultN++;
+    // Same split as the flat path: a step crossing this strip makes it more than one piece, each
+    // cut to its own depth. Every per-strip array here has to grow in step with the others.
+    stripPiecesAcrossSteps(start, w, poly, face, segInward, faceVertexStations, avoidStitches, oMin)
+      .forEach((piece) => {
+        const pieceStation = Math.max(0, Math.min(face.length, piece.start + piece.width / 2));
+        const pieceSeg = segmentAtStation(pieceStation);
+        cutLengths.push(piece.r.cutLength);
+        stitches.push(piece.r.stitches);
+        extentsReach.push(piece.r.farReach);
+        frontReach.push(piece.r.nearReach);
+        stripWidths.push(piece.width);
+        stripStarts.push(piece.start);
+        stripLocalStarts.push(piece.start - segStations[pieceSeg]);
+        stripSegmentIndex.push(pieceSeg);
+        stripIsStitch.push(false);
+        overallResultN++;
+      });
   }
 
   // stripDirs is filled in BY INDEX, not pushed, so up to here it is a short, sparse array — its
