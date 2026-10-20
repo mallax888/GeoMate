@@ -173,7 +173,7 @@ function updateProgressStats() {
  * round the loop debugging a bug that was already fixed, because nothing on screen said which
  * version it was. It does now, next to the title, and it is read straight off the same constant
  * the cache is keyed on, so the two cannot drift apart. */
-const APP_VERSION = "v219";
+const APP_VERSION = "v220";
 (function showVersion() {
   const el = document.getElementById("appVersion");
   if (el) el.textContent = APP_VERSION;
@@ -3844,13 +3844,48 @@ const settingsInputs = {
 };
 
 const packSideHint = document.getElementById("packSideHint");
+
+/* A CONTROL THAT CANNOT DO ANYTHING SHOULD SAY SO.
+ *
+ * "Force every strip to the same length" lays full-width strips at exactly the minimum overlap from
+ * one side. A FLOOR run is laid that way already — minimum pitch from one end is what the floor
+ * layout is — so on a floor the box changed nothing at all, silently, which reads as the app
+ * ignoring you rather than as the setting having nothing to add. Disabled and labelled instead.
+ *
+ * Only on a floor: on a wall it is a real choice (an even spread across the face, or flush from one
+ * side with the leftover running past the far end), and on the user's RL 44.50 it moves every strip. */
+function syncFloorOnlySettings() {
+  const floor = settingsInputs.reinforcementType && settingsInputs.reinforcementType.value === "floor";
+  const box = settingsInputs.packSide.closest("label");
+  settingsInputs.packSide.disabled = floor;
+  if (box) {
+    box.classList.toggle("is-na", floor);
+    // The reason, in the label itself. The hint under it only shows with Help on, so a greyed box
+    // on its own would be the app saying no without saying why.
+    let tag = box.querySelector(".na-tag");
+    if (floor && !tag) {
+      tag = document.createElement("em");
+      tag.className = "na-tag";
+      tag.textContent = "wall only";
+      box.appendChild(tag);
+    } else if (!floor && tag) tag.remove();
+  }
+  packSideHint.hidden = floor ? false : !settingsInputs.packSide.checked;
+  packSideHint.textContent = floor
+    ? "A floor run is already laid at minimum overlap from one end, so there is nothing for this to force — it applies to a wall, where the strips are otherwise spread evenly across the face."
+    : "Every strip is a full roll width at exactly the minimum overlap, working in from the side above. The leftover isn't spread or cut off — the last strip just runs past the far edge. Works on DXF lifts too, and beats \"Extend face length\" if both are on.";
+}
+
 settingsInputs.packSide.addEventListener("change", () => {
-  packSideHint.hidden = !settingsInputs.packSide.checked;
+  syncFloorOnlySettings();
   computeAndRender();
 });
 settingsInputs.packSideValue.addEventListener("change", computeAndRender);
 settingsInputs.avoidStitches.addEventListener("change", computeAndRender);
-settingsInputs.reinforcementType.addEventListener("change", computeAndRender);
+settingsInputs.reinforcementType.addEventListener("change", () => {
+  syncFloorOnlySettings();
+  computeAndRender();
+});
 
 /* Wall or floor. The bar lives next to the uploads and is always there — asking the question is just
  * a change of wording on it, so answering never makes the control disappear. Nothing blocks: the
@@ -9493,7 +9528,7 @@ function applyStateSnapshot(state) {
   if (s.packSideValue != null) settingsInputs.packSideValue.value = s.packSideValue;
   if (s.packSide != null) {
     settingsInputs.packSide.checked = !!s.packSide;
-    packSideHint.hidden = !s.packSide;
+    syncFloorOnlySettings();
   }
   if (s.avoidStitches != null) settingsInputs.avoidStitches.checked = !!s.avoidStitches;
 
@@ -9722,7 +9757,7 @@ document.getElementById("newProjectBtn").addEventListener("click", () => {
   markReinforcementType();
   settingsInputs.packSide.checked = false;
   settingsInputs.packSideValue.value = "left";
-  packSideHint.hidden = true;
+  syncFloorOnlySettings();
   settingsInputs.avoidStitches.checked = false;
 
   renderProductTable(defaultProductRows());
