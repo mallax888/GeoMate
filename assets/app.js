@@ -173,7 +173,7 @@ function updateProgressStats() {
  * round the loop debugging a bug that was already fixed, because nothing on screen said which
  * version it was. It does now, next to the title, and it is read straight off the same constant
  * the cache is keyed on, so the two cannot drift apart. */
-const APP_VERSION = "v221";
+const APP_VERSION = "v222";
 (function showVersion() {
   const el = document.getElementById("appVersion");
   if (el) el.textContent = APP_VERSION;
@@ -8690,7 +8690,7 @@ function dxfDoc() {
      * (11/21/31) is present; without it the insertion point is the baseline-left corner and every
      * label sits off to one side of the thing it labels.
      */
-    text(layer, at, label, height, rot) {
+    text(layer, at, label, height, rot, align = "center") {
       const z = at.z || 0;
       ent(0, "TEXT"); ent(8, layer);
       ent(10, at.x.toFixed(4)); ent(20, at.y.toFixed(4)); ent(30, z.toFixed(4));
@@ -8698,9 +8698,18 @@ function dxfDoc() {
       ent(1, label);
       ent(50, rot.toFixed(2));
       ent(7, "ARIAL");
-      ent(72, 1);
+      // Centred on its point for a label ON something; left-aligned, middle of the line, for a
+      // table cell, which has to start on its column and sit on its row whatever is in it.
+      ent(72, align === "left" ? 0 : 1);
       ent(11, at.x.toFixed(4)); ent(21, at.y.toFixed(4)); ent(31, z.toFixed(4));
       ent(73, 2);
+      /* Labels count toward the drawing extents too. They did not, and on the laid-out sheet the
+         titles sit under the bottom row of frames and the banner above the top one — so ZOOM EXTENTS
+         opened the file with both of them cropped off. Width is estimated from the character count
+         at Arial's rough 0.62 of its height, which is near enough to keep a label inside the view. */
+      const run = label.length * height * 0.62;
+      seen(align === "left" ? at.x : at.x - run / 2, at.y - height, z);
+      seen(align === "left" ? at.x + run : at.x + run / 2, at.y + height, z);
     },
 
     /** Whether anything has actually been drawn — an empty file is worth refusing to write. */
@@ -8850,8 +8859,13 @@ function cutPlanLifts(results) {
 }
 
 /** Draws the cut plan into a document. Separate from the file it usually becomes, so the combined
- *  export can put it in a document alongside the liner instead of in one of its own. */
-function writeCutPlanGeometry(doc, lifts, rollLookup) {
+ *  export can put it in a document alongside the liner instead of in one of its own.
+ *
+ *  `place(liftIdx)` moves a lift's drawing somewhere else — `{ dx, dy, z }`, applied to every point
+ *  of that lift. Left out, each lift is written where it really is, at its own RL. The laid-out
+ *  sheet below uses it to shift each lift into its own frame and flatten the lot to z=0; the
+ *  geometry itself is identical either way, which is the point of it being one function. */
+function writeCutPlanGeometry(doc, lifts, rollLookup, place = null) {
   const layerFor = (kind, rlLabel, color) =>
     doc.layer(`${kind}_RL_${rlLabel}`, color);
   // A strip can be cut from two rolls ("3,4"), so it gets a tag on each of their layers.
@@ -8866,8 +8880,11 @@ function writeCutPlanGeometry(doc, lifts, rollLookup) {
     const color = DXF_LAYER_COLORS[liftIdx % DXF_LAYER_COLORS.length];
     const quads = stripWorldQuads(r.cutPlan);
     const rollNums = rollLookup ? stripRollNumbersFor(r, rollLookup) : null;
+    const at = place ? place(liftIdx) : { dx: 0, dy: 0, z: rl };
+    const T = (p) => ({ x: p.x + at.dx, y: p.y + at.dy });
+    const z = at.z;
 
-    doc.polyline(layerFor("EXT", rlLabel, 8), r.cutPlan.poly, { z: rl });
+    doc.polyline(layerFor("EXT", rlLabel, 8), r.cutPlan.poly.map(T), { z });
 
     const gridLayer = layerFor("GRID", rlLabel, color);
     const patchLayer = layerFor("PATCH", rlLabel, color);
@@ -8876,12 +8893,16 @@ function writeCutPlanGeometry(doc, lifts, rollLookup) {
     quads.forEach((q, i) => {
       // Corner order walks the strip: near edge left→right, far edge right→left, so the polyline
       // closes as the rectangle it is rather than crossing itself into a bow tie.
-      doc.polyline(gridLayer, [q.nearLeft, q.nearRight, q.farRight, q.farLeft], { z: rl });
+      doc.polyline(gridLayer, [q.nearLeft, q.nearRight, q.farRight, q.farLeft].map(T), { z });
       q.stitchQuads.forEach((s) =>
-        doc.polyline(patchLayer, [s.nearLeft, s.nearRight, s.farRight, s.farLeft], { z: rl })
+        doc.polyline(patchLayer, [s.nearLeft, s.nearRight, s.farRight, s.farLeft].map(T), { z })
       );
 
-      const mid = { x: (q.centerNear.x + q.farCenter.x) / 2, y: (q.centerNear.y + q.farCenter.y) / 2, z: rl };
+      const mid = {
+        x: (q.centerNear.x + q.farCenter.x) / 2 + at.dx,
+        y: (q.centerNear.y + q.farCenter.y) / 2 + at.dy,
+        z,
+      };
       // stripRollNumbersFor hands back an already-joined string ("3" or "3,4"), not a list.
       const roll = rollNums && rollNums[i] ? rollNums[i] : "";
       // Rotated to read along the strip rather than across it, and kept the right way up: past
@@ -8913,19 +8934,217 @@ function writeCutPlanGeometry(doc, lifts, rollLookup) {
         const across = { x: -q.dir.y, y: q.dir.x };
         const off = Math.min(height * 1.6, q.width * 0.38);
         rollLayerFor(roll).forEach((layer) => {
-          doc.text(layer, { x: mid.x + across.x * off, y: mid.y + across.y * off, z: rl }, `R${roll}`, height, rot);
+          doc.text(layer, { x: mid.x + across.x * off, y: mid.y + across.y * off, z }, `R${roll}`, height, rot);
         });
       }
     });
   });
 }
 
-function buildCutPlanDxf(results, rollLookup) {
+/* ============================================================
+   THE LAID-OUT SHEET
+
+   "Can you export every level and not have them overlap, with a little table as per the PDF output?"
+
+   Every lift used to be written where it really is, at its own RL — right for setting out, and
+   useless to look at. Eight lifts of the same batter sit exactly on top of each other in plan, so
+   opening the file showed one unreadable mat of strips and the only way to read a level was to
+   freeze the other seven.
+
+   So the export is a drawing now. Each lift gets its own frame, three to a row, in build order —
+   lowest level first, the order they actually go in — with its strip schedule ruled out beside it
+   the way the printed sheet does it. Two things are deliberately kept:
+
+     - TRUE SIZE. Every frame is 1:1 in metres, so a strip in the file still measures its cut
+       length. Only the origin moves; nothing is scaled, and nothing is redrawn.
+     - THE LAYERS. Names are still by RL, and ROLL_nn still tags every piece, so freezing down to
+       one roll still shows which pieces come off it and where they go.
+
+   What it is not is a setting-out file: the lifts have been moved off their survey coordinates and
+   flattened to z=0, because a sheet is a sheet.
+   ============================================================ */
+const SHEET_PER_ROW = 3;
+const SHEET_TABLE_HEAD = ["STRIP #", "CUT LENGTH", "ROLL #"];
+
+/** Every point a lift's drawing touches — the boundary, the strips and the patches — so a frame can
+ *  be sized before anything is written into it. */
+function liftPlanExtent(r) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const take = (p) => {
+    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+    minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+  };
+  (r.cutPlan.poly || []).forEach(take);
+  stripWorldQuads(r.cutPlan).forEach((q) => {
+    [q.nearLeft, q.nearRight, q.farRight, q.farLeft].forEach(take);
+    (q.stitchQuads || []).forEach((s) => [s.nearLeft, s.nearRight, s.farRight, s.farLeft].forEach(take));
+  });
+  if (!Number.isFinite(minX)) return { minX: 0, minY: 0, maxX: 1, maxY: 1, w: 1, h: 1 };
+  return { minX, minY, maxX, maxY, w: Math.max(maxX - minX, 1e-6), h: Math.max(maxY - minY, 1e-6) };
+}
+
+/**
+ * Where everything goes. Measures each lift, sizes its table, and tiles the lot — all in metres,
+ * since the sheet is drawn at true size, so every dimension here is derived from the job rather
+ * than picked: the same layout has to read on a 12 m pad and a 400 m haul road, and a fixed 1.5 m
+ * title is a scribble on one and a billboard on the other.
+ */
+function cutPlanSheetLayout(lifts, rollLookup) {
+  const ext = lifts.map(({ r }) => liftPlanExtent(r));
+  const span = Math.max(...ext.map((e) => Math.max(e.w, e.h)));
+  const U = Math.min(20, Math.max(0.08, span / 50));   // one text unit
+  const TXT = U;                  // table text, and the module the table is built from
+  const ROW = 1.9 * TXT;          // row pitch
+  const HEAD = 2.3 * TXT;         // header band, down to the rule under it
+  const TITLE = 1.5 * U;
+  const SUB = 1.05 * U;
+  const PAD = 3 * U;              // clear space inside a frame
+  const GAP = 9 * U;              // between frames
+  const TGAP = 4 * U;             // plan to table
+  const CGAP = 2.2 * TXT;         // between two column groups of one table
+  const TITLE_BLOCK = 5.6 * U;    // under the frame, for the two title lines
+
+  const tables = lifts.map(({ r }, i) => {
+    const rollNums = rollLookup ? stripRollNumbersFor(r, rollLookup) : null;
+    const rows = r.cutPlan.cutLengths.map((len, k) => [
+      String(k + 1),
+      // One decimal, because cut lengths land on 0.1 m — printing the raw number put
+      // "10.100000000000001 m" in the schedule.
+      `${len.toFixed(1)} m`,
+      rollNums && rollNums[k] ? `R${rollNums[k]}` : "-",
+    ]);
+    // Arial runs about 0.6 of its height per character; the 1.5 buys the cell its padding.
+    const colW = SHEET_TABLE_HEAD.map((h, c) => {
+      const chars = rows.reduce((m, row) => Math.max(m, row[c].length), h.length);
+      return (chars * 0.62 + 1.5) * TXT;
+    });
+    const groupW = colW.reduce((a, b) => a + b, 0);
+    /* No taller than the plan it sits beside: a 25-strip schedule runs into a second and third
+       column instead, exactly as the printed sheet splits its strip list, and only grows past the
+       plan when even six columns cannot hold it. */
+    const fits = Math.max(6, Math.floor((ext[i].h - HEAD) / ROW));
+    const groups = Math.max(1, Math.min(6, Math.ceil(rows.length / fits)));
+    const perGroup = Math.ceil(rows.length / groups);
+    return {
+      rows, colW, groupW, groups, perGroup,
+      w: groups * groupW + (groups - 1) * CGAP,
+      h: HEAD + perGroup * ROW,
+    };
+  });
+
+  // One frame size for the whole sheet, and one x for every table in it: a grid of identical
+  // frames reads as a drawing set, frames hugging their own contents read as a pile of offcuts.
+  const planW = Math.max(...ext.map((e) => e.w));
+  const frameW = planW + TGAP + Math.max(...tables.map((t) => t.w)) + PAD * 2;
+  const frameH = Math.max(...ext.map((e) => e.h), ...tables.map((t) => t.h)) + PAD * 2;
+  const pitchX = frameW + GAP;
+  const pitchY = frameH + TITLE_BLOCK + GAP;
+
+  const contentH = frameH - PAD * 2;
+  const cells = lifts.map((lift, i) => {
+    const col = i % SHEET_PER_ROW, row = Math.floor(i / SHEET_PER_ROW);
+    const fx = col * pitchX, fyTop = -row * pitchY;
+    return {
+      fx, fyTop,
+      // Centred in the space the widest lift needs, rather than jammed into a corner of it: the
+      // small lifts of a job are mostly small in one direction, and hung from the top-left they
+      // read as a drawing that has slipped off its sheet.
+      dx: fx + PAD + (planW - ext[i].w) / 2 - ext[i].minX,
+      dy: fyTop - PAD - (contentH + ext[i].h) / 2 - ext[i].minY,
+      // Every table on one x, so a sheet of frames reads down the page as a set rather than as
+      // eight separate drawings that happen to be near each other.
+      tableX: fx + PAD + planW + TGAP,
+      tableTop: fyTop - PAD,
+      table: tables[i],
+    };
+  });
+
+  return { cells, frameW, frameH, U, TXT, ROW, HEAD, TITLE, SUB, CGAP };
+}
+
+/** The sheet: the strips, a frame and title per lift, and the ruled strip schedule beside each. */
+function writeCutPlanSheet(doc, lifts, rollLookup, project) {
+  const S = cutPlanSheetLayout(lifts, rollLookup);
+  const { TXT, ROW, HEAD, TITLE, SUB, CGAP } = S;
+  const frameLayer = doc.layer("SHEET_FRAME", 8);
+  const titleLayer = doc.layer("SHEET_TITLE", 7);
+  const textLayer = doc.layer("SHEET_TABLE", 7);
+  const ruleLayer = doc.layer("SHEET_TABLE_RULE", 8);
+  // There is no line() on the writer, and there does not need to be: a rule is a two-point
+  // polyline, open rather than closed, or it doubles back on itself and plots twice as dark.
+  const rule = (a, b) => doc.polyline(ruleLayer, [a, b], { closed: false, z: 0 });
+  const box = (layer, x0, y0, x1, y1) =>
+    doc.polyline(layer, [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }], { z: 0 });
+
+  writeCutPlanGeometry(doc, lifts, rollLookup, (i) => ({ dx: S.cells[i].dx, dy: S.cells[i].dy, z: 0 }));
+
+  let totalStrips = 0;
+
+  lifts.forEach(({ r, rlLabel }, i) => {
+    const c = S.cells[i];
+    box(frameLayer, c.fx, c.fyTop, c.fx + S.frameW, c.fyTop - S.frameH);
+
+    const n = r.cutPlan.cutLengths.length;
+    totalStrips += n;
+    const rollM = r.cutPlan.cutLengths.reduce((t, v) => t + v, 0);
+    const titleY = c.fyTop - S.frameH - TITLE * 1.5;
+    doc.text(titleLayer, { x: c.fx, y: titleY, z: 0 },
+      `GEOGRID AT RL ${rlLabel}   -   LAYER ${i + 1} OF ${lifts.length}`, TITLE, 0, "left");
+    doc.text(titleLayer, { x: c.fx, y: titleY - SUB * 2.1, z: 0 },
+      `${n} STRIP${n === 1 ? "" : "S"}   -   ${r.area.toFixed(1)} m2   -   ${rollM.toFixed(1)} m OF ROLL   -   ${r.w} m WIDE`,
+      SUB, 0, "left");
+
+    const t = c.table;
+    for (let g = 0; g < t.groups; g++) {
+      const first = g * t.perGroup;
+      const rowsHere = Math.min(t.perGroup, t.rows.length - first);
+      if (rowsHere <= 0) break;
+      const x0 = c.tableX + g * (t.groupW + CGAP);
+      const headY = c.tableTop - HEAD;                       // the rule under the header
+      const bottom = headY - rowsHere * ROW;
+
+      box(ruleLayer, x0, c.tableTop, x0 + t.groupW, bottom);
+      // Header, then the double rule under it that tells a schedule from a list.
+      let hx = x0;
+      SHEET_TABLE_HEAD.forEach((h, ci) => {
+        doc.text(textLayer, { x: hx + 0.7 * TXT, y: c.tableTop - HEAD / 2, z: 0 }, h, TXT, 0, "left");
+        hx += t.colW[ci];
+      });
+      rule({ x: x0, y: headY }, { x: x0 + t.groupW, y: headY });
+      rule({ x: x0, y: headY - TXT * 0.14 }, { x: x0 + t.groupW, y: headY - TXT * 0.14 });
+
+      for (let k = 0; k < rowsHere; k++) {
+        const mid = headY - (k + 0.5) * ROW;
+        let tx = x0;
+        t.rows[first + k].forEach((v, ci) => {
+          doc.text(textLayer, { x: tx + 0.7 * TXT, y: mid, z: 0 }, v, TXT, 0, "left");
+          tx += t.colW[ci];
+        });
+        // Every row but the last: the box already draws the line under that one.
+        if (k < rowsHere - 1) {
+          const y = headY - (k + 1) * ROW;
+          rule({ x: x0, y }, { x: x0 + t.groupW, y });
+        }
+      }
+    }
+  });
+
+  const banner = [
+    (project || "").trim().toUpperCase() || "GEOGRID CUT PLAN",
+    `${lifts.length} LEVEL${lifts.length === 1 ? "" : "S"}`,
+    `${totalStrips} STRIPS`,
+    "TRUE SIZE - 1:1 IN METRES",
+    "BUILD ORDER - LOWEST LEVEL FIRST",
+  ].join("   -   ");
+  doc.text(titleLayer, { x: 0, y: TITLE * 2.6, z: 0 }, banner, TITLE * 1.25, 0, "left");
+}
+
+function buildCutPlanDxf(results, rollLookup, project = "") {
   const lifts = cutPlanLifts(results);
   if (!lifts.length) return null;
 
   const doc = dxfDoc();
-  writeCutPlanGeometry(doc, lifts, rollLookup);
+  writeCutPlanSheet(doc, lifts, rollLookup, project);
 
   return {
     text: doc.toText(),
@@ -9586,7 +9805,8 @@ document.getElementById("exportBtn").addEventListener("click", () => {
     btn.addEventListener("click", () => {
       const built = buildCutPlanDxf(
         window.__geogridResults || [],
-        buildRollLookup(window.__geogridRolls || [])
+        buildRollLookup(window.__geogridRolls || []),
+        document.getElementById("projectName")?.value || ""
       );
       if (!built) {
         // "Nothing happened" on a button is the least useful answer available, and this can be
@@ -9602,7 +9822,8 @@ document.getElementById("exportBtn").addEventListener("click", () => {
       note.innerHTML =
         `Exported ${built.strips} strips across ${built.lifts} lift${built.lifts === 1 ? "" : "s"}` +
         (built.skipped ? `, leaving out ${built.skipped} hand-typed lift${built.skipped === 1 ? "" : "s"} with no survey coordinates` : "") +
-        ". Opens straight in Civil 3D — <strong>Save As</strong> there to get a DWG.";
+        ". Laid out as a sheet — every level in its own frame at true size, in build order, with its " +
+        "strip schedule beside it. Opens straight in Civil 3D — <strong>Save As</strong> there to get a DWG.";
     });
   }
 }
