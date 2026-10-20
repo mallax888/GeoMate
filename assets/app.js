@@ -173,7 +173,7 @@ function updateProgressStats() {
  * round the loop debugging a bug that was already fixed, because nothing on screen said which
  * version it was. It does now, next to the title, and it is read straight off the same constant
  * the cache is keyed on, so the two cannot drift apart. */
-const APP_VERSION = "v222";
+const APP_VERSION = "v223";
 (function showVersion() {
   const el = document.getElementById("appVersion");
   if (el) el.textContent = APP_VERSION;
@@ -9004,6 +9004,12 @@ function cutPlanSheetLayout(lifts, rollLookup) {
   const CGAP = 2.2 * TXT;         // between two column groups of one table
   const TITLE_BLOCK = 5.6 * U;    // under the frame, for the two title lines
 
+  /* How many rows a column of the schedule can hold: measured against the DEEPEST lift, not each
+     lift's own plan, because every frame on the sheet is cut to the deepest one anyway. Measured
+     lift by lift, a shallow lift with ten strips split them into two columns of five while the
+     frame beside it stood half empty. The floor of 12 stops a short schedule splitting at all. */
+  const fits = Math.max(12, Math.floor((Math.max(...ext.map((e) => e.h)) - HEAD) / ROW));
+
   const tables = lifts.map(({ r }, i) => {
     const rollNums = rollLookup ? stripRollNumbersFor(r, rollLookup) : null;
     const rows = r.cutPlan.cutLengths.map((len, k) => [
@@ -9019,10 +9025,9 @@ function cutPlanSheetLayout(lifts, rollLookup) {
       return (chars * 0.62 + 1.5) * TXT;
     });
     const groupW = colW.reduce((a, b) => a + b, 0);
-    /* No taller than the plan it sits beside: a 25-strip schedule runs into a second and third
-       column instead, exactly as the printed sheet splits its strip list, and only grows past the
-       plan when even six columns cannot hold it. */
-    const fits = Math.max(6, Math.floor((ext[i].h - HEAD) / ROW));
+    /* No taller than the plans it sits beside: a long schedule runs into a second and third column
+       instead, exactly as the printed sheet splits its strip list, and only grows past the plan
+       when even six columns cannot hold it. */
     const groups = Math.max(1, Math.min(6, Math.ceil(rows.length / fits)));
     const perGroup = Math.ceil(rows.length / groups);
     return {
