@@ -173,7 +173,7 @@ function updateProgressStats() {
  * round the loop debugging a bug that was already fixed, because nothing on screen said which
  * version it was. It does now, next to the title, and it is read straight off the same constant
  * the cache is keyed on, so the two cannot drift apart. */
-const APP_VERSION = "v218";
+const APP_VERSION = "v219";
 (function showVersion() {
   const el = document.getElementById("appVersion");
   if (el) el.textContent = APP_VERSION;
@@ -1973,7 +1973,11 @@ function computeCutPlan(rawPoints, w, oMin, faceCycle, refDir = null, packSide =
     n: overallResultN,
     overlap: overallOverlap,
     stripStarts,
-    materialWidth: w,
+    /* ALL the material across the lift, not one roll's width. Every other layout returns the sum of
+     * its strips' widths; this one returned the width of a single roll, so the printed sheet, which
+     * divides it by the strip count to state the roll width, told a 31-strip lift it was laying
+     * 0.16 m rolls — and the CSV's Material width column said 5 m for a lift carrying 155. */
+    materialWidth: stripWidths.reduce((a, b) => a + b, 0),
     cutLengths,
     stitches,
     extentsReach,
@@ -5841,8 +5845,8 @@ function buildCutPlanPrintPages(results, project, numberPages = false) {
        * A tall lift puts the list in the column beside it and the plan takes the cap; a wide one
        * runs the full width with the list under it.
        *
-       * The row counts are measured off the printed sheet, not guessed: a row is 8.7 mm (6.6 mm in
-       * the narrow three-and-four-column form), and the heading, the two steps and the roll strip at
+       * The row counts are measured off the printed sheet, not guessed: a row is 8.7 mm, and the
+       * heading, the two steps and the roll strip at
        * the foot come to 58-70 mm depending on how many rolls the lift draws from, against the
        * 273 mm an A4 page gives once its margins are off. 188 mm is what that leaves for the plan
        * and the list together, and every sheet of the user's eight-lift job measures inside 273. Short columns rather
@@ -5861,10 +5865,11 @@ function buildCutPlanPrintPages(results, project, numberPages = false) {
        * with, so splitting it in two leaves room for a drawing worth setting out from. */
       const cols = Math.min(3, Math.max(allRows.length > 6 ? 2 : 1, Math.ceil(allRows.length / PER_COL)));
       const rowsPerCol = Math.ceil(allRows.length / cols);
-      const listMm = rowsPerCol ? rowsPerCol * (cols >= 3 ? 6.6 : 8.7) + 12 : 0;
+      // One size of type on every sheet now, so a row is the same height whatever the column count.
+      const listMm = rowsPerCol ? rowsPerCol * 8.7 + 12 : 0;
       // 24 mm of that budget is the 12 mm of clear paper either side of the plan (see
       // .cutplan-print-page__plan), and 8 mm of it is the page number at the foot.
-      const planMm = Math.round(Math.max(50, Math.min(125, 180 - 24 - listMm)));
+      const planMm = Math.round(Math.max(50, Math.min(125, 190 - 24 - listMm)));
       /* A column of blank cells is not a column. Most lifts raise no stitch patch at all, and the
        * empty fourth column was taking a quarter of the table's width on every one of them — width
        * the three columns that do carry something had to give up, with "Strip #" wrapping onto two

@@ -1731,12 +1731,12 @@ details.tool > p:empty { display: none; }
    buildCutPlanPrintPages, which decides which of the two a sheet gets. */
 .cutplan-print-page__body--stacked { grid-template-columns: minmax(0, 1fr); gap: 0.7rem; }
 .cutplan-print-page__cols { display: grid; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); gap: 0.9rem; align-items: start; }
-/* Three columns on an A4 width is about 57 mm each — enough for the numbers, not enough for the
-   note at full size, which clipped it to "Stit…". Set smaller rather than wrapped: a row that
-   wraps is what pushed the sheet onto a second page in the first place. */
-.cutplan-print-page__cols.is-tight .cutplan-print-table { font-size: var(--fs-xs); }
+/* ONE SIZE OF TYPE ON EVERY SHEET. A three-column lift used to set its list smaller than a
+   two-column one, so two sheets out of the same job read at two different sizes — asked for, and
+   right: a set of sheets is one document. Only the cell padding tightens, which costs no legibility
+   and is what keeps three columns inside an A4 width. */
 .cutplan-print-page__cols.is-tight .cutplan-print-table th,
-.cutplan-print-page__cols.is-tight .cutplan-print-table td { padding: 0.22rem 0.35rem; }
+.cutplan-print-page__cols.is-tight .cutplan-print-table td { padding: 0.24rem 0.3rem; }
 /* THE DRAWING IS THE SHEET, SO GIVE IT THE PAPER.
    Sized from its HEIGHT with the width following the drawing's own ratio (--plan-aspect, stamped on
    by buildCutPlanSvgMarkup), so the bordered box hugs the plan instead of being a full-width frame
@@ -1789,7 +1789,11 @@ details.tool > p:empty { display: none; }
 /* The VALUES hold one line; the headings are allowed two. "Cut length" is wider than the column it
    labels, and held on one line it printed straight over the heading next to it. */
 .cutplan-print-table td { white-space: nowrap; }
-.cutplan-print-table th { white-space: normal; line-height: 1.15; vertical-align: bottom; }
+/* The heading stays on one line too. Wrapped, "Strip #" became "Strip" over "#" on exactly the
+   sheets that have three columns, so the same column heading was one line on one sheet and two on
+   the next. The headings are short by construction and fit at this size — "Cut length" is the
+   longest at ten characters. */
+.cutplan-print-table th { white-space: nowrap; line-height: 1.15; vertical-align: bottom; }
 /* Page number at the foot of each sheet. The section is a column with a minimum height so the
    number sits at the bottom of a short sheet instead of floating under the content, but the
    minimum is well inside an A4 page — a taller sheet simply pushes it down, it never forces a
