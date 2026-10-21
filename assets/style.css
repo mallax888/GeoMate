@@ -2023,10 +2023,15 @@ details.tool > p:empty { display: none; }
 .roll-card__pieces li { display: flex; align-items: baseline; gap: 0.45rem; padding: 0.15rem 0; border-bottom: 1px solid var(--line); min-width: 0; }
 .roll-piece__label { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .roll-piece__value { flex: none; white-space: nowrap; font-weight: 700; color: var(--ink); }
-/* The roll-filling note is an aside, not part of the length — and the row carrying it takes the
-   full width of the card so neither it nor the piece's own label has to be truncated for it. */
-.roll-piece__fill { font-weight: 400; color: var(--ink-muted); }
-.roll-card__pieces li.is-filled { grid-column: 1 / -1; }
+/* The off-cut is the roll's own last line, not a piece — full width and set back, because it is the
+   one line on the card that is not an instruction to cut anything. */
+.roll-card__pieces li.is-offcut { grid-column: 1 / -1; color: var(--ink-muted); border-bottom: none; }
+.roll-card__pieces li.is-offcut .roll-piece__value { color: var(--ink-muted); }
+/* The tail of a roll, drawn to scale at the end of the bar: hatched, and plainly not a piece. */
+.roll-bar__offcut {
+  height: 100%;
+  background: repeating-linear-gradient(135deg, var(--line) 0 3px, transparent 3px 7px);
+}
 .roll-schedule-print-view { display: none; }
 .roll-labels-print-view { display: none; }
 

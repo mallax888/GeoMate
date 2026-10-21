@@ -173,7 +173,7 @@ function updateProgressStats() {
  * round the loop debugging a bug that was already fixed, because nothing on screen said which
  * version it was. It does now, next to the title, and it is read straight off the same constant
  * the cache is keyed on, so the two cannot drift apart. */
-const APP_VERSION = "v223";
+const APP_VERSION = "v224";
 (function showVersion() {
   const el = document.getElementById("appVersion");
   if (el) el.textContent = APP_VERSION;
@@ -3713,16 +3713,32 @@ function parseDXFPaths(text) {
   return paths;
 }
 
-/** Greedy first-fit-decreasing bin packing of strip lengths into fixed-length rolls. */
 /**
- * First-fit-decreasing bin packing of labelled pieces (which lift, which strip) onto fixed-length
- * rolls — a physical numbered cutting schedule, not just a summary count. Per site preference, a
- * roll's leftover after packing is never left as discarded off-cut: it's added onto that roll's last
- * (smallest) piece instead, since a strip longer than its design minimum is always safe, but an
- * off-cut thrown in the bin isn't recoverable. Every roll therefore ends up used in full; each piece
- * carries `extra` (how much beyond its design length it picked up to make that happen) so the bonus
- * is visible rather than silently absorbed. A piece longer than one roll is split across as many
- * whole rolls as it needs plus a final partial one.
+ * WHICH PIECE COMES OFF WHICH ROLL — the whole point of the calculator.
+ *
+ * Takes the labelled pieces (which lift, which strip) and works out the cutting schedule that
+ * leaves the least on the cores. Every piece is cut to its design length; a roll's leftover is
+ * off-cut and is reported as off-cut. A piece longer than a whole roll is split across as many
+ * rolls as it needs plus a final partial one.
+ *
+ * Bin packing has no quick exact answer, and no single heuristic is reliably best — which one wins
+ * depends on the mix of lengths, so this runs several and keeps the best one it finds:
+ *
+ *   - an exact bounded knapsack per roll (of the pieces still to place, the combination closest to
+ *     filling this roll without going over),
+ *   - first-fit-decreasing and best-fit-decreasing,
+ *   - and a run of randomised best-fit restarts — decreasing order, lightly shuffled. Plain luck
+ *     beats a clever rule more often than it should on bin packing, because all that matters is
+ *     whether some ordering happens to tuck the awkward pieces away.
+ *
+ * Each candidate then goes through a reduction pass that tries to empty its least-used roll into
+ * the others, swapping a piece out of the way to make room where that is what it takes. Fewest
+ * rolls wins; a tie goes to the schedule with the most rolls cut out exactly.
+ *
+ * On the user's own job all of them tie — floor mode lands on 73 rolls, which is total metres over
+ * roll length rounded up and so cannot be beaten by anything; wall mode lands on 74 against a floor
+ * of 73 that nothing reaches, since 73 would need all 180 pieces packed with 1.9 m of slack in
+ * total. Different jobs are not so even-handed, and this costs a few hundred milliseconds.
  */
 function packRollsDetailed(pieces, rollLength) {
   if (!(rollLength > 0)) return [];
@@ -3747,129 +3763,205 @@ function packRollsDetailed(pieces, rollLength) {
     fits.push(piece);
   });
 
-  /* FILL EACH ROLL AS FULL AS THE PIECES LEFT ALLOW.
-   *
-   * This was first-fit-decreasing — take each piece in turn, drop it on the first roll it fits.
-   * Quick, and good, but it only ever looks at one piece at a time: it cannot see that a 70 and a
-   * 30 finish a roll exactly while a 70 and a 25 leave five metres on the core forever.
-   *
-   * Each roll is now a small bounded-knapsack problem solved exactly: of the pieces still to place,
-   * which combination comes closest to filling this roll without going over? Take it, start the next
-   * roll, repeat. Lengths are already rounded to 100 mm by the cut plan, so the search runs in
-   * tenths of a metre — a thousand steps for a 100 m roll, over a dozen or so distinct lengths,
-   * which is nothing.
-   *
-   * On the user's job at its own 100 m roll this finds the same count as first-fit (73 floor, 74
-   * wall — both at or one above a bound that cannot actually be reached by any packing). At 120 m
-   * it finds 61 rolls where first-fit needed 62, which is 120 m of grid that need not be bought,
-   * and it is what makes the roll-length advice below worth printing. */
-  const U = 10; // tenths of a metre
+  /* Everything below works in TENTHS OF A METRE, as integers. The cut plan already rounds every
+     length to 100 mm, so nothing is lost, and a bin packer run on floating-point metres spends its
+     life deciding whether 99.99999999 m fits on a 100 m roll. */
+  const U = 10;
   const cap = Math.floor(rollLength * U + 1e-6);
-  const buckets = new Map(); // rounded-up length in units -> pieces, longest first
-  fits.forEach((piece) => {
-    const u = Math.min(cap, Math.ceil(piece.length * U - 1e-6));
-    if (!buckets.has(u)) buckets.set(u, []);
-    buckets.get(u).push(piece);
-  });
-  buckets.forEach((list) => list.sort((a, b) => b.length - a.length));
+  const uOf = (p) => Math.min(cap, Math.ceil(p.length * U - 1e-6));
+  const byLongest = fits.slice().sort((a, b) => b.length - a.length);
 
-  let left = fits.length;
-  let guard = fits.length + 1;
-  while (left > 0 && guard-- > 0) {
-    const types = [...buckets.entries()].filter(([, list]) => list.length).sort((a, b) => b[0] - a[0]);
-    if (!types.length) break;
-    // best[c] = the most units reachable using exactly capacity c; pick[c] remembers how.
-    const best = new Int32Array(cap + 1).fill(-1);
-    const pick = new Int32Array(cap + 1).fill(-1);
-    best[0] = 0;
-    for (let t = 0; t < types.length; t++) {
-      const [u, list] = types[t];
-      const n = list.length;
-      for (let c = cap; c >= 0; c--) {
-        if (best[c] < 0) continue;
-        for (let k = 1; k <= n && c + k * u <= cap; k++) {
-          const v = best[c] + k * u;
-          if (v > best[c + k * u]) { best[c + k * u] = v; pick[c + k * u] = t * 1000 + k; }
+  /* Fill each roll as full as an exact bounded knapsack over the pieces still to place can make it.
+     The greedy packers below only ever look at one piece at a time, so they cannot see that a 70
+     and a 30 finish a roll exactly while a 70 and a 25 leave five metres on the core forever. */
+  const packKnapsack = () => {
+    const buckets = new Map(); // length in units -> pieces of that length, longest first
+    fits.forEach((piece) => {
+      const u = uOf(piece);
+      if (!buckets.has(u)) buckets.set(u, []);
+      buckets.get(u).push(piece);
+    });
+    buckets.forEach((list) => list.sort((a, b) => b.length - a.length));
+
+    const bins = [];
+    let left = fits.length;
+    let guard = fits.length + 1;
+    while (left > 0 && guard-- > 0) {
+      const types = [...buckets.entries()].filter(([, list]) => list.length).sort((a, b) => b[0] - a[0]);
+      if (!types.length) break;
+      // best[c] = the most units reachable using exactly capacity c; pick[c] remembers how.
+      const best = new Int32Array(cap + 1).fill(-1);
+      const pick = new Int32Array(cap + 1).fill(-1);
+      best[0] = 0;
+      for (let t = 0; t < types.length; t++) {
+        const [u, list] = types[t];
+        const n = list.length;
+        for (let c = cap; c >= 0; c--) {
+          if (best[c] < 0) continue;
+          for (let k = 1; k <= n && c + k * u <= cap; k++) {
+            const v = best[c] + k * u;
+            if (v > best[c + k * u]) { best[c + k * u] = v; pick[c + k * u] = t * 1000 + k; }
+          }
         }
       }
+      let at = 0;
+      for (let c = cap; c >= 0; c--) if (best[c] > best[at]) at = c;
+      const take = [];
+      let c = at;
+      while (c > 0 && pick[c] >= 0) {
+        const t = Math.floor(pick[c] / 1000), k = pick[c] % 1000;
+        const [u, list] = types[t];
+        for (let i = 0; i < k && list.length; i++) take.push(list.shift());
+        c -= k * u;
+      }
+      if (!take.length) break;
+      left -= take.length;
+      bins.push({ left: cap - take.reduce((s, q) => s + uOf(q), 0), items: take });
     }
-    let at = 0;
-    for (let c = cap; c >= 0; c--) if (best[c] > best[at]) at = c;
-    const take = [];
-    let c = at;
-    while (c > 0 && pick[c] >= 0) {
-      const t = Math.floor(pick[c] / 1000), k = pick[c] % 1000;
-      const [u, list] = types[t];
-      for (let i = 0; i < k && list.length; i++) take.push(list.shift());
-      c -= k * u;
-    }
-    if (!take.length) break;
-    left -= take.length;
-    const used = take.reduce((sum, q) => sum + q.length, 0);
-    rolls.push({
-      remaining: Math.max(0, rollLength - used),
-      pieces: take.map((q) => ({ label: q.label, key: q.key, length: q.length, extra: 0, seq: q.seq })),
+    return bins;
+  };
+
+  /** One pass down an order, each piece onto the first roll it fits (or the tightest, best-fit). */
+  const packGreedy = (order, bestFit) => {
+    const bins = [];
+    order.forEach((piece) => {
+      const u = uOf(piece);
+      let pick = -1;
+      for (let i = 0; i < bins.length; i++) {
+        if (bins[i].left < u) continue;
+        if (pick === -1) { pick = i; if (!bestFit) break; }
+        else if (bins[i].left < bins[pick].left) pick = i;
+      }
+      if (pick === -1) bins.push({ left: cap - u, items: [piece] });
+      else { bins[pick].left -= u; bins[pick].items.push(piece); }
     });
-  }
+    return bins;
+  };
 
   /* EMPTY A ROLL IF ITS PIECES FIT ON THE OTHERS.
    *
-   * First-fit-decreasing is a good packer, not an optimal one: it can finish one roll short of the
-   * best possible. On the user's job in wall mode it used 74 rolls where 73 hold the material —
-   * roll 23 ended up with 30.3 m on it and 69.7 m spare, because by the time the small pieces were
-   * placed the earlier rolls had already taken them.
+   * No packer here is optimal — each can finish one roll short of the best possible. So: take the
+   * least-used roll and try to re-home every piece on it into the room left on the others. Where a
+   * piece will not go anywhere, one last thing is tried before giving up — evict a piece that is in
+   * its way and re-home THAT, which is what gets a 15 m piece onto a roll with 14.9 m free.
    *
-   * So: take the emptiest roll and try to re-home every piece on it, best-fit, into the room left
-   * on the others. All of them fit, the roll goes; one doesn't, nothing moves and the search stops.
-   * Each pass removes at most one roll and only ever moves pieces into space that already existed,
-   * so the cutting list stays exactly as valid as it was — the same pieces, off fewer cores.
-   *
-   * The theoretical floor is total metres / roll length rounded up; this reaches it on both of the
-   * user's modes. */
-  for (let pass = 0; pass < rolls.length; pass++) {
-    if (rolls.length < 2) break;
-    let victim = 0;
-    for (let i = 1; i < rolls.length; i++) {
-      if (rolls[i].remaining > rolls[victim].remaining) victim = i;
-    }
-    const donor = rolls[victim];
-    const others = rolls.filter((_, i) => i !== victim);
-    const moves = [];
-    // Biggest piece first into the tightest roll that still takes it: the hardest piece to place
-    // goes while there is the most room to choose from, and the room it leaves behind stays whole.
-    const order = donor.pieces.map((q, i) => ({ q, i })).sort((a, b) => b.q.length - a.q.length);
-    const room = others.map((r) => r.remaining);
-    let allPlaced = true;
-    for (const { q, i } of order) {
-      let best = -1;
-      for (let k = 0; k < others.length; k++) {
-        if (room[k] + 1e-9 < q.length) continue;
-        if (best === -1 || room[k] < room[best]) best = k;
+   * Each pass removes at most one roll and only ever moves pieces into space that already exists,
+   * so the cutting list stays exactly as valid as it was: the same pieces, off fewer cores. */
+  const reduceBins = (bins) => {
+    for (let pass = 0; pass < bins.length + 4; pass++) {
+      if (bins.length < 2) break;
+      const used = (b) => cap - b.left;
+      let victim = 0;
+      for (let i = 1; i < bins.length; i++) if (used(bins[i]) < used(bins[victim])) victim = i;
+      const donor = bins[victim];
+      const others = bins.filter((_, i) => i !== victim);
+      const room = others.map((b) => b.left);
+      const plan = [];
+      let allPlaced = true;
+      // Biggest piece first into the tightest roll that still takes it: the hardest piece to place
+      // goes while there is the most room to choose from, and the room it leaves stays whole.
+      for (const piece of donor.items.slice().sort((a, b) => b.length - a.length)) {
+        const u = uOf(piece);
+        let pick = -1;
+        for (let k = 0; k < others.length; k++) {
+          if (room[k] < u) continue;
+          if (pick === -1 || room[k] < room[pick]) pick = k;
+        }
+        if (pick >= 0) { room[pick] -= u; plan.push({ piece, to: pick }); continue; }
+        // Nowhere to put it as things stand: make room by moving one piece out of the way.
+        let freed = false;
+        for (let k = 0; k < others.length && !freed; k++) {
+          for (const sitting of others[k].items) {
+            const su = uOf(sitting);
+            if (room[k] + su < u) continue;              // even evicting this would not be enough
+            let host = -1;
+            for (let h = 0; h < others.length; h++) {
+              if (h === k || room[h] < su) continue;
+              if (host === -1 || room[h] < room[host]) host = h;
+            }
+            if (host === -1) continue;
+            room[k] += su; room[host] -= su;
+            room[k] -= u;
+            plan.push({ piece: sitting, from: k, to: host }, { piece, to: k });
+            freed = true;
+            break;
+          }
+        }
+        if (!freed) { allPlaced = false; break; }
       }
-      if (best === -1) { allPlaced = false; break; }
-      room[best] -= q.length;
-      moves.push({ to: best, piece: q, from: i });
+      if (!allPlaced) break;
+      plan.forEach((step) => {
+        if (step.from !== undefined) others[step.from].items.splice(others[step.from].items.indexOf(step.piece), 1);
+        others[step.to].items.push(step.piece);
+      });
+      others.forEach((b) => { b.left = cap - b.items.reduce((s, q) => s + uOf(q), 0); });
+      bins.length = 0;
+      others.forEach((b) => bins.push(b));
     }
-    if (!allPlaced) break;
-    moves.forEach((m) => {
-      others[m.to].pieces.push(m.piece);
-      others[m.to].remaining -= m.piece.length;
-    });
-    rolls.splice(victim, 1);
+    return bins;
+  };
+
+  /* Decreasing order, lightly shuffled, packed best-fit — as many goes as the job size affords.
+     A deterministic rule is beaten surprisingly often by one of these, because all that decides a
+     packing is whether some ordering happens to tuck the awkward pieces away.
+
+     The count falls away on a big job and stops altogether on a huge one. Each go costs a pass over
+     every piece against every roll open so far, and the roll-length advice packs the whole job
+     another eleven times: left unscaled, a 120-lift job with 5,640 strips took half a minute longer
+     for candidates that had never once won on a set that size. The three deterministic packers
+     stay whatever the size, and they are the ones that found the 90 m roll result. */
+  const n = fits.length;
+  const shuffledTries = n <= 400 ? 120 : n <= 1200 ? 24 : n <= 3000 ? 6 : 0;
+  let seed = 20260101;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+
+  const candidates = [packKnapsack(), packGreedy(byLongest, false), packGreedy(byLongest, true)];
+  for (let t = 0; t < shuffledTries; t++) {
+    const order = byLongest.slice();
+    for (let i = 0; i < order.length; i++) {
+      if (rnd() < 0.35) {
+        const j = Math.min(order.length - 1, i + 1 + Math.floor(rnd() * 6));
+        [order[i], order[j]] = [order[j], order[i]];
+      }
+    }
+    candidates.push(packGreedy(order, true));
   }
 
-  // Pieces keep their cutting order on each roll: longest first, as they were packed.
-  rolls.forEach((roll) => roll.pieces.sort((a, b) => b.length - a.length));
-
-  // Use up every roll fully: whatever's left after packing goes onto that roll's last (smallest)
-  // piece as extra length, rather than being thrown away.
-  rolls.forEach((roll) => {
-    if (roll.remaining > 1e-6) {
-      roll.pieces[roll.pieces.length - 1].extra += roll.remaining;
-      roll.remaining = 0;
-    }
+  // Fewest rolls wins; a tie goes to the schedule with the most rolls cut out exactly, which is
+  // the one whose leftover is concentrated on a core the crew can set aside rather than dribbled
+  // across a dozen of them.
+  const exact = (bins) => bins.reduce((n, b) => n + (b.left === 0 ? 1 : 0), 0);
+  let chosen = null;
+  candidates.forEach((bins) => {
+    const packed = reduceBins(bins);
+    if (!chosen || packed.length < chosen.length ||
+        (packed.length === chosen.length && exact(packed) > exact(chosen))) chosen = packed;
   });
 
+  (chosen || []).forEach((bin) => {
+    const used = bin.items.reduce((s, q) => s + q.length, 0);
+    rolls.push({
+      remaining: Math.max(0, rollLength - used),
+      // Pieces keep their cutting order on each roll: longest first.
+      pieces: bin.items
+        .slice()
+        .sort((a, b) => b.length - a.length)
+        .map((q) => ({ label: q.label, key: q.key, length: q.length, extra: 0, seq: q.seq })),
+    });
+  });
+
+  /* AND NOTHING ELSE. EVERY PIECE IS CUT TO ITS DESIGN LENGTH.
+   *
+   * What was here: whatever was left on a roll after its cuts was added onto that roll's last
+   * (smallest) piece, so no roll ever showed a leftover — "installed, not discarded". It read as
+   * free material. It is not. "You are supposed to place the strip to the design length, that's
+   * it." A strip cut 4 m long is 4 m the crew has to find somewhere to put, on a lift whose
+   * extents do not want it; it is grid off a roll either way, and calling it installed only hides
+   * which roll it came off.
+   *
+   * So a piece is its design length, and `roll.remaining` is what is genuinely left on the core —
+   * reported as off-cut, where it can be seen and designed out by ordering a different roll length.
+   * `extra` stays on the piece at zero so a roll split across cores keeps one shape. */
   return rolls;
 }
 
@@ -5742,13 +5834,17 @@ function renderSummary(results, productSpecs, rollGroupSize, installRate, baseLe
   document.getElementById("statInstallTimeHint").textContent = installDays > 0 ? "" : "enter install rate";
   fitStatValues();
 
+  // What is actually left on the cores once every piece is cut to its design length. It used to be
+  // the total added onto the last piece of each roll to use the roll up, which reported as 0.9% of
+  // material "installed, not discarded" — a figure that could never be acted on because it was
+  // defined away. This is the real off-cut, and the roll-length advice below is how to shrink it.
   const purchased = rolls.reduce((s, roll) => s + roll.rollLength, 0);
-  const extraTotal = rolls.reduce((s, roll) => s + roll.pieces.reduce((s2, p) => s2 + p.extra, 0), 0);
-  const extraPct = purchased > 0 ? (extraTotal / purchased) * 100 : 0;
+  const offcutTotal = rolls.reduce((s, roll) => s + Math.max(0, roll.remaining), 0);
+  const offcutPct = purchased > 0 ? (offcutTotal / purchased) * 100 : 0;
   const wasteOffcutEl = document.getElementById("wasteOffcut");
   if (purchased > 0) {
-    wasteOffcutEl.textContent = `${fmt.m(extraTotal)} m (${fmt.pct(extraPct)})`;
-    wasteOffcutEl.className = `waste-row__pct level-${wasteLevel(extraPct)}`;
+    wasteOffcutEl.textContent = `${fmt.m(offcutTotal)} m (${fmt.pct(offcutPct)})`;
+    wasteOffcutEl.className = `waste-row__pct level-${wasteLevel(offcutPct)}`;
   } else {
     wasteOffcutEl.textContent = "—";
     wasteOffcutEl.className = "waste-row__pct";
@@ -9529,34 +9625,36 @@ function syncCompass() {
 
 /* ============================================================
    Roll schedule — every strip/stitch pooled across every lift and packed onto
-   numbered rolls, aiming for zero discarded off-cut.
+   numbered rolls — which piece comes off which roll, chosen to leave the least off-cut.
    ============================================================ */
 
 /** One <div class="roll-card"> — a labelled bar diagram plus a piece list — shared by the on-screen list and print. */
 function buildRollCardHtml(roll, index) {
   const rollLength = roll.rollLength;
-  const used = roll.pieces.reduce((s, p) => s + p.length + p.extra, 0);
+  const used = roll.pieces.reduce((s, p) => s + p.length, 0);
+  const left = Math.max(0, rollLength - used);
   const barPieces = roll.pieces
     .map((p, i) => {
-      const total = p.length + p.extra;
-      const title = p.extra > 1e-6 ? `${escapeHtml(p.label)} — ${fmt.m(p.length)} m + ${fmt.m(p.extra)} m to fill roll` : `${escapeHtml(p.label)} — ${fmt.m(p.length)} m`;
-      return `<div class="roll-bar__piece" style="width:${((total / rollLength) * 100).toFixed(2)}%" title="${title}"><span class="roll-bar__piece-num">${i + 1}</span></div>`;
+      const title = `${escapeHtml(p.label)} — ${fmt.m(p.length)} m`;
+      return `<div class="roll-bar__piece" style="width:${((p.length / rollLength) * 100).toFixed(2)}%" title="${title}"><span class="roll-bar__piece-num">${i + 1}</span></div>`;
     })
     .join("");
+  // What is left on the core, drawn to scale at the end of the bar rather than absorbed into the
+  // last piece: an empty tail is the honest picture of a roll that did not quite work out.
+  const barTail = left > 1e-6
+    ? `<div class="roll-bar__offcut" style="width:${((left / rollLength) * 100).toFixed(2)}%" title="${fmt.m(left)} m off-cut"></div>`
+    : "";
   // Piece order within a roll is its physical cut order off that roll, so numbering it 1, 2, 3…
   // per roll (rather than reusing the RL/Strip label, which is the strip's position on its own lift)
   // gives the crew a simple cut sequence to follow roll by roll.
   const pieceRows = roll.pieces
-    .map((p, i) => {
-      /* The cut length is the figure; the "and the rest of the roll goes down with it" note is an
-       * aside, so it is marked as one. Run together as a single value, the pair was long enough to
-       * push the piece's own label out of its column and leave it as an ellipsis — the one thing on
-       * the row a crew cannot do without. */
-      const fill = p.extra > 1e-6 ? ` <span class="roll-piece__fill">+${fmt.m(p.extra)} m to fill roll</span>` : "";
-      const detail = `${fmt.m(p.length + (p.extra > 1e-6 ? p.extra : 0))} m${fill}`;
-      return `<li${p.extra > 1e-6 ? ' class="is-filled"' : ""}><span class="roll-piece__label"><span class="roll-piece__num">${i + 1}.</span> ${escapeHtml(p.label)}</span><span class="roll-piece__value">${detail}</span></li>`;
-    })
-    .join("");
+    .map((p, i) => `<li><span class="roll-piece__label"><span class="roll-piece__num">${i + 1}.</span> ${escapeHtml(p.label)}</span><span class="roll-piece__value">${fmt.m(p.length)} m</span></li>`)
+    .join("") +
+    /* The off-cut as its own line at the end of the cut list, because it is what the crew is left
+     * holding once they have cut the pieces above it — not something to add onto the last one. */
+    (left > 1e-6
+      ? `<li class="is-offcut"><span class="roll-piece__label"><span class="roll-piece__num">—</span> Off-cut left on the core</span><span class="roll-piece__value">${fmt.m(left)} m</span></li>`
+      : "");
   const cut = isRollCut(index + 1);
   const productTag = roll.productLabel ? ` <span class="roll-card__product">${escapeHtml(roll.productLabel)}</span>` : "";
   return `
@@ -9569,7 +9667,7 @@ function buildRollCardHtml(roll, index) {
           <span>Cut</span>
         </label>
       </div>
-      <div class="roll-bar">${barPieces}</div>
+      <div class="roll-bar">${barPieces}${barTail}</div>
       <ul class="roll-card__pieces">${pieceRows}</ul>
     </div>
   `;
@@ -9577,10 +9675,12 @@ function buildRollCardHtml(roll, index) {
 
 /* WOULD A DIFFERENT ROLL LENGTH LEAVE LESS ON THE CORE?
  *
- * The packing itself has nothing left to give: first-fit-decreasing, best-fit-decreasing and a
- * per-roll exact knapsack all land on the same number of rolls for this job. What is left over is
- * not a packing failure, it is the tail of the last few rolls — and the one thing that moves it is
- * the LENGTH OF ROLL ORDERED, which is a purchasing decision the app can inform.
+ * Once the packer has tried everything it knows (see packRollsDetailed) and all of it lands on the
+ * same roll count, what is left over is not a packing failure. It is the tail of the last few
+ * rolls — and the one thing that moves it is the LENGTH OF ROLL ORDERED, which is a purchasing
+ * decision the app can inform. Each candidate length is packed properly rather than estimated,
+ * because the answer is not total/length: it depends entirely on how the lengths in this job
+ * happen to combine.
  *
  * Measured on the user's job: at 100 m, 0.9% of what is bought is spare. At 70, 75 or 80 m it is
  * SEVENTEEN per cent, because a 70 m strip leaves almost nothing usable behind it. At 120 m, in
@@ -9642,20 +9742,26 @@ function renderRollSchedule(rolls, rollGroupSize) {
   summaryEl.hidden = false;
 
   const totalPieces = rolls.reduce((s, roll) => s + roll.pieces.length, 0);
-  const extraTotal = rolls.reduce((s, roll) => s + roll.pieces.reduce((s2, p) => s2 + p.extra, 0), 0);
+  const offcutTotal = rolls.reduce((s, roll) => s + Math.max(0, roll.remaining), 0);
+  const fullRolls = rolls.filter((roll) => roll.remaining <= 1e-6).length;
   /* Only where there is one answer to give: one product, everything pooled (a banded pack is a
      different question), and the design pieces still to hand. */
   const oneProduct = rolls.every((r) => r.product === rolls[0].product);
   const advice = oneProduct && rolls[0].designPieces ? rollLengthAdvice(rolls[0].designPieces, rolls[0].rollLength) : null;
   const spareLine = advice
-    ? ` At ${fmt.m(advice.now.len)} m a roll, ${fmt.m(advice.now.spare)} m of the ${fmt.m(advice.now.bought)} m bought is spare (${fmt.pct(advice.now.pct)}) — the packing has nothing left to give, so the only lever is the roll length.${
+    ? ` At ${fmt.m(advice.now.len)} m a roll, ${fmt.m(advice.now.spare)} m of the ${fmt.m(advice.now.bought)} m bought is off-cut (${fmt.pct(advice.now.pct)}). Every piece is cut to its design length and the schedule above is the best of everything the packer tried, so the remaining lever is the roll length.${
         advice.best
           ? ` A ${fmt.m(advice.best.len)} m roll would need ${fmt.m(advice.best.bought)} m instead: ${fmt.m(advice.now.bought - advice.best.bought)} m less material over the job.`
           : " Nothing else stocked would do better on this job."
       }`
     : "";
-  summaryEl.textContent = `${rolls.length} roll${rolls.length === 1 ? "" : "s"} · ${fmt.int(totalPieces)} pieces · every roll fully used${
-    extraTotal > 1e-6 ? ` (${fmt.m(extraTotal)} m installed as extra embedment to avoid off-cut, see individual pieces below)` : ""
+  /* Every piece is cut to its design length, so the honest headline is how many rolls that uses up
+     exactly and how much is left on the rest — not the old "every roll fully used", which was only
+     true because the leftover had been quietly added to someone's strip. */
+  summaryEl.textContent = `${rolls.length} roll${rolls.length === 1 ? "" : "s"} · ${fmt.int(totalPieces)} pieces · ${
+    offcutTotal > 1e-6
+      ? `${fullRolls} of ${rolls.length} cut out exactly, ${fmt.m(offcutTotal)} m of off-cut left over in all`
+      : "every roll cut out exactly, no off-cut"
   }.${spareLine}`;
 
   list.innerHTML = rolls.map((roll, i) => buildRollCardHtml(roll, i)).join("");
@@ -9678,7 +9784,7 @@ function buildRollLabelsHtml(rolls, project) {
   const cards = rolls
     .map((roll, i) => {
       const pieces = roll.pieces
-        .map((p, i) => `<li><span>${i + 1}. ${escapeHtml(p.label)}</span><span>${fmt.m(p.length + p.extra)} m</span></li>`)
+        .map((p, i) => `<li><span>${i + 1}. ${escapeHtml(p.label)}</span><span>${fmt.m(p.length)} m</span></li>`)
         .join("");
       const productBit = roll.productLabel ? `${escapeHtml(roll.productLabel)} — ` : "";
       return `
@@ -9790,9 +9896,12 @@ document.getElementById("exportBtn").addEventListener("click", () => {
   const rolls = window.__geogridRolls || [];
   if (rolls.length) {
     lines.push("", "Roll cutting schedule", "Roll #,Product,Piece,Length (m),Roll off-cut (m)");
+    // The off-cut is the roll's, not a piece's, so it goes on the roll's last row.
     rolls.forEach((roll, i) => {
-      roll.pieces.forEach((p) => {
-        lines.push([i + 1, csvEscape(roll.productLabel), csvEscape(p.label), p.length.toFixed(3), p.extra > 1e-6 ? p.extra.toFixed(3) : ""].join(","));
+      roll.pieces.forEach((p, k) => {
+        const last = k === roll.pieces.length - 1;
+        lines.push([i + 1, csvEscape(roll.productLabel), csvEscape(p.label), p.length.toFixed(3),
+          last && roll.remaining > 1e-6 ? roll.remaining.toFixed(3) : ""].join(","));
       });
     });
   }

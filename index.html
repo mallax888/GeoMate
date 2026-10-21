@@ -271,7 +271,7 @@
         <dt>Actual overlap</dt>
         <dd>The minimum-strip overlap is then spread evenly across every seam: o = (n·w − L) / (n − 1) — always ≥ the spec minimum, never a trimmed strip.</dd>
         <dt>Roll off-cut</dt>
-        <dd>Strips are pooled across all lifts that share the same embedment length, then packed into 1×roll-length pieces (floor(roll length ÷ embedment)) to minimise leftover per roll.</dd>
+        <dd>Every strip and stitch across the job is pooled, then each roll is filled by solving it — of the pieces still to place, the combination that comes closest to the roll length without going over (an exact bounded knapsack, in 100&nbsp;mm steps). A pass afterwards empties the least-used roll into the room left on the others, and drops it if everything fits. Pieces are cut to their design length and nothing more; whatever is left on a core is off-cut, reported as off-cut. With the packing at its limit the only remaining lever is the roll length ordered, which the roll schedule advises on.</dd>
         <dt>Battered surface levels</dt>
         <dd>Each target RL slices the surface into a cross-section, and the whole outline becomes one lift's extents — a fill sequence, one horizontal grid layer per level reaching out to the cut in every direction, not a separate layer per wall. If more than one closed loop comes back from a slice, the largest by area is taken as the real excavation outline. If the top of the surface is uneven, part of the boundary can already have ended (daylighted into the original ground) below that RL — the slice comes back open rather than closed, and the gap is closed with a straight line between its two ends purely so the boundary math has a defined "inside."</dd>
       </dl>
@@ -705,7 +705,7 @@
         <span id="wasteOverlap" class="waste-row__pct">—</span>
       </div>
       <div class="waste-row">
-        <span>Roll off-cut <em>(installed, not discarded — see Roll schedule)</em></span>
+        <span>Roll off-cut <em>(left on the core — see Roll schedule)</em></span>
         <span id="wasteOffcut" class="waste-row__pct">—</span>
       </div>
     </div>
@@ -733,7 +733,7 @@
          the cut plan AND a cell of base geogrid — but with the cell calculator gone they produced
          byte-identical files, which is two ways of asking the same question. -->
     <button id="exportAllDxfBtn" class="btn btn--primary btn--block" type="button">Export to CAD (DXF)</button>
-    <p id="exportAllDxfNote" class="export-note">One file, layer-grouped: lift extents, every strip, the patches and the strip labels — all in survey coordinates, each lift on its own layer at its own RL. Opens straight in Civil 3D — <strong>Save As</strong> there to get a DWG.</p>
+    <p id="exportAllDxfNote" class="export-note">One laid-out sheet: every level in its own frame at true size, in build order, with its strip schedule beside it — extents, every strip, the patches and the labels, layered by RL and tagged by roll. Opens straight in Civil 3D — <strong>Save As</strong> there to get a DWG.</p>
   </aside>
 
 </main>
