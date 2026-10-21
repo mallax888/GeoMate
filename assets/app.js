@@ -173,7 +173,7 @@ function updateProgressStats() {
  * round the loop debugging a bug that was already fixed, because nothing on screen said which
  * version it was. It does now, next to the title, and it is read straight off the same constant
  * the cache is keyed on, so the two cannot drift apart. */
-const APP_VERSION = "v224";
+const APP_VERSION = "v225";
 (function showVersion() {
   const el = document.getElementById("appVersion");
   if (el) el.textContent = APP_VERSION;
@@ -4834,7 +4834,6 @@ const SAMPLE_PROJECT = {
     });
   }
 }
-document.getElementById("headerUploadBtn").addEventListener("click", startExtentsUpload);
 document.getElementById("emptyAddLiftBtn").addEventListener("click", () => document.getElementById("addLiftBtn").click());
 document.getElementById("loadSampleBtn").addEventListener("click", () => {
   document.getElementById("projectName").value = SAMPLE_PROJECT.projectName;
@@ -5217,7 +5216,6 @@ function computeAndRender() {
    * sample over the top of them. */
   const takeoffHint = document.getElementById("takeoffEmptyHint");
   if (takeoffHint) takeoffHint.hidden = rows.length > 0;
-  updateHeaderUpload();
   // Collected alongside validateRows() below — these catch bad values on a single row's own inputs
   // (negative face length/embedment), which validateRows can't see because a row that fails to
   // produce a result is never added to liftResults in the first place.
@@ -6351,43 +6349,19 @@ const TABS = {
   rolls: { tab: tabRolls, view: rollScheduleView },
 };
 
-/* Loading extents from CAD is how this app is actually used, but the only way in was a button inside
- * the Cut plan tab — named after an OUTPUT, so nobody looks for a file upload behind it. These are
- * the same upload, offered where people are: on the opening screen, and beside "+ Add lift" where it
- * is reachable from any tab.
+/* ONE WAY IN, AND IT IS THE FIRST TAB ON THE ROW.
  *
- * Both switch to Cut plan BEFORE opening the file dialog. The wall/floor question and the upload's
- * own status line live in that view, so starting the upload anywhere else would ask the question
- * somewhere the user cannot see it — and answering wall when it is a floor is not a small mistake. */
-/* Exactly ONE way in is offered at a time. The header button steps aside for the Cut plan tab, which
- * has its own upload with the product picker and centrelines beside it, and for the empty state,
- * which is already showing the same call to action a few centimetres below it — two identical green
- * buttons on one screen is not two ways in, it is a mistake. */
-// Upload model leads: it is where the extents, the surfaces and the centrelines are loaded, and where
-// a dropped drawing lands. Opening anywhere else would open behind the front door.
+ * Loading extents from CAD is how this app is actually used, so the upload was also put in the
+ * panel header, where it showed on every tab except the two that carry their own. "Why is this
+ * here?" — because it sat on the end of the tab strip with a tab's icon and a tab's label, so it
+ * read as a sixth tab, one called "Upload lift extents" next to "Roll schedule". It was not a
+ * shortcut to the front door; it looked like another room.
+ *
+ * Upload model leads the tabs, is never hidden, and is one click from anywhere. That is the way in.
+ * It is also where the wall/floor question and the upload's own status line live, which is where
+ * someone loading a drawing needs to be standing anyway — answering wall when it is a floor is not
+ * a small mistake. */
 let currentTab = "cutplan";
-
-function updateHeaderUpload() {
-  const btn = document.getElementById("headerUploadBtn");
-  if (!btn) return;
-  /* Cut plan carries its own uploads — so the header button is for every OTHER tab, where going
-   * back to CAD would otherwise mean hunting for the right one. The LINER carries its own as well,
-   * and there the two sat a centimetre apart meaning different things: this one loads lift extents
-   * for the wall, the one under it loads the cell surface. Two upload buttons that take different
-   * files is not two ways in. */
-  btn.hidden = currentTab === "cutplan" || currentTab === "liner";
-}
-
-/* Opens the file picker and NOTHING else. This used to switch to Cut plan first, so that the
- * wall/floor question and the status line were already on screen when the file came back — but that
- * put a whole different screen, full of other upload buttons, behind a dialog the user opened by
- * asking for a file. Ask for a file, get a file dialog. Cancel it and you are still where you were.
- * The move to Cut plan happens in the input's own change handler, once there is actually something
- * to show there — including when what there is to show is an error. */
-function startExtentsUpload() {
-  const input = document.getElementById("dxfExtentsInput");
-  if (input) input.click();
-}
 
 function switchTab(which) {
   Object.entries(TABS).forEach(([key, { tab, view }]) => {
@@ -6398,7 +6372,6 @@ function switchTab(which) {
   });
   document.getElementById("addLiftBtn").hidden = which !== "takeoff";
   currentTab = which;
-  updateHeaderUpload();
   if (which === "view3d" && window.__geogridResults) render3D(window.__geogridResults);
 }
 

@@ -312,12 +312,11 @@
       </div>
       </div>
       <div class="panel__headactions">
-        <!-- Says WHICH DXF. On the output tabs this is the only upload on screen, and a bare
-             "Upload DXF" read as "upload anything that is a DXF". -->
-        <button id="headerUploadBtn" class="btn btn--ghost btn--icon" type="button" title="Load a lift extents DXF from CAD">
-          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 10.5V2.2M5 5.2 8 2.2l3 3"/><path d="M2.5 10.5v2.3c0 .6.5 1 1 1h9c.6 0 1-.4 1-1v-2.3"/></svg>
-          Upload lift extents
-        </button>
+        <!-- There was a second "Upload lift extents" button here, shown on every tab but Upload
+             model. It sat on the end of the tab strip, with a tab's icon and a tab's label, so it
+             read as a sixth tab — and the one real way in is already the first tab on the row, one
+             click away and never hidden. A button that looks like a tab, duplicates a tab, and
+             would throw away the loaded job if pressed by mistake is not a shortcut. -->
         <button id="addLiftBtn" class="btn btn--ghost" type="button">+ Add lift</button>
       </div>
     </div>
